@@ -1,0 +1,78 @@
+name: Nightly database backup
+
+# SPEC §9.3: pg_dump -> gzip -> private Cloudflare R2 bucket (backups/ prefix).
+#
+# The repo is public, so:
+#   - Credentials come only from GitHub Actions secrets (forks and PRs never receive them).
+#   - The dump is streamed straight to R2. It is never written to the workspace, never
+#     printed, and NEVER uploaded as a workflow artifact (artifacts of a public repo are
+#     downloadable by anyone).
+#   - The workflow is a no-op until every required secret exists.
+#
+# Required repository secrets:
+#   BACKUP_DATABASE_URL   Neon connection string (prefer a read-only role)
+#   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
+# Retention (30 days) is an R2 lifecycle rule on the bucket's backups/ prefix (see README).
+
+on:
+  schedule:
+    - cron: "17 2 * * *" # 02:17 UTC nightly
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Check backup secrets are configured
+    runs-on: ubuntu-24.04
+    outputs:
+      enabled: ${{ steps.check.outputs.enabled }}
+    steps:
+      - id: check
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          if [ -n "$BACKUP_DATABASE_URL" ] && [ -n "$R2_ACCOUNT_ID" ] && [ -n "$R2_ACCESS_KEY_ID" ] \
+             && [ -n "$R2_SECRET_ACCESS_KEY" ] && [ -n "$R2_BUCKET" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Backup secrets are not configured yet; skipping backup."
+          fi
+
+  backup:
+    name: pg_dump to R2
+    needs: gate
+    if: needs.gate.outputs.enabled == 'true' && github.repository == 'Stockkart/stockkart-hq'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Dump, compress and upload (streamed, nothing touches disk)
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          set -euo pipefail
+          key="backups/stockkart-hq-$(date -u +%Y-%m-%dT%H%M%SZ).sql.gz"
+          # pg_dump runs from the official Postgres image so its major version matches
+          # Neon's (17). The connection string is passed as an env var, not an argument.
+          docker run --rm -e BACKUP_DATABASE_URL postgres:17-alpine \
+              sh -c 'pg_dump --no-owner --no-privileges --format=plain "$BACKUP_DATABASE_URL"' \
+            | gzip -9 \
+            | aws s3 cp - "s3://${R2_BUCKET}/${key}" \
+                --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
+                --only-show-errors
+          echo "Uploaded ${key}"
