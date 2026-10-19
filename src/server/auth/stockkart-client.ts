@@ -130,6 +130,9 @@ export function createStockkartClient(options: StockkartClientOptions): Stockkar
 
       const parsed = meResponseSchema.safeParse(await readJson(response));
       if (!parsed.success) {
+        // Treated like an outage: the session is kept, but only until the 24 h
+        // MAX_UNVERIFIED_MS ceiling in session-policy.ts, so a backend that keeps answering
+        // with a body we cannot read cannot keep sessions alive indefinitely.
         console.warn("[stockkart] me: unexpected response shape");
         return { kind: "unavailable" };
       }

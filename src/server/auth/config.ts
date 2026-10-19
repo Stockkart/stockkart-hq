@@ -41,8 +41,9 @@ export function createAuthHandlers(deps: AuthConfigDeps) {
         ),
       };
     }
-    // Every later session read: absolute expiry + hourly inventory-api re-check (AUTH-4).
-    return refreshSessionToken(token, deps.client, now());
+    // Every later session read: absolute expiry + hourly inventory-api re-check (AUTH-4)
+    // + session_version check (S-3).
+    return refreshSessionToken(token, { client: deps.client, users: deps.users }, now());
   }
 
   /**

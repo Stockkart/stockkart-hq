@@ -60,25 +60,56 @@ export function callsTo(fetchMock: ReturnType<typeof mockFetch>, path: string) {
   return fetchMock.mock.calls.filter(([input]) => String(input) === `${API_BASE}${path}`);
 }
 
-/** In-memory replacement for the Postgres login_attempts table. */
+/**
+ * In-memory replacement for the Postgres login_attempts table, with the same reservation
+ * semantics. The count and the insert in `reserve()` run synchronously with no `await`
+ * between them, so (like the advisory-locked transaction in Postgres) concurrent callers
+ * cannot interleave between the limit check and the write.
+ */
 export function memoryAttemptStore(): LoginAttemptStore & {
-  rows: { key: string; success: boolean; at: Date }[];
+  rows: { id: string; key: string; success: boolean; at: Date }[];
 } {
-  const rows: { key: string; success: boolean; at: Date }[] = [];
+  const rows: { id: string; key: string; success: boolean; at: Date }[] = [];
+  let nextId = 1;
+  const failures = (key: string, since: Date) =>
+    rows.filter((row) => row.key === key && !row.success && row.at > since).length;
   return {
     rows,
-    async countFailuresSince(key, since) {
-      return rows.filter((row) => row.key === key && !row.success && row.at > since).length;
+    async reserve(email, ip, since, at) {
+      if (failures(email.key, since) >= email.max || failures(ip.key, since) >= ip.max) {
+        return null;
+      }
+      const reserved = [email.key, ip.key].map((key) => ({
+        id: `attempt-${nextId++}`,
+        key,
+        success: false,
+        at,
+      }));
+      rows.push(...reserved);
+      return reserved.map((row) => row.id);
     },
-    async record(keys, success, at) {
-      for (const key of keys) rows.push({ key, success, at });
+    async markSuccess(ids) {
+      for (const row of rows) if (ids.includes(row.id)) row.success = true;
+    },
+    async release(ids) {
+      for (let i = rows.length - 1; i >= 0; i -= 1) {
+        const row = rows[i];
+        if (row && ids.includes(row.id)) rows.splice(i, 1);
+      }
     },
   };
 }
 
-export function memoryUserRepository(): UserRepository & { upserts: UpsertUserInput[] } {
+export function memoryUserRepository(): UserRepository & {
+  upserts: UpsertUserInput[];
+  /** S-3 "sign out everywhere": bumps the stored session version for an HQ user id. */
+  bumpSessionVersion(hqUserId: string): void;
+  /** Makes `getSessionVersion` reject, as if the database were unreachable. */
+  failReads(fail: boolean): void;
+} {
   const upserts: UpsertUserInput[] = [];
   const byStockkartId = new Map<string, HqUser>();
+  let readsFail = false;
   return {
     upserts,
     async upsertOnSignIn(input) {
@@ -92,6 +123,21 @@ export function memoryUserRepository(): UserRepository & { upserts: UpsertUserIn
       };
       byStockkartId.set(input.stockkartUserId, user);
       return user;
+    },
+    async getSessionVersion(hqUserId) {
+      if (readsFail) throw new Error("db down");
+      for (const user of byStockkartId.values()) {
+        if (user.id === hqUserId) return user.sessionVersion;
+      }
+      return null;
+    },
+    bumpSessionVersion(hqUserId) {
+      for (const user of byStockkartId.values()) {
+        if (user.id === hqUserId) user.sessionVersion += 1;
+      }
+    },
+    failReads(fail) {
+      readsFail = fail;
     },
   };
 }

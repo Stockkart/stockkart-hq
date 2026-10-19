@@ -16,6 +16,7 @@ import {
 import { buildAuthConfig, createAuthHandlers, type AuthConfigDeps } from "./config";
 import { createRateLimiter } from "./rate-limit";
 import {
+  MAX_UNVERIFIED_MS,
   RECHECK_INTERVAL_MS,
   RECHECK_RETRY_MS,
   SESSION_MAX_AGE_SECONDS,
@@ -38,11 +39,12 @@ const signedInUser: User = {
 function setup(handler: Parameters<typeof mockFetch>[0]) {
   const fetchMock = mockFetch(handler);
   let clock = SIGNED_IN_AT;
+  const users = memoryUserRepository();
   const deps: AuthConfigDeps = {
     secret: "test-only-secret-not-used-anywhere-real-000000",
     client: createStockkartClient({ baseUrl: API_BASE, fetch: fetchMock }),
     limiter: createRateLimiter(memoryAttemptStore()),
-    users: memoryUserRepository(),
+    users,
     now: () => clock,
   };
   const handlers = createAuthHandlers(deps);
@@ -51,12 +53,19 @@ function setup(handler: Parameters<typeof mockFetch>[0]) {
     deps,
     fetchMock,
     handlers,
+    users,
     advance: (ms: number) => {
       clock += ms;
     },
     now: () => clock,
     /** The jwt callback as Auth.js calls it at sign-in. */
     signIn: async (): Promise<JWT> => {
+      // The HQ users row authorize() would have upserted (id hq-1, session_version 0).
+      await users.upsertOnSignIn({
+        stockkartUserId: "sk-user-1",
+        name: "Test Staff",
+        email: "staff@example.test",
+      });
       const token = await handlers.jwt({
         token: { name: signedInUser.name, email: signedInUser.email, sub: signedInUser.id },
         user: signedInUser,
@@ -167,6 +176,113 @@ describe("jwt callback: hourly /auth/me re-check (AUTH-4)", () => {
   it("rejects a token that lacks HQ claims", async () => {
     const { read } = setup(() => meOk("SUPER_USER"));
     expect(await read({ sub: "hq-1", name: "x" })).toBeNull();
+  });
+});
+
+describe("jwt callback: session_version check (S-3)", () => {
+  it("keeps the session when the stored session_version still matches", async () => {
+    const { signIn, read, advance, now } = setup(() => meOk("SUPER_USER"));
+    const token = await signIn();
+    advance(HOUR + 1);
+    expect(await read(token)).toMatchObject({ sessionVersion: 0, lastVerifiedAt: now() });
+  });
+
+  it("ends the session and drops the Stockkart token after 'sign out everywhere'", async () => {
+    const { signIn, read, advance, users, fetchMock } = setup((url) =>
+      url.endsWith("/auth/me") ? meOk("SUPER_USER") : new Response(null, { status: 200 }),
+    );
+    const token = await signIn();
+    users.bumpSessionVersion("hq-1");
+
+    // Not before the re-check is due: no DB read on every request.
+    advance(HOUR - 1);
+    expect(await read(token)).toEqual(token);
+
+    advance(2);
+    expect(await read(token)).toBeNull();
+    expect(callsTo(fetchMock, "/api/v1/auth/logout")).toHaveLength(1);
+  });
+
+  it("ends the session when the HQ user no longer exists", async () => {
+    const { handlers, read, advance } = setup(() => meOk("SUPER_USER"));
+    // Sign in without seeding the users row.
+    const token = await handlers.jwt({ token: { sub: "hq-1" }, user: signedInUser });
+    expect(token).not.toBeNull();
+    advance(HOUR + 1);
+    expect(token && (await read(token))).toBeNull();
+  });
+
+  it("ends the session on a version mismatch even while inventory-api is down", async () => {
+    const { signIn, read, advance, users } = setup(() => apiError(503));
+    const token = await signIn();
+    users.bumpSessionVersion("hq-1");
+    advance(HOUR + 1);
+    expect(await read(token)).toBeNull();
+  });
+
+  it("keeps the session like an outage when the DB is unreachable (not verified)", async () => {
+    const { signIn, read, advance, users, now } = setup(() => meOk("SUPER_USER"));
+    const token = await signIn();
+    users.failReads(true);
+    advance(HOUR + 1);
+    expect(await read(token)).toMatchObject({
+      lastVerifiedAt: SIGNED_IN_AT,
+      recheckAt: now() + RECHECK_RETRY_MS,
+    });
+  });
+});
+
+describe("jwt callback: 24 h ceiling without a successful re-check", () => {
+  /** Reads the session every retry interval until `until` ms after sign-in. */
+  async function keepReading(
+    ctx: ReturnType<typeof setup>,
+    token: JWT,
+    until: number,
+  ): Promise<JWT | null> {
+    let current: JWT | null = token;
+    while (current && ctx.now() - SIGNED_IN_AT < until) {
+      ctx.advance(HOUR);
+      current = await ctx.read(current);
+    }
+    return current;
+  }
+
+  it.each([
+    ["inventory-api keeps failing", () => apiError(503)],
+    ["/auth/me keeps returning an unexpected body", () => new Response("<html>", { status: 200 })],
+  ])("keeps the session for under 24 h, then ends it, when %s", async (_label, respond) => {
+    const ctx = setup(respond);
+    const token = await ctx.signIn();
+
+    const before = await keepReading(ctx, token, MAX_UNVERIFIED_MS - HOUR);
+    expect(before).toMatchObject({ lastVerifiedAt: SIGNED_IN_AT });
+    if (!before) throw new Error("session ended too early");
+
+    expect(await keepReading(ctx, before, MAX_UNVERIFIED_MS)).toBeNull();
+  });
+
+  it("ends the session after 24 h when the DB stays unreachable", async () => {
+    const ctx = setup(() => meOk("SUPER_USER"));
+    const token = await ctx.signIn();
+    ctx.users.failReads(true);
+    expect(await keepReading(ctx, token, MAX_UNVERIFIED_MS)).toBeNull();
+  });
+
+  it("restarts the 24 h clock after a successful re-check", async () => {
+    let healthy = false;
+    const ctx = setup(() => (healthy ? meOk("SUPER_USER") : apiError(503)));
+    const token = await ctx.signIn();
+
+    const degraded = await keepReading(ctx, token, MAX_UNVERIFIED_MS - HOUR);
+    healthy = true;
+    ctx.advance(RECHECK_RETRY_MS);
+    const recovered = degraded && (await ctx.read(degraded));
+    expect(recovered).toMatchObject({ lastVerifiedAt: ctx.now() });
+
+    healthy = false;
+    // 23 h after recovery the session is still alive although inventory-api is down again.
+    ctx.advance(MAX_UNVERIFIED_MS - HOUR);
+    expect(recovered && (await ctx.read(recovered))).not.toBeNull();
   });
 });
 

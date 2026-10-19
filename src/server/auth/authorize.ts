@@ -2,7 +2,7 @@ import type { User } from "next-auth";
 import { z } from "zod";
 
 import { SignInFailed } from "./errors";
-import { clientIpFrom, type RateLimiter } from "./rate-limit";
+import { clientIpFrom, type LoginAttemptReservation, type RateLimiter } from "./rate-limit";
 import { SUPER_USER_ROLE, type StockkartClient } from "./stockkart-client";
 import type { UserRepository } from "./users";
 
@@ -36,30 +36,36 @@ export function createAuthorize(deps: AuthorizeDeps) {
     // Rate limit before touching inventory-api. A limited caller sees the same generic
     // message as a wrong password, so the limiter does not reveal which emails exist.
     // If the limiter's database is unreachable we fail closed: nobody signs in.
-    let limited: boolean;
+    //
+    // The attempt is *reserved* (recorded as a failure, atomically with the limit check)
+    // before inventory-api is called, so parallel requests cannot all slip past the check
+    // before any failure is written. From here on the attempt counts as a failure unless
+    // it succeeds (`succeeded()`) or never got a verdict (`release()`).
+    let reservation: LoginAttemptReservation | null;
     try {
-      limited = await deps.limiter.isLimited(email, ip);
+      reservation = await deps.limiter.reserve(email, ip);
     } catch {
       console.error("[auth] rate limiter unavailable");
       throw new SignInFailed("unavailable");
     }
-    if (limited) throw new SignInFailed("invalid_credentials");
+    if (!reservation) throw new SignInFailed("invalid_credentials");
 
     const login = await deps.client.login(email, password);
 
-    if (login.kind === "unavailable") throw new SignInFailed("unavailable");
-
-    if (login.kind === "invalid_credentials") {
-      await recordFailureSafely(deps.limiter, email, ip);
-      throw new SignInFailed("invalid_credentials");
+    if (login.kind === "unavailable") {
+      // inventory-api gave no verdict on the password, so this is not a failed guess.
+      await releaseSafely(reservation);
+      throw new SignInFailed("unavailable");
     }
+
+    // Already counted by the reservation.
+    if (login.kind === "invalid_credentials") throw new SignInFailed("invalid_credentials");
 
     if (login.user.role !== SUPER_USER_ROLE) {
       // Valid Stockkart account but not HQ staff. Drop the freshly issued token (each user
-      // has a small cap of live tokens) and count this as a failure so the endpoint
+      // has a small cap of live tokens). The reservation stays a failure so the endpoint
       // cannot be used to probe roles without limit.
       await deps.client.logout(login.accessToken);
-      await recordFailureSafely(deps.limiter, email, ip);
       throw new SignInFailed("access_denied");
     }
 
@@ -69,7 +75,7 @@ export function createAuthorize(deps: AuthorizeDeps) {
         name: login.user.name?.trim() || login.user.email || email,
         email: login.user.email ?? email,
       });
-      await deps.limiter.recordSuccess(email, ip);
+      await reservation.succeeded();
 
       return {
         id: hqUser.id,
@@ -83,15 +89,17 @@ export function createAuthorize(deps: AuthorizeDeps) {
       // DB write failed after inventory-api issued a token: give the token back.
       console.error("[auth] could not record sign-in");
       await deps.client.logout(login.accessToken);
+      await releaseSafely(reservation);
       throw new SignInFailed("unavailable");
     }
   };
 }
 
-async function recordFailureSafely(limiter: RateLimiter, email: string, ip: string) {
+async function releaseSafely(reservation: LoginAttemptReservation) {
   try {
-    await limiter.recordFailure(email, ip);
+    await reservation.release();
   } catch {
-    console.error("[auth] could not record failed sign-in attempt");
+    // The attempt then stays counted as a failure, which errs on the side of limiting.
+    console.error("[auth] could not release sign-in attempt reservation");
   }
 }

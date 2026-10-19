@@ -190,14 +190,80 @@ describe("authorize()", () => {
     const fetchMock = mockFetch(() => loginOk("SUPER_USER"));
     const authorize = createAuthorize({
       client: createStockkartClient({ baseUrl: API_BASE, fetch: fetchMock }),
-      limiter: {
-        isLimited: () => Promise.reject(new Error("db down")),
-        recordFailure: () => Promise.resolve(),
-        recordSuccess: () => Promise.resolve(),
-      },
+      limiter: { reserve: () => Promise.reject(new Error("db down")) },
       users: memoryUserRepository(),
     });
     await expectSignInError(authorize(credentials, requestFromIp("203.0.113.5")), "unavailable");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("marks the reserved attempt as a success after a good sign-in", async () => {
+    const { authorize, store } = setup((url) =>
+      url.endsWith("/auth/login") ? loginOk("SUPER_USER") : apiError(404),
+    );
+    await authorize(credentials, requestFromIp("203.0.113.5"));
+    expect(store.rows.map(({ key, success }) => ({ key, success }))).toEqual([
+      { key: "email:staff@example.test", success: true },
+      { key: "ip:203.0.113.5", success: true },
+    ]);
+  });
+
+  it("releases the reservation when the user upsert fails after a good login", async () => {
+    const fetchMock = mockFetch((url) =>
+      url.endsWith("/auth/login") ? loginOk("SUPER_USER") : new Response(null, { status: 200 }),
+    );
+    const store = memoryAttemptStore();
+    const authorize = createAuthorize({
+      client: createStockkartClient({ baseUrl: API_BASE, fetch: fetchMock }),
+      limiter: createRateLimiter(store),
+      users: {
+        ...memoryUserRepository(),
+        upsertOnSignIn: () => Promise.reject(new Error("db down")),
+      },
+    });
+    await expectSignInError(authorize(credentials, requestFromIp("203.0.113.5")), "unavailable");
+    expect(store.rows).toHaveLength(0);
+    expect(callsTo(fetchMock, "/api/v1/auth/logout")).toHaveLength(1);
+  });
+
+  describe("concurrent attempts (atomic reservation)", () => {
+    it(`lets at most ${MAX_FAILURES_PER_EMAIL} of 10 parallel attempts for one email reach inventory-api`, async () => {
+      // Resolve logins only after every attempt has started, so a check-then-record limiter
+      // would let all 10 through before the first failure is written.
+      let releaseLogins: () => void = () => {};
+      const loginsHeld = new Promise<void>((resolve) => {
+        releaseLogins = resolve;
+      });
+      const { authorize, fetchMock } = setup(async () => {
+        await loginsHeld;
+        return apiError(401);
+      });
+
+      const attempts = Array.from({ length: 10 }, (_, i) =>
+        expectSignInError(
+          authorize({ ...credentials, password: `guess-${i}` }, requestFromIp(`198.51.100.${i}`)),
+          "invalid_credentials",
+        ),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      releaseLogins();
+      await Promise.all(attempts);
+
+      expect(callsTo(fetchMock, "/api/v1/auth/login")).toHaveLength(MAX_FAILURES_PER_EMAIL);
+    });
+
+    it(`lets at most ${MAX_FAILURES_PER_IP} of 30 parallel attempts from one IP through`, async () => {
+      const { authorize, fetchMock } = setup(() => apiError(401));
+      const ip = requestFromIp("192.0.2.77");
+      await Promise.all(
+        Array.from({ length: 30 }, (_, i) =>
+          expectSignInError(
+            authorize({ email: `user${i}@example.test`, password: "x" }, ip),
+            "invalid_credentials",
+          ),
+        ),
+      );
+      expect(callsTo(fetchMock, "/api/v1/auth/login")).toHaveLength(MAX_FAILURES_PER_IP);
+    });
   });
 });
