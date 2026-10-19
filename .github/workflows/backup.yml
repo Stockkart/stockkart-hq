@@ -13,6 +13,8 @@ name: Nightly database backup
 #   BACKUP_DATABASE_URL   Neon connection string (prefer a read-only role)
 #   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
 # Retention (30 days) is an R2 lifecycle rule on the bucket's backups/ prefix (see README).
+# Uploads go to tmp/ first and are moved to backups/ only after pg_dump succeeded; add a
+# 1-day lifecycle rule on tmp/ for leftovers from a runner that died mid-upload.
 
 on:
   schedule:
@@ -66,13 +68,31 @@ jobs:
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           set -euo pipefail
-          key="backups/stockkart-hq-$(date -u +%Y-%m-%dT%H%M%SZ).sql.gz"
+          name="stockkart-hq-$(date -u +%Y-%m-%dT%H%M%SZ).sql.gz"
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          # Upload to tmp/ first and move to backups/ only after the whole pipeline succeeded,
+          # so a failed or truncated dump never lands next to the good backups. With pipefail
+          # a pg_dump (or gzip) failure fails the pipeline even though `aws s3 cp` would
+          # happily store whatever partial stream it received; the trap then deletes it.
+          tmp_key="tmp/${name}"
+          key="backups/${name}"
+          cleanup() {
+            aws s3 rm "s3://${R2_BUCKET}/${tmp_key}" --endpoint-url "$endpoint" --only-show-errors || true
+          }
+          trap cleanup ERR
           # pg_dump runs from the official Postgres image so its major version matches
           # Neon's (17). The connection string is passed as an env var, not an argument.
-          docker run --rm -e BACKUP_DATABASE_URL postgres:17-alpine \
+          # The image is pinned by digest (multi-arch index of postgres:17-alpine); bump it
+          # deliberately with `docker buildx imagetools inspect postgres:17-alpine`.
+          docker run --rm -e BACKUP_DATABASE_URL \
+              postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24 \
               sh -c 'pg_dump --no-owner --no-privileges --format=plain "$BACKUP_DATABASE_URL"' \
             | gzip -9 \
-            | aws s3 cp - "s3://${R2_BUCKET}/${key}" \
-                --endpoint-url "https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com" \
+            | aws s3 cp - "s3://${R2_BUCKET}/${tmp_key}" \
+                --endpoint-url "$endpoint" \
                 --only-show-errors
+          aws s3 mv "s3://${R2_BUCKET}/${tmp_key}" "s3://${R2_BUCKET}/${key}" \
+            --endpoint-url "$endpoint" \
+            --only-show-errors
+          trap - ERR
           echo "Uploaded ${key}"
