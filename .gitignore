@@ -1,0 +1,36 @@
+# dependencies
+/node_modules
+/.pnpm-store
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+*.tsbuildinfo
+
+# testing
+/coverage
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
+# env files: never commit real values. Only .env.example (names only) is tracked.
+.env*
+!.env.example
+
+# database dumps / backups must never land in the public repo
+*.sql.gz
+*.dump
+/backups/
+
+# local tooling / OS
+.DS_Store
+*.pem
+.vercel
+.idea
+.vscode/*
+!.vscode/extensions.json
+npm-debug.log*
+pnpm-debug.log*
+build.log
