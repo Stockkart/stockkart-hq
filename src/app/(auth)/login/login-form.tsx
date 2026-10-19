@@ -6,6 +6,7 @@ import { useActionState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SIGN_IN_MESSAGES } from "@/lib/sign-in-messages";
 import { signInAction, type SignInState } from "@/server/actions/auth";
 
 interface LoginFormProps {
@@ -20,6 +21,9 @@ export function LoginForm({ callbackPath, initialError }: LoginFormProps) {
   });
   const passwordRef = useRef<HTMLInputElement>(null);
   const error = state.error;
+  // Only a credentials error says something about what was typed; "unavailable" (and
+  // "access denied", where the credentials were valid) must not mark the fields invalid.
+  const fieldsInvalid = error === SIGN_IN_MESSAGES.invalid_credentials ? true : undefined;
 
   // React resets the form after each action; the email comes back via defaultValue and
   // focus moves to the (now empty) password field for a quick retry.
@@ -42,7 +46,7 @@ export function LoginForm({ callbackPath, initialError }: LoginFormProps) {
           required
           autoFocus
           defaultValue={state.email}
-          aria-invalid={error ? true : undefined}
+          aria-invalid={fieldsInvalid}
           aria-describedby={error ? "login-error" : undefined}
         />
       </div>
@@ -56,16 +60,16 @@ export function LoginForm({ callbackPath, initialError }: LoginFormProps) {
           type="password"
           autoComplete="current-password"
           required
-          aria-invalid={error ? true : undefined}
+          aria-invalid={fieldsInvalid}
           aria-describedby={error ? "login-error" : undefined}
         />
       </div>
 
-      {/* Always rendered so assistive tech announces changes to its content. */}
+      {/* Always rendered so assistive tech announces changes to its content. role="alert"
+          already implies aria-live="assertive". */}
       <p
         id="login-error"
         role="alert"
-        aria-live="assertive"
         aria-atomic="true"
         className="min-h-5 text-sm font-medium text-destructive"
       >

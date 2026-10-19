@@ -33,12 +33,31 @@ const optionalString = z
   .optional()
   .transform((value) => (value === "" ? undefined : value));
 
+/** `sslmode=require` or stronger (verify-ca / verify-full), unless the host is loopback. */
+const TLS_SSL_MODES = new Set(["require", "verify-ca", "verify-full"]);
+
+function databaseUrlUsesTls(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (LOOPBACK_HOSTS.has(url.hostname)) return true;
+  return TLS_SSL_MODES.has(url.searchParams.get("sslmode") ?? "");
+}
+
 export const envSchema = z.object({
   DATABASE_URL: z
     .string()
     .min(1)
     .refine((value) => /^postgres(ql)?:\/\//.test(value), {
       message: "DATABASE_URL must be a postgres:// or postgresql:// connection string",
+    })
+    .refine(databaseUrlUsesTls, {
+      // The connection carries every query and row, so it must be encrypted. A loopback
+      // Postgres (unit tests, CI dummy values, local development) is exempt.
+      message: "DATABASE_URL must set sslmode=require (only localhost may omit it)",
     }),
   STOCKKART_API_URL: stockkartApiUrl,
   // Auth.js encrypts the session JWT with a key derived from this. 32+ random bytes,

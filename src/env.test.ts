@@ -48,4 +48,36 @@ describe("env validation (fail fast, fail closed)", () => {
       expect.objectContaining({ message: expect.not.stringContaining(secret) }),
     );
   });
+
+  describe("DATABASE_URL TLS", () => {
+    const remote = "postgresql://user:pass@ep-x.eu-central-1.aws.neon.tech/db";
+
+    it.each([`${remote}?sslmode=require`, `${remote}?sslmode=verify-full&channel_binding=require`])(
+      "accepts a remote URL with TLS required: %s",
+      (url) => {
+        expect(parseEnv({ ...valid, DATABASE_URL: url }).DATABASE_URL).toBe(url);
+      },
+    );
+
+    it.each([remote, `${remote}?sslmode=prefer`, `${remote}?sslmode=disable`])(
+      "rejects a remote URL without sslmode=require: %s",
+      (url) => {
+        expect(() => parseEnv({ ...valid, DATABASE_URL: url })).toThrow("sslmode=require");
+      },
+    );
+
+    it.each([
+      "postgres://test:test@127.0.0.1:5432/hq_test",
+      "postgres://ci:ci@localhost:5432/ci",
+      "postgres://u:p@[::1]:5432/db",
+    ])("allows a loopback Postgres without sslmode (tests, CI): %s", (url) => {
+      expect(parseEnv({ ...valid, DATABASE_URL: url }).DATABASE_URL).toBe(url);
+    });
+
+    it("does not echo the connection string in the error", () => {
+      expect(() => parseEnv({ ...valid, DATABASE_URL: remote })).toThrow(
+        expect.objectContaining({ message: expect.not.stringContaining("pass@") }),
+      );
+    });
+  });
 });
