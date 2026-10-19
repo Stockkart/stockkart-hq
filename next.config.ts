@@ -14,6 +14,9 @@ const isDev = process.env.NODE_ENV === "development";
  * framing, plugins and foreign form targets are blocked. A nonce-based policy (set in the
  * proxy) is a possible later hardening step. `'unsafe-eval'` and `ws:` are only for the
  * development server's hot reload and are never sent by a production build.
+ *
+ * TODO(before Phase 1): switch to a nonce-based CSP (per-request nonce generated in the
+ * proxy, `'strict-dynamic'`) and drop `'unsafe-inline'` from script-src.
  */
 const contentSecurityPolicy = [
   "default-src 'self'",
@@ -39,6 +42,8 @@ const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=()" },
   { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+  // Two years, all subdomains. Browsers ignore HSTS on plain-http responses (localhost dev).
+  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
 ];
 
 const nextConfig: NextConfig = {
