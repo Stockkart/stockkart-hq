@@ -50,4 +50,13 @@ describe("proxy (middleware) denies anonymous access", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("x-middleware-next")).toBe("1");
   });
+
+  it.each(["/api/auth/session", "/api/auth/csrf", "/api/auth/providers", "/api/webhooks/github"])(
+    "lets %s through without a session",
+    async (path) => {
+      const response = await send(path);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-middleware-next")).toBe("1");
+    },
+  );
 });
