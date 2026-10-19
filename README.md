@@ -26,8 +26,9 @@ All dependency versions are pinned exactly.
 
 ## How sign-in works
 
-1. The login form posts to a server action. The server checks the rate limit (5 failed
-   attempts per email and 20 per IP per 15 minutes, stored in `login_attempts`).
+1. The login form posts to a server action. The server reserves the attempt against the
+   rate limit (5 failed attempts per email and 20 per IP per 15 minutes, stored in
+   `login_attempts`; IPv6 is bucketed per /64) atomically, before calling inventory-api.
 2. The HQ server calls `POST {STOCKKART_API_URL}/api/v1/auth/login`. This is
    server-to-server, so the browser never sees the Stockkart token.
 3. Only `user.role === "SUPER_USER"` gets in. Any other role sees "Access denied", and HQ
@@ -35,8 +36,10 @@ All dependency versions are pinned exactly.
 4. HQ upserts the `users` row (keyed by the Stockkart `userId`) and issues an Auth.js
    session: an encrypted JWT in an httpOnly cookie that holds the Stockkart token. The
    session ends no later than the 7-day Stockkart token.
-5. About once an hour the proxy re-checks `GET /api/v1/auth/me`. A 401/403 or a role change
-   ends the session. A 5xx or timeout keeps it, so HQ still works while inventory-api is down.
+5. About once an hour the proxy re-checks `GET /api/v1/auth/me` and the user's
+   `session_version`. A 401/403, a role change or a newer `session_version` ends the session.
+   A 5xx or timeout keeps it, so HQ still works while inventory-api is down, but a session
+   that could not be re-checked for 24 hours ends.
 6. Sign-out ends the HQ session and calls `/auth/logout`.
 
 `src/proxy.ts` (Next.js 16's name for `middleware.ts`) denies every route without a session
@@ -119,6 +122,13 @@ review and commit the SQL in `drizzle/`, then migrate `dev` before `main`.
 3. Apply migrations to the target Neon branch before deploying a change that needs them.
 4. Deploy, then run the anonymous-denial checks below before adding any real content.
 
+> **Not on Vercel?** The login rate limit (AUTH-8) reads the client IP from `x-real-ip` /
+> `x-forwarded-for`, which is safe only because Vercel's edge overwrites those headers. On
+> any other host (self-hosted `next start`, another proxy or CDN) a client can set them and
+> get a fresh IP budget per request. Make the proxy in front of HQ overwrite both headers
+> with the real client address, or change `clientIpFrom()` in
+> `src/server/auth/rate-limit.ts`, before deploying there.
+
 ## Backups
 
 `.github/workflows/backup.yml` runs nightly: `pg_dump` → gzip → private R2 bucket under
@@ -126,7 +136,9 @@ review and commit the SQL in `drizzle/`, then migrate `dev` before `main`.
 (prefer a read-only Neon role), `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
 `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`. The dump is streamed to R2 and never stored as a
 workflow artifact, because artifacts of a public repo can be downloaded by anyone. Add an
-R2 lifecycle rule that deletes `backups/` objects after 30 days.
+R2 lifecycle rule that deletes `backups/` objects after 30 days. Each dump is uploaded to
+`tmp/` first and moved to `backups/` only when `pg_dump` succeeded (a failed dump is
+deleted); add a second lifecycle rule that deletes `tmp/` objects after 1 day.
 
 Restore (into an empty Neon branch first, never straight over `main`):
 
@@ -167,9 +179,9 @@ gunzip -c stockkart-hq-<timestamp>.sql.gz | psql "$RESTORE_DATABASE_URL"
 ## Security notes
 
 - Secrets live only in Vercel and GitHub Actions. No real data in seeds, fixtures or tests.
-- Security headers (CSP, `X-Frame-Options: DENY`, `Referrer-Policy`, `nosniff`) are set in
+- Security headers (CSP, HSTS, `X-Frame-Options: DENY`, `Referrer-Policy`, `nosniff`) are set in
   `next.config.ts`. The CSP allows inline scripts because the App Router needs them without
-  nonces; nonce-based CSP is a possible later hardening.
+  nonces; a nonce-based CSP is planned before Phase 1.
 - The dev and start scripts bind to `127.0.0.1`. Do not add `--hostname 0.0.0.0`.
 - There is no auth bypass for tests. Unit tests inject fakes; e2e tests cover only anonymous
   behaviour.
