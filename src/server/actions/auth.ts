@@ -1,10 +1,12 @@
 "use server";
 
 import { AuthError } from "next-auth";
+import { redirect } from "next/navigation";
 
 import { safeCallbackPath } from "@/server/auth/access-policy";
 import { signIn, signOut } from "@/server/auth/auth";
 import { isSignInErrorCode, SIGN_IN_MESSAGES, SignInFailed } from "@/server/auth/errors";
+import { requireSession, UnauthorizedError } from "@/server/auth/require-session";
 
 export interface SignInState {
   error: string | null;
@@ -48,5 +50,13 @@ export async function signInAction(
 }
 
 export async function signOutAction(): Promise<void> {
+  // S-2: server action IDs can be POSTed from any page (including the public /login), so
+  // re-check the session here too. Without one there is nothing to end: go to /login.
+  try {
+    await requireSession();
+  } catch (error) {
+    if (error instanceof UnauthorizedError) redirect("/login");
+    throw error;
+  }
   await signOut({ redirectTo: "/login" });
 }
