@@ -144,6 +144,42 @@ function renderNode(
       return <hr key={key} />;
     case "hardBreak":
       return <br key={key} />;
+    // Doc blocks (DOC-1, DOC-7), e.g. in the template preview.
+    case "table":
+      return (
+        <table key={key}>
+          <tbody>{children}</tbody>
+        </table>
+      );
+    case "tableRow":
+      return <tr key={key}>{children}</tr>;
+    case "tableHeader":
+      return <th key={key}>{children}</th>;
+    case "tableCell":
+      return <td key={key}>{children}</td>;
+    case "callout":
+      return (
+        <aside
+          key={key}
+          role="note"
+          data-type="callout"
+          data-tone={node.attrs?.tone === "warning" ? "warning" : "info"}
+        >
+          {children}
+        </aside>
+      );
+    case "mermaid": {
+      // The read-only view shows the diagram source; the doc editor renders it live.
+      const source = node.attrs?.source;
+      return (
+        <figure key={key}>
+          <figcaption className="text-xs text-muted-foreground">Mermaid diagram</figcaption>
+          <pre>
+            <code>{typeof source === "string" ? source : ""}</code>
+          </pre>
+        </figure>
+      );
+    }
     default:
       return <Fragment key={key}>{children}</Fragment>;
   }
