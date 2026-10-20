@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 
 import { type StatusCategory, type StatusDefaultFor } from "@/lib/issues/constants";
+import { BUILT_IN_DOC_TEMPLATES } from "@/lib/templates/doc-templates";
 import { BUILT_IN_ISSUE_TEMPLATES } from "@/lib/templates/issue-templates";
 
 import { components, projects, statuses, templates } from "./schema";
@@ -90,10 +91,15 @@ export async function seed(db: AppDatabase): Promise<SeedSummary> {
   const statusesCreated = await seedDefaultStatuses(db, project.id);
 
   let templatesUpserted = 0;
-  for (const template of BUILT_IN_ISSUE_TEMPLATES) {
+  const builtIns = [
+    ...BUILT_IN_ISSUE_TEMPLATES.map((template) => ({ kind: "issue" as const, ...template })),
+    // DOC-5 / §6.1: upserted on (kind, subtype) like the issue templates.
+    ...BUILT_IN_DOC_TEMPLATES.map((template) => ({ kind: "doc" as const, ...template })),
+  ];
+  for (const template of builtIns) {
     const rows = await db
       .insert(templates)
-      .values({ kind: "issue", builtIn: true, ...template })
+      .values({ builtIn: true, ...template })
       .onConflictDoUpdate({
         target: [templates.kind, templates.subtype],
         targetWhere: sql`${templates.builtIn}`,

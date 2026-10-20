@@ -103,11 +103,25 @@ const BLOCK_TYPES = new Set([
   "orderedList",
   "taskList",
   "horizontalRule",
+  // Doc blocks (DOC-1, DOC-7). Each table cell is its own line.
+  "callout",
+  "table",
+  "tableRow",
+  "tableCell",
+  "tableHeader",
+  "mermaid",
 ]);
+
+/** The source of a Mermaid block (DOC-7), stored as `attrs.source`, not as child text. */
+function mermaidSource(node: RichTextNode): string {
+  const source = node.attrs?.source;
+  return typeof source === "string" ? source : "";
+}
 
 /** Plain text for search and `STK-123` extraction: one line per block. With `skipCode`,
  * inline code and code blocks are left out (references there are not mentions, matching
- * the renderer, which shows no chip inside code). */
+ * the renderer, which shows no chip inside code). Mermaid source counts as code: it is
+ * searchable, but `STK-1` inside a diagram is not a mention. */
 export function extractPlainText(doc: RichTextNode, options: { skipCode?: boolean } = {}): string {
   const lines: string[] = [];
   let current = "";
@@ -125,9 +139,10 @@ export function extractPlainText(doc: RichTextNode, options: { skipCode?: boolea
       current += "\n";
       return;
     }
-    if (options.skipCode && node.type === "codeBlock") return;
+    if (options.skipCode && (node.type === "codeBlock" || node.type === "mermaid")) return;
     const isBlock = BLOCK_TYPES.has(node.type);
     if (isBlock) flush();
+    if (node.type === "mermaid") current += mermaidSource(node);
     for (const child of node.content ?? []) visit(child);
     if (isBlock) flush();
   };

@@ -38,3 +38,41 @@ export type AdrStatus = (typeof ADR_STATUSES)[number];
 /** `templates.kind` (SPEC §8). */
 export const TEMPLATE_KINDS = ["doc", "issue", "diagram"] as const;
 export type TemplateKind = (typeof TEMPLATE_KINDS)[number];
+
+export const DOC_TYPE_LABELS: Record<DocType, string> = {
+  page: "Page",
+  design: "Design (HLD)",
+  lld: "LLD",
+  adr: "ADR",
+  rfc: "RFC",
+  api_contract: "API contract",
+  runbook: "Runbook",
+  postmortem: "Postmortem",
+  load_test_report: "Load-test report",
+  meeting_notes: "Meeting notes",
+  retro: "Retro",
+  release_notes: "Release notes",
+  onboarding: "Onboarding",
+};
+
+export const DOC_STATUS_LABELS: Record<DocStatus, string> = {
+  draft: "Draft",
+  in_review: "In review",
+  approved: "Approved",
+  obsolete: "Obsolete",
+};
+
+export const ADR_STATUS_LABELS: Record<AdrStatus, string> = {
+  proposed: "Proposed",
+  accepted: "Accepted",
+  accepted_retrospective: "Accepted (recorded retrospectively)",
+  deprecated: "Deprecated",
+  superseded: "Superseded",
+};
+
+/** Doc types a person can pick for a doc. ADRs are made only by "New ADR" (ADR-1 numbering). */
+export const PICKABLE_DOC_TYPES = DOC_TYPES.filter((type) => type !== "adr");
+
+export function isDocType(value: string): value is DocType {
+  return (DOC_TYPES as readonly string[]).includes(value);
+}
