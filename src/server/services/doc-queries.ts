@@ -216,7 +216,10 @@ export function createDocQueries(db: AppDatabase) {
           updatedAt: docs.updatedAt,
         })
         .from(docs)
-        .leftJoin(successor, eq(successor.id, docs.adrSupersededBy))
+        .leftJoin(
+          successor,
+          and(eq(successor.id, docs.adrSupersededBy), isNull(successor.deletedAt)),
+        )
         .where(and(eq(docs.projectId, projectId), eq(docs.type, "adr"), isNull(docs.deletedAt)))
         .orderBy(asc(docs.adrNumber));
       const ids = rows.map((row) => row.id);

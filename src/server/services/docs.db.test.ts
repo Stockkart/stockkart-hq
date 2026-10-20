@@ -387,5 +387,18 @@ describeDb("doc service (Postgres)", () => {
         "invalid",
       );
     });
+
+    it("keeps an ADR's number prefix when its title is saved", async () => {
+      const adr = await service().createAdr(ada, { projectKey: "STK", title: "Prefixed" });
+      await service().saveDoc(ada, {
+        docId: adr.id,
+        baseVersion: 1,
+        title: "No prefix any more",
+        content: rt.doc(rt.paragraph("x")),
+        snapshot: false,
+      });
+      const prefix = String(adr.number).padStart(4, "0");
+      expect((await docRow(adr.id)).title).toBe(`${prefix}. No prefix any more`);
+    });
   });
 });

@@ -2,7 +2,7 @@ import { and, desc, eq, isNull, type SQL, sql } from "drizzle-orm";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { z } from "zod";
 
-import { adrTitle } from "@/lib/docs/adr";
+import { adrTitle, splitAdrTitle } from "@/lib/docs/adr";
 import { type DocType, isDocType } from "@/lib/docs/constants";
 import {
   type createAdrInput,
@@ -94,6 +94,7 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
         parentId: docs.parentId,
         type: docs.type,
         position: docs.position,
+        adrNumber: docs.adrNumber,
       })
       .from(docs)
       .where(and(eq(docs.id, docId), isNull(docs.deletedAt)))
@@ -345,10 +346,15 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
       const doc = await liveDoc(input.docId);
       const text = extractPlainText(input.content);
       const refs = docRefs(input.content, await allProjectKeys());
+      // ADR titles always keep their own "NNNN. " prefix (ADR-1), whatever the client sent.
+      const title =
+        input.title !== undefined && doc.type === "adr" && doc.adrNumber !== null
+          ? adrTitle(doc.adrNumber, splitAdrTitle(input.title)?.title || input.title)
+          : input.title;
       const write = sql`
         WITH updated AS (
           UPDATE docs SET content = ${jsonbOrNull(input.content)}, content_text = ${text},
-            title = COALESCE(${input.title ?? null}::text, title), version = version + 1,
+            title = COALESCE(${title ?? null}::text, title), version = version + 1,
             updated_by = ${actorId}::uuid, updated_at = now()
           WHERE id = ${doc.id}::uuid AND version = ${input.baseVersion}::int
             AND deleted_at IS NULL
@@ -483,6 +489,20 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
       const siblings = siblingsOf(tree, input.parentId, doc.id);
       const index = Math.min(input.index, siblings.length);
       let position = keyAt(siblings, index);
+      const parentId = input.parentId;
+      // Shared by the respace and the move, so a refused move changes nothing at all.
+      const below = sql`below AS (
+          SELECT id FROM docs WHERE parent_id = ${doc.id}::uuid
+          UNION
+          SELECT d.id FROM docs d JOIN below b ON d.parent_id = b.id
+        )`;
+      const allowed = sql`EXISTS (SELECT 1 FROM docs m
+          WHERE m.id = ${doc.id}::uuid AND m.deleted_at IS NULL)
+        AND ${parentId}::uuid IS DISTINCT FROM ${doc.id}::uuid
+        AND (${parentId}::uuid IS NULL OR ${parentId}::uuid NOT IN (SELECT id FROM below))
+        AND (${parentId}::uuid IS NULL OR EXISTS (SELECT 1 FROM docs p
+          WHERE p.id = ${parentId}::uuid AND p.project_id = ${doc.projectId}::uuid
+            AND p.deleted_at IS NULL))`;
       const statements: SQL[] = [];
       if (position === null) {
         // Tied keys around the gap: give the whole group fresh, distinct keys first.
@@ -492,28 +512,19 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
           position: keys[i] ?? "",
         }));
         statements.push(sql`
+          WITH RECURSIVE ${below}
           UPDATE docs SET position = r.position
           FROM jsonb_to_recordset(${JSON.stringify(respaced)}::jsonb) AS r(id uuid, position text)
-          WHERE docs.id = r.id
+          WHERE docs.id = r.id AND ${allowed}
         `);
         position = keyAt(respaced, index) ?? generateKeyBetween(null, null);
       }
-      const parentId = input.parentId;
       const move = sql`
-        WITH RECURSIVE below AS (
-          SELECT id FROM docs WHERE parent_id = ${doc.id}::uuid
-          UNION
-          SELECT d.id FROM docs d JOIN below b ON d.parent_id = b.id
-        ),
+        WITH RECURSIVE ${below},
         moved AS (
           UPDATE docs SET parent_id = ${uuidOrNull(parentId)}, position = ${position},
             updated_at = now()
-          WHERE id = ${doc.id}::uuid AND deleted_at IS NULL
-            AND ${parentId}::uuid IS DISTINCT FROM ${doc.id}::uuid
-            AND (${parentId}::uuid IS NULL OR ${parentId}::uuid NOT IN (SELECT id FROM below))
-            AND (${parentId}::uuid IS NULL OR EXISTS (SELECT 1 FROM docs p
-              WHERE p.id = ${parentId}::uuid AND p.project_id = docs.project_id
-                AND p.deleted_at IS NULL))
+          WHERE id = ${doc.id}::uuid AND ${allowed}
           RETURNING id
         ),
         move_activity AS (
@@ -528,10 +539,10 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
       `;
       const results = await options.runAtomic([treeLock(doc.projectId), ...statements, move]);
       if (rowsOf(results.at(-1), z.object({ id: z.string() })).length === 0) {
-        if (parentId) {
-          const parent = tree.find((node) => node.id === parentId);
-          if (!parent) throw notFound("Parent doc");
-        }
+        // Nothing moved: the doc or the new parent went away meanwhile, or (the usual case)
+        // the new parent is below the doc. Re-read to tell which.
+        await liveDoc(doc.id);
+        await checkParent(doc.projectId, parentId);
         throw invalid("A doc cannot be moved under one of its own sub-pages");
       }
     },
@@ -540,48 +551,58 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
      * Soft delete. Its children move up to its parent, at its place in the order, so nothing
      * disappears with it (DOC-2). One transaction after the tree lock: children created or
      * moved in meanwhile are lifted too (they keep their own key if they had none planned).
+     * The planned keys come from a read before the lock, so the delete applies only if the
+     * doc is still where that read saw it; if it moved meanwhile, plan again.
      */
     async deleteDoc(actorId: string, docId: string): Promise<void> {
-      const doc = await liveDoc(docId);
-      const tree = await treeOf(doc.projectId);
-      const children = tree.filter((node) => node.parentId === doc.id).sort(compareSiblings);
-      const siblings = siblingsOf(tree, doc.parentId, doc.id);
-      const next = siblings.find((sibling) => compareSiblings(sibling, doc) > 0);
-      const nextPosition = next && next.position > doc.position ? next.position : null;
-      const keys = generateNKeysBetween(doc.position, nextPosition, children.length);
-      const planned = children.map((child, i) => ({ id: child.id, position: keys[i] ?? "" }));
-      const results = await options.runAtomic([
-        treeLock(doc.projectId),
-        sql`
-          WITH deleted AS (
-            UPDATE docs SET deleted_at = now(), updated_by = ${actorId}::uuid,
-              updated_at = now()
-            WHERE id = ${doc.id}::uuid AND deleted_at IS NULL
-            RETURNING id, parent_id
-          ),
-          plan AS (
-            SELECT * FROM jsonb_to_recordset(${JSON.stringify(planned)}::jsonb)
-              AS r(id uuid, position text)
-          ),
-          lifted AS (
-            UPDATE docs SET parent_id = deleted.parent_id,
-              position = COALESCE((SELECT plan.position FROM plan WHERE plan.id = docs.id),
-                docs.position),
-              updated_at = now()
-            FROM deleted
-            WHERE docs.parent_id = deleted.id AND docs.deleted_at IS NULL
-            RETURNING docs.id
-          ),
-          delete_activity AS (
-            INSERT INTO activity (entity_type, entity_id, actor_id, action)
-            SELECT 'doc', id, ${actorId}::uuid, 'deleted' FROM deleted
-          )
-          SELECT (SELECT count(*)::int FROM deleted) AS deleted,
-            (SELECT count(*)::int FROM lifted) AS lifted
-        `,
-      ]);
-      const [row] = rowsOf(results.at(-1), z.object({ deleted: z.number(), lifted: z.number() }));
-      if (!row || row.deleted === 0) throw notFound("Doc");
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        const doc = await liveDoc(docId);
+        const tree = await treeOf(doc.projectId);
+        const children = tree.filter((node) => node.parentId === doc.id).sort(compareSiblings);
+        const siblings = siblingsOf(tree, doc.parentId, doc.id);
+        const next = siblings.find((sibling) => compareSiblings(sibling, doc) > 0);
+        // A tied neighbour leaves no gap; the children then go right after the tie.
+        const nextPosition = next && next.position > doc.position ? next.position : null;
+        const keys = generateNKeysBetween(doc.position, nextPosition, children.length);
+        const planned = children.map((child, i) => ({ id: child.id, position: keys[i] ?? "" }));
+        const results = await options.runAtomic([
+          treeLock(doc.projectId),
+          sql`
+            WITH deleted AS (
+              UPDATE docs SET deleted_at = now(), updated_by = ${actorId}::uuid,
+                updated_at = now()
+              WHERE id = ${doc.id}::uuid AND deleted_at IS NULL
+                AND parent_id IS NOT DISTINCT FROM ${uuidOrNull(doc.parentId)}
+                AND position = ${doc.position}
+              RETURNING id, parent_id
+            ),
+            plan AS (
+              SELECT * FROM jsonb_to_recordset(${JSON.stringify(planned)}::jsonb)
+                AS r(id uuid, position text)
+            ),
+            lifted AS (
+              UPDATE docs SET parent_id = deleted.parent_id,
+                position = COALESCE((SELECT plan.position FROM plan WHERE plan.id = docs.id),
+                  docs.position),
+                updated_at = now()
+              FROM deleted
+              WHERE docs.parent_id = deleted.id AND docs.deleted_at IS NULL
+              RETURNING docs.id
+            ),
+            delete_activity AS (
+              INSERT INTO activity (entity_type, entity_id, actor_id, action)
+              SELECT 'doc', id, ${actorId}::uuid, 'deleted' FROM deleted
+            )
+            SELECT (SELECT count(*)::int FROM deleted) AS deleted,
+              (SELECT count(*)::int FROM lifted) AS lifted
+          `,
+        ]);
+        const [row] = rowsOf(results.at(-1), z.object({ deleted: z.number(), lifted: z.number() }));
+        if (row && row.deleted > 0) return;
+      }
+      // Gone (liveDoc throws not found), or it keeps moving: let the person retry.
+      await liveDoc(docId);
+      throw conflict("The page is being moved right now; try again");
     },
 
     /** DOC-9 manual "Link issue" by key (stored doc → issue, origin `manual`). */
