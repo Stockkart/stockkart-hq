@@ -19,7 +19,8 @@ import { type DocTemplateView } from "@/lib/docs/views";
 import { requireSession } from "@/server/auth/require-session";
 import { docQueries, docService } from "@/server/services";
 import { type CreatedDoc, type SaveDocResult } from "@/server/services/docs";
-import { FOREIGN_KEY_VIOLATION, pgErrorInfo, ServiceError } from "@/server/services/errors";
+
+import { runAction } from "./action-runner";
 
 /**
  * Doc and ADR mutations (DOC-*, ADR-*). Each action re-checks the session first (S-2: action
@@ -33,28 +34,18 @@ function refreshDocPages() {
   revalidatePath("/[projectKey]/adrs", "page");
 }
 
+/**
+ * Parse, call and map failures through the shared `runAction` (planning's action-runner.ts).
+ * Its FK mapping covers a referenced user, doc or template deleted between the check and
+ * the write. The caller has already run `await requireSession()`.
+ */
 async function run<S extends z.ZodType, T>(
   schema: S,
   input: unknown,
   action: (data: z.output<S>) => Promise<T>,
   { revalidate = true }: { revalidate?: boolean } = {},
 ): Promise<ActionResult<T>> {
-  const parsed = schema.safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
-  }
-  try {
-    const data = await action(parsed.data);
-    if (revalidate) refreshDocPages();
-    return { ok: true, data };
-  } catch (error) {
-    if (error instanceof ServiceError) return { ok: false, error: error.message };
-    // A referenced user, doc or template was deleted between the check and the write.
-    if (pgErrorInfo(error)?.code === FOREIGN_KEY_VIOLATION) {
-      return { ok: false, error: "Something it refers to no longer exists; reload and retry" };
-    }
-    throw error;
-  }
+  return runAction(schema, input, action, revalidate ? refreshDocPages : () => {});
 }
 
 export async function createDocAction(input: unknown): Promise<ActionResult<CreatedDoc>> {

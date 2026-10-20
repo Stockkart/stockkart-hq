@@ -26,7 +26,8 @@ export async function runAction<S extends z.ZodType, T>(
     return { ok: true, data };
   } catch (error) {
     if (error instanceof ServiceError) return { ok: false, error: error.message };
-    // A referenced user, component or issue was deleted between the check and the write.
+    // A referenced user, component, issue, doc or template was deleted between the check
+    // and the write.
     if (pgErrorInfo(error)?.code === FOREIGN_KEY_VIOLATION) {
       return { ok: false, error: "Something it refers to no longer exists; reload and retry" };
     }
