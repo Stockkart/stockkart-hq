@@ -84,6 +84,7 @@ export async function promoteTodoAction(input: unknown): Promise<ActionResult<Cr
     () => {
       refreshTodos();
       revalidatePath("/[projectKey]", "layout");
+      revalidatePath("/my-work");
     },
   );
 }

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, ne, sql } from "drizzle-orm";
 import { generateKeyBetween } from "fractional-indexing";
 import { z } from "zod";
 
@@ -20,8 +20,11 @@ export interface TodoView {
   text: string;
   done: boolean;
   position: string;
-  /** MY-3: the issue this todo was promoted to (hidden if that issue was deleted). */
-  promotedIssue: { key: string; href: string } | null;
+  /**
+   * MY-3: the issue this todo was promoted to. A soft-deleted issue keeps the link (ISS-13
+   * restore brings it back) and is flagged, so the todo cannot be promoted twice.
+   */
+  promotedIssue: { key: string; href: string; deleted: boolean } | null;
 }
 
 /**
@@ -55,10 +58,11 @@ export function createTodoService(db: AppDatabase) {
           done: todos.done,
           position: todos.position,
           issueNumber: issues.number,
+          issueDeletedAt: issues.deletedAt,
           projectKey: projects.key,
         })
         .from(todos)
-        .leftJoin(issues, and(eq(issues.id, todos.promotedIssueId), isNull(issues.deletedAt)))
+        .leftJoin(issues, eq(issues.id, todos.promotedIssueId))
         .leftJoin(projects, eq(projects.id, issues.projectId))
         .where(eq(todos.userId, userId))
         .orderBy(asc(todos.position), asc(todos.createdAt), asc(todos.id));
@@ -72,6 +76,7 @@ export function createTodoService(db: AppDatabase) {
             ? {
                 key: formatIssueKey(row.projectKey, row.issueNumber),
                 href: issuePath(row.projectKey, row.issueNumber),
+                deleted: row.issueDeletedAt !== null,
               }
             : null,
       }));

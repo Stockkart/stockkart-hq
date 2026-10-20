@@ -132,10 +132,17 @@ describeDb("todos (Postgres)", () => {
     expect(view?.promotedIssue).toEqual({
       key: created[0]?.key,
       href: `/STK/issues/${created[0]?.key}`,
+      deleted: false,
     });
 
     // Already promoted: a second attempt is refused and allocates nothing.
     await expect(create()).rejects.toThrow("already promoted");
     expect(await counter()).toBe(before + 1);
+
+    // Deleting the issue keeps the link (ISS-13 restore) and flags it; still no re-promote.
+    await issueService().deleteIssue(alice, created[0]?.id ?? "");
+    const after = (await service().list(alice)).find((row) => row.id === todo.id);
+    expect(after?.promotedIssue).toMatchObject({ key: created[0]?.key, deleted: true });
+    await expect(create()).rejects.toThrow("already promoted");
   });
 });

@@ -42,7 +42,7 @@ export interface TodoItem {
   id: string;
   text: string;
   done: boolean;
-  promotedIssue: { key: string; href: string } | null;
+  promotedIssue: { key: string; href: string; deleted: boolean } | null;
 }
 
 type Change =
@@ -312,6 +312,9 @@ function TodoBody({ todo, onToggle, onEdit, onDelete }: RowProps) {
   const checkboxId = useId();
   const editRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // One finish per edit: Enter or Escape unmount the field, and the blur that may follow
+  // must neither save a cancelled edit nor save twice.
+  const finished = useRef(false);
   const pending = todo.id.startsWith("pending-");
 
   // The field replaces the text the user just chose to edit, so it takes focus.
@@ -320,6 +323,8 @@ function TodoBody({ todo, onToggle, onEdit, onDelete }: RowProps) {
   }, [editing]);
 
   function finish(save: boolean) {
+    if (finished.current) return;
+    finished.current = true;
     setEditing(false);
     const next = text.replace(/\s+/g, " ").trim();
     if (save && next && next !== todo.text) onEdit(next);
@@ -369,7 +374,16 @@ function TodoBody({ todo, onToggle, onEdit, onDelete }: RowProps) {
           {todo.text}
         </label>
       )}
-      {todo.promotedIssue ? (
+      {todo.promotedIssue?.deleted ? (
+        // The issue was deleted (restorable later, ISS-13): the link stays, inert.
+        <span
+          title="The issue was deleted"
+          className="rounded-full border px-2 py-0.5 font-mono text-xs text-muted-foreground line-through"
+        >
+          <span className="sr-only">Promoted to deleted issue </span>
+          {todo.promotedIssue.key}
+        </span>
+      ) : todo.promotedIssue ? (
         <Link
           href={todo.promotedIssue.href}
           aria-label={`Promoted to ${todo.promotedIssue.key}`}
@@ -396,6 +410,7 @@ function TodoBody({ todo, onToggle, onEdit, onDelete }: RowProps) {
           className="size-7"
           aria-label={`Edit “${todo.text}”`}
           onClick={() => {
+            finished.current = false;
             setText(todo.text);
             setEditing(true);
           }}

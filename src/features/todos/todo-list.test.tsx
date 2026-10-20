@@ -33,7 +33,12 @@ const B = "0f1e2d3c-4b5a-4968-8776-5544332211aa";
 const C = "11111111-2222-4333-8444-555555555555";
 const todos = [
   { id: A, text: "Alpha", done: false, promotedIssue: null },
-  { id: B, text: "Beta", done: false, promotedIssue: { key: "STK-9", href: "/STK/issues/STK-9" } },
+  {
+    id: B,
+    text: "Beta",
+    done: false,
+    promotedIssue: { key: "STK-9", href: "/STK/issues/STK-9", deleted: false },
+  },
   { id: C, text: "Gamma", done: true, promotedIssue: null },
 ];
 
