@@ -7,6 +7,7 @@ import { IssueHeader } from "@/features/issue/issue-header";
 import { Links, Subtasks } from "@/features/issue/issue-relations";
 import { IssueTabs } from "@/features/issue/issue-tabs";
 import { loadProjectFromRoute } from "@/features/issue/project-route";
+import { RecordIssueView } from "@/features/issue/record-view";
 import { formatIssueKey, parseIssueKey } from "@/lib/issues/keys";
 import { requirePageSession } from "@/server/auth/require-session";
 import { commentService, issueQueries } from "@/server/services";
@@ -54,6 +55,7 @@ export default async function IssuePage({ params }: Props) {
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
+      <RecordIssueView issueId={issue.id} />
       <IssueHeader
         issueId={issue.id}
         issueKey={issue.key}
