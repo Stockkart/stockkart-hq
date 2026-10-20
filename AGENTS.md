@@ -35,13 +35,14 @@ comments and commit bodies.
 ```
 src/
   app/(auth)/login/       login page + client form
-  app/(app)/              signed-in app shell (layout calls requirePageSession); my-work/, todos/
+  app/(app)/              signed-in app shell (layout calls requirePageSession); my-work/, todos/,
+                          settings/profile/
   app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, backlog/, board/, docs/
                           (tree layout, list, docs/[id] editor), adrs/, sprints/ (list,
                           sprints/[sprintId]), and a "coming soon" [section] placeholder for
                           the rest (roadmap, …)
   app/api/auth/           Auth.js route handlers
-  app/api/webhooks/github placeholder (501) until GH-1
+  app/api/webhooks/github GitHub org webhook (GH-1…GH-3): HMAC-verified, logic in server/github/
   proxy.ts                default-deny gate (Next.js 16 name for middleware.ts)
   env.ts                  Zod-validated server env (throws on import if invalid)
   server/auth/            Auth.js config, inventory-api client, rate limit, session policy
@@ -49,6 +50,9 @@ src/
   server/services/        DB logic as factories (createIssueService(db) …); index.ts wires db
   server/db/              Drizzle schema, client, seed, AppDatabase type
   server/import/          handbook import (IMP-1…3), driven by scripts/import-handbook.ts
+  server/github/          webhook: signature check, Zod payloads, pure event → plan rules
+                          (services/github.ts applies a plan in ONE statement, deduped by
+                          delivery id; never add a webhook write outside that statement)
   lib/                    isomorphic code: constants, Zod input schemas, keys, rich text,
                           markdown → editor JSON (lib/markdown)
   features/               feature UI (shell/, issue/, planning/, sprints/, todos/, search/,
@@ -58,7 +62,7 @@ src/
   components/ui/          shadcn/ui components (owned code, edit freely)
   test/                   test fakes and the DB-test helpers
 drizzle/                  generated SQL migrations (committed)
-scripts/                  seed.ts, import-handbook.ts
+scripts/                  seed.ts, import-handbook.ts, send-test-webhook.ts (signed local delivery)
 e2e/                      Playwright smoke tests
 ```
 

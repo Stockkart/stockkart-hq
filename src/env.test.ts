@@ -42,6 +42,14 @@ describe("env validation (fail fast, fail closed)", () => {
     ).toBe("http://localhost:8080");
   });
 
+  it("starts without GITHUB_WEBHOOK_SECRET (the webhook then fails closed)", () => {
+    expect(parseEnv(valid).GITHUB_WEBHOOK_SECRET).toBeUndefined();
+    expect(parseEnv({ ...valid, GITHUB_WEBHOOK_SECRET: "" }).GITHUB_WEBHOOK_SECRET).toBeUndefined();
+    expect(parseEnv({ ...valid, GITHUB_WEBHOOK_SECRET: "s3cret" }).GITHUB_WEBHOOK_SECRET).toBe(
+      "s3cret",
+    );
+  });
+
   it("keeps the query log off unless HQ_LOG_QUERIES is exactly 1", () => {
     expect(parseEnv(valid).HQ_LOG_QUERIES).toBe(false);
     expect(parseEnv({ ...valid, HQ_LOG_QUERIES: "0" }).HQ_LOG_QUERIES).toBe(false);

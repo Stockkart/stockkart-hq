@@ -266,9 +266,9 @@ ADRs are docs with `type = adr` plus extra fields. The template mirrors the exis
 
 | ID | Requirement | Pri |
 |---|---|---|
-| GH-1 | Org-level webhook (`pull_request`, `push`) for `Stockkart` → `/api/webhooks/github`, verified with `X-HQ-Signature-256` | P1 |
-| GH-2 | Find issue keys (`STK-\d+`) in branch name, PR title/body, commit messages; attach PR/commit to the issue | P1 |
-| GH-3 | PR opened → issue to In Review (if earlier); PR merged with "Closes/Fixes STK-123" → Done | P1 |
+| GH-1 | Org-level webhook (`pull_request`, `push`, `create`) for `Stockkart` → `/api/webhooks/github`, verified with `X-Hub-Signature-256`; deduped by `X-GitHub-Delivery` | P1 |
+| GH-2 | Find issue keys (`STK-\d+`, any case) in branch name, PR title/body, commit messages; attach branch/PR/commit to the issue | P1 |
+| GH-3 | PR state changes update the linked PR only (opening a PR does not change the issue). PR merged into the default branch with "Closes/Fixes/Resolves STK-123" → the project's done status, unless already done | P1 |
 | GH-4 | Issue "Development" panel: branch, PRs (state, author), commits | P1 |
 | GH-5 | "Copy branch name" button: `stk-123-short-title` | P0 |
 
@@ -544,11 +544,11 @@ sequenceDiagram
   participant GH as GitHub
   participant W as /api/webhooks/github
   participant DB as Postgres
-  GH->>W: pull_request (opened/closed) + X-HQ-Signature-256
-  W->>W: verify HMAC (reject 401 if bad)
-  W->>W: extract STK-\d+ from branch, title, body
-  W->>DB: upsert github_refs; on merged + "Closes STK-n" → status Done
-  W->>DB: insert activity (actor = GitHub user mapped to HQ user if known)
+  GH->>W: pull_request / push / create + X-Hub-Signature-256
+  W->>W: verify HMAC of the raw body (401 if bad, 503 if no secret)
+  W->>W: extract STK-\d+ from branch, title, body, commit messages
+  W->>DB: one statement: record X-GitHub-Delivery (stop if seen), upsert github_refs,<br/>on merged into default branch + "Closes STK-n" → done status
+  W->>DB: insert activity (actor_id null; meta: source github, repo, pr, mergedBy)
   W-->>GH: 200
 ```
 
@@ -638,7 +638,9 @@ All tables: `id uuid pk`, `created_at`, `updated_at` unless noted. Soft-deletabl
 | `diagram_versions` | diagram_id, version, scene, author_id, created_at |
 | `templates` | kind (`doc`/`issue`/`diagram`), subtype, name, description, content (jsonb), built_in, created_by |
 | `attachments` | entity_type, entity_id, r2_key, filename, mime, size_bytes, uploaded_by |
-| `github_refs` | issue_id, repo, kind (`branch`/`pr`/`commit`), number, sha, title, url, state, author_login, merged_at |
+| `github_refs` | issue_id, repo, kind (`branch`/`pr`/`commit`), number, sha, ref_name, title, url, state (PRs: `open`/`draft`/`closed`/`merged`), author_login, merged_at; partial unique per kind |
+| `github_deliveries` | delivery_id (pk, `X-GitHub-Delivery`), event, received_at — webhook dedupe, pruned after 30 days (no `id`/`updated_at`) |
+| `github_pr_merges` | repo, number (pk both), created_at — GH-3 closes a merged PR's issues once, whatever the delivery order or replays |
 | `incidents` | project_id, title, severity, status, started_at, resolved_at, commander_id, postmortem_doc_id, timeline (jsonb) |
 | `services` | project_id, name, repo, runtime, environments (jsonb), links (jsonb), owner_id, notes |
 | `todos` | user_id, text, done, position, promoted_issue_id |

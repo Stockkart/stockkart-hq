@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
+import { DevelopmentPanel } from "@/features/issue/development-panel";
 import { IssueDescription } from "@/features/issue/issue-description";
 import { IssueFields } from "@/features/issue/issue-fields";
 import { IssueHeader } from "@/features/issue/issue-header";
@@ -10,7 +11,7 @@ import { requireProject, resolveProjectKey } from "@/features/issue/project-rout
 import { RecordIssueView } from "@/features/issue/record-view";
 import { formatIssueKey, parseIssueKey } from "@/lib/issues/keys";
 import { requirePageSession } from "@/server/auth/require-session";
-import { commentService, docQueries, issueQueries } from "@/server/services";
+import { commentService, docQueries, githubQueries, issueQueries } from "@/server/services";
 import { issueIdByNumber, projectIdByKey } from "@/server/services/sql";
 
 interface Props {
@@ -52,6 +53,7 @@ export default async function IssuePage({ params }: Props) {
     projectKeys,
     subtaskParents,
     docs,
+    development,
   ] = await Promise.all([
     requireProject(projectRouteKey),
     issueQueries.getIssue(projectId, ref.number),
@@ -65,6 +67,8 @@ export default async function IssuePage({ params }: Props) {
     // Empty unless the issue is a subtask.
     issueQueries.listSubtaskParents(projectId, issueId),
     docQueries.docsLinkingTo(issueId),
+    // GH-4 branches, PRs and commits; same batch.
+    githubQueries.listDevelopment(issueId),
   ]);
   if (!issue) notFound();
   const parentOptions = issue.type === "subtask" ? subtaskParents : meta.epics;
@@ -109,13 +113,14 @@ export default async function IssuePage({ params }: Props) {
             currentUserId={session.user.id}
           />
         </div>
-        <div className="lg:sticky lg:top-6 lg:self-start lg:border-l lg:pl-6">
+        <div className="flex flex-col gap-8 lg:sticky lg:top-6 lg:self-start lg:border-l lg:pl-6">
           <IssueFields
             issue={issue}
             meta={meta}
             parentOptions={parentOptions}
             currentUserId={session.user.id}
           />
+          <DevelopmentPanel development={development} />
         </div>
       </div>
     </div>

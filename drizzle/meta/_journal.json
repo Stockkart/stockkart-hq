@@ -22,6 +22,13 @@
       "when": 1792519795490,
       "tag": "0002_sprint_activity",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1792524361590,
+      "tag": "0003_github_integration",
+      "breakpoints": true
     }
   ]
 }

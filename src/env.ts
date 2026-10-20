@@ -54,11 +54,13 @@ export const envSchema = z.object({
     .url()
     .optional()
     .or(z.literal("").transform(() => undefined)),
-  // Later phases (attachments, backups, GitHub webhook). Optional for now.
+  // Later phases (attachments, backups). Optional for now.
   R2_ACCOUNT_ID: optionalString,
   R2_ACCESS_KEY_ID: optionalString,
   R2_SECRET_ACCESS_KEY: optionalString,
   R2_BUCKET: optionalString,
+  // GH-1 webhook HMAC secret (`openssl rand -hex 32`). Optional so the app starts without
+  // it, but the webhook then FAILS CLOSED: it answers 503 and accepts nothing.
   GITHUB_WEBHOOK_SECRET: optionalString,
   // Development aid: `1` logs database round trips per request (counts and timings only,
   // never SQL text or parameters). Off unless set to exactly "1".

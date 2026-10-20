@@ -263,7 +263,7 @@ function ActivityList({
         const sentence = describeActivity(entry, lookups);
         return (
           <li key={entry.id} className="flex flex-wrap items-baseline gap-x-1.5">
-            <span className="font-medium">{entry.actorName ?? "System"}</span>
+            <span className="font-medium">{sentence.actor ?? entry.actorName ?? "System"}</span>
             <span>{sentence.verb}</span>
             {sentence.from !== null ? (
               <>
@@ -278,6 +278,9 @@ function ActivityList({
                 {sentence.from !== null ? <span className="text-muted-foreground">to</span> : null}
                 <span className="rounded bg-muted px-1">{sentence.to}</span>
               </>
+            ) : null}
+            {sentence.note ? (
+              <span className="text-muted-foreground">({sentence.note})</span>
             ) : null}
             <span className="text-xs text-muted-foreground">
               · <RelativeTime date={entry.createdAt} />
