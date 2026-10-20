@@ -1,4 +1,5 @@
 import { Bell, LogOut } from "lucide-react";
+import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { QuickCreate } from "@/features/issue/quick-create";
@@ -33,13 +34,14 @@ export function TopBar({ userName, issueTemplates }: TopBarProps) {
       <Button variant="ghost" size="icon" disabled aria-label="Notifications (coming soon)">
         <Bell aria-hidden="true" />
       </Button>
-      <span
-        title={userName}
-        className="flex size-8 items-center justify-center rounded-full bg-secondary text-xs font-semibold"
+      <Link
+        href="/settings/profile"
+        title={`${userName}: profile`}
+        className="flex size-8 items-center justify-center rounded-full bg-secondary text-xs font-semibold outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
       >
         <span aria-hidden="true">{initials(userName)}</span>
-        <span className="sr-only">Signed in as {userName}</span>
-      </span>
+        <span className="sr-only">Signed in as {userName}. Profile settings</span>
+      </Link>
       <form action={signOutAction}>
         <Button type="submit" variant="ghost" size="sm">
           <LogOut aria-hidden="true" />

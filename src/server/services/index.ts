@@ -9,6 +9,7 @@ import { createIssueQueries } from "./issue-queries";
 import { createIssueService } from "./issues";
 import { createPlanningService } from "./planning";
 import { createPlanningQueries } from "./planning-queries";
+import { createProfileService } from "./profile";
 import { createSearchService } from "./search";
 import { createTodoService } from "./todos";
 
@@ -26,3 +27,4 @@ export const docService = createDocService(db, { runAtomic, read });
 export const docQueries = createDocQueries(db, { read });
 export const githubService = createGithubService(db);
 export const githubQueries = createGithubQueries(db, { read });
+export const profileService = createProfileService(db, { read });
