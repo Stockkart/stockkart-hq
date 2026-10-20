@@ -1,4 +1,5 @@
 import { type RichTextDoc } from "@/lib/rich-text";
+import { type SprintOption } from "@/lib/sprints/views";
 
 import { type IssueType, type LinkRelation, type Priority, type StatusCategory } from "./constants";
 
@@ -46,6 +47,8 @@ export interface PlanningIssue extends IssueSummary {
   epic: IssueSummary | null;
   storyPoints: number | null;
   labels: LabelView[];
+  /** BLG-3: the sprint the issue is in (any state), or null for the backlog. */
+  sprintId: string | null;
   /** Backlog order (`fractional-indexing` key). */
   rank: string;
   createdAt: Date;
@@ -90,6 +93,8 @@ export interface IssueDetail extends IssueSummary {
   storyPoints: number | null;
   /** ISO `YYYY-MM-DD`. */
   dueDate: string | null;
+  /** The sprint the issue is in (any state), or null for the backlog. */
+  sprintId: string | null;
   createdAt: Date;
   updatedAt: Date;
   resolvedAt: Date | null;
@@ -113,6 +118,8 @@ export interface ProjectMeta {
   labels: LabelView[];
   users: UserOption[];
   epics: IssueSummary[];
+  /** Sprint picker: the active and planned sprints (closed ones take no new issues). */
+  sprints: SprintOption[];
 }
 
 export interface CommentView {

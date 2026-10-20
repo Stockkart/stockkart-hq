@@ -12,7 +12,7 @@ import {
   type updateIssueFieldInput,
 } from "@/lib/issues/schemas";
 import { extractPlainText, type RichTextDoc } from "@/lib/rich-text";
-import { components, issues, projects, statuses, users } from "@/server/db/schema";
+import { components, issues, projects, sprints, statuses, users } from "@/server/db/schema";
 import { directRead, type Read } from "@/server/db/read-batch";
 import { type AppDatabase, type RunAtomic } from "@/server/db/types";
 
@@ -154,6 +154,20 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
     if (!row) throw notFound("Component");
   }
 
+  /** BLG-3: issues go into a planned or active sprint of their own project only. */
+  async function checkSprint(projectId: IdRef, sprintId: string | null) {
+    if (!sprintId) return;
+    const [row] = await read(
+      db
+        .select({ state: sprints.state })
+        .from(sprints)
+        .where(and(eq(sprints.id, sprintId), eq(sprints.projectId, projectId)))
+        .limit(1),
+    );
+    if (!row) throw notFound("Sprint");
+    if (row.state === "closed") throw invalid("That sprint is closed; pick an open one");
+  }
+
   async function checkStatus(projectId: IdRef, statusId: string) {
     const [status] = await read(
       db
@@ -227,14 +241,16 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
       const parentId = input.parentId ?? null;
       const assigneeId = input.assigneeId ?? null;
       const componentId = input.componentId ?? null;
+      const sprintId = input.sprintId ?? null;
       // Every check and lookup in one batched round trip; the project is referenced by key,
       // so nothing waits for it. Errors keep the old order (project first).
       const projectRef = projectIdByKey(input.projectKey);
-      const [project, parent, , , statusId, projectKeys, firstTopRank] = await allInOrder([
+      const [project, parent, , , , statusId, projectKeys, firstTopRank] = await allInOrder([
         projectByKey(input.projectKey),
         parentRow(parentId),
         checkUser(assigneeId),
         checkComponent(projectRef, componentId),
+        checkSprint(projectRef, sprintId),
         defaultStatusId(projectRef, input.type),
         allProjectKeys(),
         topRank(projectRef),
@@ -279,19 +295,26 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
             inserted AS (
               INSERT INTO issues (id, project_id, number, type, title, description,
                 description_text, status_id, priority, assignee_id, reporter_id, parent_id,
-                component_id, rank)
+                component_id, sprint_id, rank)
               SELECT ${id}::uuid, ${project.id}::uuid, counter.issue_counter,
                 ${input.type}::issue_type, ${input.title}, ${jsonbOrNull(description)},
                 ${descriptionText}, ${statusId}::uuid, ${input.priority}::smallint,
                 ${uuidOrNull(assigneeId)}, ${actorId}::uuid, ${uuidOrNull(parentId)},
-                ${uuidOrNull(componentId)}, ${rank}
+                ${uuidOrNull(componentId)}, ${uuidOrNull(sprintId)}, ${rank}
               FROM counter
-              RETURNING id, number
+              RETURNING id, number, sprint_id
             ),
             created_activity AS (
               INSERT INTO activity (entity_type, entity_id, actor_id, action, to_value)
               SELECT 'issue', inserted.id, ${actorId}::uuid, 'created', ${input.type}
               FROM inserted
+            ),
+            -- BLG-3/SPR-3: created straight into a sprint counts as joining it (burndown).
+            sprint_activity AS (
+              INSERT INTO activity (entity_type, entity_id, actor_id, action, field, to_value)
+              SELECT 'issue', inserted.id, ${actorId}::uuid, 'updated', 'sprint',
+                inserted.sprint_id::text
+              FROM inserted WHERE inserted.sprint_id IS NOT NULL
             ),
             ${todoLink}
             ${mentionSyncCtes({
@@ -356,6 +379,9 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
               return {};
             case "parent":
               return { parent: await parentRow(input.value) };
+            case "sprint":
+              await checkSprint(projectRef, input.value);
+              return {};
             default:
               return {};
           }
@@ -432,6 +458,17 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
             )`;
           }
           break;
+        case "sprint":
+          column = "sprint_id";
+          value = uuidOrNull(input.value);
+          // Re-checked at write time: the sprint may have been closed or deleted since.
+          if (input.value) {
+            alsoWhere = sql`AND EXISTS (
+              SELECT 1 FROM sprints s WHERE s.id = ${input.value}::uuid
+                AND s.project_id = issues.project_id AND s.state <> 'closed'
+            )`;
+          }
+          break;
       }
 
       const col = sql.identifier(column);
@@ -464,8 +501,16 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
         result,
         z.object({ from_value: z.string().nullable(), to_value: z.string().nullable() }),
       );
-      // No row: the issue was deleted meanwhile, or (parent) the new parent was.
-      if (!row) throw notFound(input.field === "parent" ? "Issue or parent issue" : "Issue");
+      // No row: the issue was deleted meanwhile, or (parent/sprint) the target went away.
+      if (!row) {
+        throw notFound(
+          input.field === "parent"
+            ? "Issue or parent issue"
+            : input.field === "sprint"
+              ? "Issue or open sprint"
+              : "Issue",
+        );
+      }
       return {
         from: recordValues ? row.from_value : null,
         to: recordValues ? row.to_value : null,

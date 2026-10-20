@@ -104,8 +104,9 @@ describe("issue server actions", () => {
       expect(revalidatePath).toHaveBeenCalled();
       for (const [path, type] of revalidatePath.mock.calls) {
         expect(type).toBe("page");
+        // Sprint pages show tallies and burndowns of issue fields (SPR-1…3).
         expect(path).toMatch(
-          /^\/(\[projectKey\]\/(issues|backlog|board|adrs|docs\/\[id\])|my-work|todos)/,
+          /^\/(\[projectKey\]\/(issues|backlog|board|adrs|docs\/\[id\]|sprints)|my-work|todos)/,
         );
         expect(path).not.toBe("/[projectKey]");
       }

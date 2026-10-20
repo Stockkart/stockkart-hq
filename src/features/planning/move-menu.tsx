@@ -7,6 +7,7 @@ import {
   ChevronUp,
   EllipsisVertical,
 } from "lucide-react";
+import { type Ref } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -33,17 +34,27 @@ export function MoveMenu({
   available,
   onMove,
   children,
+  triggerRef,
+  keepFocusOnClose,
 }: {
   itemLabel: string;
   available: Record<MoveKind, boolean>;
   onMove: (kind: MoveKind) => void;
   /** Extra menu items after the move entries. */
   children?: React.ReactNode;
+  triggerRef?: Ref<HTMLButtonElement>;
+  /**
+   * True when the chosen item moves the row elsewhere (BLG-3 "Move to sprint…"): the row
+   * remounts in its new section and takes focus itself, so the menu must not return focus
+   * to this (old) trigger.
+   */
+  keepFocusOnClose?: () => boolean;
 }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button
+          ref={triggerRef}
           variant="ghost"
           size="icon"
           className="size-7"
@@ -52,7 +63,12 @@ export function MoveMenu({
           <EllipsisVertical aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent
+        align="end"
+        onCloseAutoFocus={(event) => {
+          if (keepFocusOnClose?.()) event.preventDefault();
+        }}
+      >
         {MOVE_KINDS.map((kind) => {
           const Icon = ICONS[kind];
           return (

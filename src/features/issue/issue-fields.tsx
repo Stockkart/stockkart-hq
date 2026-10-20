@@ -22,6 +22,7 @@ import {
   LabelDot,
   labelOptions,
   priorityOptions,
+  sprintOptions,
   statusOptions,
   userOptions,
 } from "./field-options";
@@ -52,6 +53,7 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
     storyPoints: issue.storyPoints,
     dueDate: issue.dueDate,
     parent: issue.parent?.id ?? null,
+    sprint: issue.sprintId,
   };
   const { valueOf, change, flush } = useFieldSaver<PanelField>(
     serverValues,
@@ -67,6 +69,7 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
     points: useId(),
     due: useId(),
     parent: useId(),
+    sprint: useId(),
     labels: useId(),
   };
 
@@ -153,6 +156,19 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
             issueId={issue.id}
             labels={issue.labels}
             projectLabels={meta.labels}
+          />
+        </Field>
+
+        <Field label="Sprint" htmlFor={ids.sprint}>
+          <Select
+            id={ids.sprint}
+            label="Sprint"
+            value={idOf("sprint")}
+            options={sprintOptions(meta.sprints, issue.sprintId)}
+            // BLG-3: "Backlog" takes the issue out of every sprint.
+            clearLabel="Backlog"
+            placeholder="Backlog"
+            onChange={(value) => pick("sprint", value)}
           />
         </Field>
 

@@ -28,10 +28,11 @@ import { whenIdle } from "@/lib/idle";
 import { PROJECT_KEY_PATTERN } from "@/lib/issues/keys";
 import { TITLE_MAX } from "@/lib/issues/schemas";
 import { isEmptyDoc, type RichTextDoc } from "@/lib/rich-text";
+import { type SprintOption } from "@/lib/sprints/views";
 import { createIssueAction, loadIssueTemplatesAction } from "@/server/actions/issues";
 import { promoteTodoAction } from "@/server/actions/todos";
 
-import { priorityOptions, typeOptions } from "./field-options";
+import { priorityOptions, sprintOptions, typeOptions } from "./field-options";
 import { shouldIgnoreShortcut } from "./keyboard";
 import {
   isQuickCreateEvent,
@@ -49,6 +50,8 @@ interface QuickCreateProps {
   defaultProjectKey: string;
   /** Templates loaded with the page; without them they are fetched once, on idle. */
   initialTemplates?: Partial<Record<IssueType, RichTextDoc>>;
+  /** BLG-3: open sprints per project key, loaded with the page (no request on open). */
+  sprintOptionsByProject?: Record<string, SprintOption[]>;
 }
 
 /**
@@ -59,13 +62,18 @@ interface QuickCreateProps {
  * Other client code opens it pre-filled with `openQuickCreate()` (⌘K "Create bug", MY-3
  * "Promote to issue"); a promote request creates through `promoteTodoAction` instead.
  */
-export function QuickCreate({ defaultProjectKey, initialTemplates }: QuickCreateProps) {
+export function QuickCreate({
+  defaultProjectKey,
+  initialTemplates,
+  sprintOptionsByProject,
+}: QuickCreateProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [type, setType] = useState<IssueType>("task");
   const [priority, setPriority] = useState<Priority>(DEFAULT_PRIORITY);
+  const [sprintId, setSprintId] = useState<string | null>(null);
   // Starts from the default type's template when the templates came with the page.
   const [description, setDescription] = useState<RichTextDoc | null>(
     initialTemplates?.task ?? null,
@@ -82,11 +90,20 @@ export function QuickCreate({ defaultProjectKey, initialTemplates }: QuickCreate
   // The pending `openQuickCreate()` request (promote target, callback); cleared on close.
   const request = useRef<Omit<QuickCreateRequest, "title" | "type">>({});
   const [promoting, setPromoting] = useState(false);
-  const ids = { title: useId(), type: useId(), priority: useId(), description: useId() };
+  const ids = {
+    title: useId(),
+    type: useId(),
+    priority: useId(),
+    sprint: useId(),
+    description: useId(),
+  };
 
   // On /XYZ/... pages, create in project XYZ; elsewhere use the default project.
   const pathKey = pathname.split("/")[1] ?? "";
   const projectKey = PROJECT_KEY_PATTERN.test(pathKey) ? pathKey : defaultProjectKey;
+  const sprints = sprintOptionsByProject?.[projectKey] ?? [];
+  // A pick from another project's list (the user navigated) falls back to the backlog.
+  const sprint = sprints.some((option) => option.id === sprintId) ? sprintId : null;
 
   // Latest values for the async template load below.
   const current = useRef({
@@ -151,6 +168,7 @@ export function QuickCreate({ defaultProjectKey, initialTemplates }: QuickCreate
     setTitle("");
     setType("task");
     setPriority(DEFAULT_PRIORITY);
+    setSprintId(null);
     setDescription(null);
     setDescriptionEdited(false);
     setEditorKey((key) => key + 1);
@@ -202,6 +220,8 @@ export function QuickCreate({ defaultProjectKey, initialTemplates }: QuickCreate
         title,
         type,
         priority,
+        // BLG-3: only when one was picked (omitted = the backlog).
+        ...(sprint ? { sprintId: sprint } : {}),
         description: description && !isEmptyDoc(description) ? description : null,
       };
       const result = promoteTodoId
@@ -308,6 +328,18 @@ export function QuickCreate({ defaultProjectKey, initialTemplates }: QuickCreate
                   onChange={(next) => {
                     if (next !== null) setPriority(next);
                   }}
+                />
+              </div>
+              <div className="flex min-w-36 flex-col gap-1.5">
+                <Label htmlFor={ids.sprint}>Sprint</Label>
+                <Select
+                  id={ids.sprint}
+                  label="Sprint"
+                  value={sprint}
+                  options={sprintOptions(sprints)}
+                  clearLabel="Backlog"
+                  placeholder="Backlog"
+                  onChange={setSprintId}
                 />
               </div>
             </div>

@@ -43,10 +43,15 @@ import { type IdRef, labelsJson, parseLabels } from "./sql";
  * Which issues a planning page shows:
  * - `all`: the issue list (VW-1).
  * - `backlog`: not-done issues outside an active sprint (BLG-1).
- * - `board`: open issues plus done ones resolved in the last `BOARD_DONE_DAYS` days (BRD-3;
- *   sprints arrive with SPR-1, until then the board has no sprint scope).
+ * - `planning`: the backlog page with its sprint sections (BLG-3): every not-done issue
+ *   plus all issues of the active sprint (done ones included). The page splits them into
+ *   the active sprint, planned sprints and the backlog.
+ * - `board`: open issues plus done ones resolved in the last `BOARD_DONE_DAYS` days (BRD-3
+ *   "all open").
+ * - `board_sprint`: BRD-3's default: the active sprint's issues when one is active,
+ *   otherwise the same as `board`. Decided in SQL, so the page needs no earlier read.
  */
-export type IssueScope = "all" | "backlog" | "board";
+export type IssueScope = "all" | "backlog" | "planning" | "board" | "board_sprint";
 export const BOARD_DONE_DAYS = 14;
 /**
  * Most rows one planning page loads (SPEC §9.2 targets 1,000 open issues). Pages say so
@@ -62,6 +67,8 @@ export interface ListIssuesOptions {
   sort?: IssueSort;
   /** Resolves the `me` assignee filter. */
   currentUserId: string;
+  /** Only the issues of this sprint (the sprint page, SPR-3). */
+  sprintId?: string;
 }
 
 export interface RecentItem {
@@ -133,6 +140,12 @@ export function createPlanningQueries(db: AppDatabase, { read = directRead }: Qu
   }
 
   function scopeCondition(scope: IssueScope): SQL | undefined {
+    // The project's active sprint (at most one, SPR-1), or NULL.
+    const activeSprint = sql`(SELECT s.id FROM sprints s WHERE s.project_id = ${issues.projectId} AND s.state = 'active')`;
+    const openOrRecent = or(
+      ne(statuses.category, "done"),
+      sql`${issues.resolvedAt} >= now() - make_interval(days => ${BOARD_DONE_DAYS})`,
+    );
     switch (scope) {
       case "all":
         return undefined;
@@ -141,11 +154,13 @@ export function createPlanningQueries(db: AppDatabase, { read = directRead }: Qu
           ne(statuses.category, "done"),
           sql`NOT EXISTS (SELECT 1 FROM sprints s WHERE s.id = ${issues.sprintId} AND s.state = 'active')`,
         );
+      case "planning":
+        return or(ne(statuses.category, "done"), sql`${issues.sprintId} = ${activeSprint}`);
       case "board":
-        return or(
-          ne(statuses.category, "done"),
-          sql`${issues.resolvedAt} >= now() - make_interval(days => ${BOARD_DONE_DAYS})`,
-        );
+        return openOrRecent;
+      case "board_sprint":
+        return sql`CASE WHEN ${activeSprint} IS NULL THEN ${openOrRecent}
+          ELSE ${issues.sprintId} IS NOT DISTINCT FROM ${activeSprint} END`;
     }
   }
 
@@ -182,6 +197,7 @@ export function createPlanningQueries(db: AppDatabase, { read = directRead }: Qu
             type: issues.type,
             priority: issues.priority,
             storyPoints: issues.storyPoints,
+            sprintId: issues.sprintId,
             rank: issues.rank,
             createdAt: issues.createdAt,
             updatedAt: issues.updatedAt,
@@ -213,6 +229,7 @@ export function createPlanningQueries(db: AppDatabase, { read = directRead }: Qu
               eq(issues.projectId, projectId),
               isNull(issues.deletedAt),
               scopeCondition(options.scope),
+              options.sprintId ? eq(issues.sprintId, options.sprintId) : undefined,
               ...filterConditions(options.filters, options.currentUserId),
             ),
           )
@@ -246,6 +263,7 @@ export function createPlanningQueries(db: AppDatabase, { read = directRead }: Qu
             : null,
         storyPoints: row.storyPoints,
         labels: parseLabels(row.labels),
+        sprintId: row.sprintId,
         rank: row.rank,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,

@@ -8,6 +8,8 @@ import { createIssueService } from "./issues";
 import { createPlanningService } from "./planning";
 import { createPlanningQueries } from "./planning-queries";
 import { createSearchService } from "./search";
+import { createSprintQueries } from "./sprint-queries";
+import { createSprintService } from "./sprints";
 import { createTodoService } from "./todos";
 
 // Wiring only: the real Neon database for the app. Tests build the same services on a
@@ -22,3 +24,5 @@ export const todoService = createTodoService(db, { read });
 export const searchService = createSearchService(db);
 export const docService = createDocService(db, { runAtomic, read });
 export const docQueries = createDocQueries(db, { read });
+export const sprintService = createSprintService(db, { runAtomic, read });
+export const sprintQueries = createSprintQueries(db, { read });

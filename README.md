@@ -14,8 +14,10 @@ backlog with drag and drop, a board, My Work with recently viewed issues, person
 can be promoted to issues, and a ⌘K palette that searches issues, docs and comments); and
 docs: a page tree with drag and drop, docs from 13 built-in templates, an autosaving editor
 with optimistic locking, tables, callouts and Mermaid diagrams, ADRs with numbering and a
-log, and a one-time handbook import. The database schema covers all of Phase 1; sprints,
-roadmap, diagrams, incidents and services are still "coming soon".
+log, and a one-time handbook import. Sprints (SPR-1…4) are in too: sprint sections on the
+backlog with Start/Complete, a board scoped to the active sprint, and a sprints page with a
+burndown and velocity reconstructed from the activity log. The database schema covers all of
+Phase 1; roadmap, diagrams, incidents and services are still "coming soon".
 
 ## Stack
 
@@ -27,6 +29,7 @@ roadmap, diagrams, incidents and services are still "coming soon".
 | UI        | Tailwind CSS 4, shadcn/ui components, lucide-react                                      |
 | Editor    | Tiptap 3 (MIT packages only), loaded client-only                                        |
 | Planning  | dnd-kit (MIT) for backlog and board drag and drop                                       |
+| Charts    | Recharts (MIT, client-only) for the burndown and velocity charts                        |
 | Diagrams  | Mermaid (MIT, strict mode, client-only) with DOMPurify (Apache-2.0 option) on its SVG   |
 | Import    | markdown-it (MIT) for the handbook import                                               |
 | Tests     | Vitest + Testing Library (unit), Playwright (smoke)                                     |
