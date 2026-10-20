@@ -28,7 +28,14 @@ import { PRIORITIES, PRIORITY_LABELS } from "@/lib/issues/constants";
 import { type BacklogGroup } from "@/lib/issues/filters";
 import { type NamedOption, type PlanningIssue } from "@/lib/issues/views";
 import { groupIssues } from "@/lib/planning/groups";
-import { applyMove, availableMoves, dropOnto, moveBy, type MoveKind } from "@/lib/planning/reorder";
+import {
+  anchorInList,
+  applyMove,
+  availableMoves,
+  dropOnto,
+  moveBy,
+  type MoveKind,
+} from "@/lib/planning/reorder";
 import { cn } from "@/lib/utils";
 import { updateIssueFieldAction } from "@/server/actions/issues";
 import { moveIssueAction } from "@/server/actions/planning";
@@ -73,6 +80,7 @@ export function Backlog({ issues, projectKey, group, users, filtered }: BacklogP
   );
 
   const sections = groupIssues(optimistic, group);
+  const fullIds = optimistic.map((issue) => issue.id);
   const keyOf = new Map(optimistic.map((issue) => [issue.id, issue.key]));
 
   function move(id: string, afterId: string | null, description: string) {
@@ -97,7 +105,10 @@ export function Backlog({ issues, projectKey, group, users, filtered }: BacklogP
       String(active.id),
       String(over.id),
     );
-    if (reorder) move(String(active.id), reorder.afterId, `Moved ${keyOf.get(String(active.id))}`);
+    if (reorder) {
+      const id = String(active.id);
+      move(id, anchorInList(fullIds, reorder, id), `Moved ${keyOf.get(id)}`);
+    }
   }
 
   function onMenuMove(sectionIds: string[], id: string, kind: MoveKind) {
@@ -106,7 +117,7 @@ export function Backlog({ issues, projectKey, group, users, filtered }: BacklogP
     const position = reorder.order.indexOf(id) + 1;
     move(
       id,
-      reorder.afterId,
+      anchorInList(fullIds, reorder, id),
       `Moved ${keyOf.get(id)} to position ${position} of ${sectionIds.length}`,
     );
   }

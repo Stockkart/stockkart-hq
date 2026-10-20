@@ -2,7 +2,7 @@
 
 import { ChevronDown, Search, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useId, useRef, useState, useTransition } from "react";
+import { useEffect, useId, useOptimistic, useRef, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -51,6 +51,9 @@ interface FilterBarProps {
 /** Wait after typing in the text filter before updating the URL. */
 const TEXT_DEBOUNCE_MS = 300;
 
+/** The text as `parseIssueFilters` will read it back from the URL. */
+const normalise = (value: string) => value.replace(/\s+/g, " ").trim();
+
 /**
  * VW-1/VW-2 (and BLG-5) filter bar, shared by the issue list and the backlog. All state is
  * in the URL: every change replaces the query string, the server component re-renders with
@@ -60,15 +63,24 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
   const router = useRouter();
   const pathname = usePathname();
   const [pending, startTransition] = useTransition();
+  // Shown at once while the new URL renders, so quick toggles never flicker back.
+  const [shown, showOptimistic] = useOptimistic(filters);
   const [text, setText] = useState(filters.text);
   const [seenText, setSeenText] = useState(filters.text);
+  // The text this bar last wrote to the URL, normalised the way the parser does.
+  const [appliedText, setAppliedText] = useState(filters.text);
   const textId = useId();
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // The URL changed elsewhere (back button, "Clear"): show its text (render-time adjustment).
+  // New URL text (render-time adjustment). Only text from elsewhere (back button, a shared
+  // link) replaces the field: the echo of our own debounced update may be older than what
+  // the user has typed since, and must not drop those keystrokes.
   if (seenText !== filters.text) {
     setSeenText(filters.text);
-    setText(filters.text);
+    if (filters.text !== appliedText) {
+      setAppliedText(filters.text);
+      setText(filters.text);
+    }
   }
 
   // Latest values for the debounced text update and for quick successive toggles: `filters`
@@ -90,9 +102,13 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
   function apply(next: IssueFilters) {
     clearTimer();
     latest.current = { ...latest.current, filters: next };
+    setAppliedText(next.text);
+    // "Clear filters" (or Enter) sets the text from here; typing already shows it.
+    if (normalise(text) !== next.text) setText(next.text);
     const { preserved: keep, pathname: path } = latest.current;
     const query = filtersToSearchParams(next, keep).toString();
     startTransition(() => {
+      showOptimistic(next);
       router.replace(query ? `${path}?${query}` : path, { scroll: false });
     });
   }
@@ -106,7 +122,7 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
     setText(value);
     clearTimer();
     timer.current = setTimeout(
-      () => update((current) => ({ ...current, text: value.trim() })),
+      () => update((current) => ({ ...current, text: normalise(value) })),
       TEXT_DEBOUNCE_MS,
     );
   }
@@ -141,14 +157,14 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
           className="h-8 pl-8"
           onChange={(event) => onText(event.target.value)}
           onKeyDown={(event) => {
-            if (event.key === "Enter") update((current) => ({ ...current, text: text.trim() }));
+            if (event.key === "Enter") update((current) => ({ ...current, text: normalise(text) }));
           }}
         />
       </div>
       <MultiFilter
         label="Type"
         options={ISSUE_TYPES.map((value) => ({ value, label: ISSUE_TYPE_LABELS[value] }))}
-        selected={filters.types}
+        selected={shown.types}
         onToggle={(value, on) =>
           update((current) => ({ ...current, types: toggled(current.types, value, on) }))
         }
@@ -156,7 +172,7 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
       <MultiFilter
         label="Status"
         options={options.statuses.map((status) => ({ value: status.id, label: status.name }))}
-        selected={filters.statuses}
+        selected={shown.statuses}
         onToggle={(value, on) =>
           update((current) => ({ ...current, statuses: toggled(current.statuses, value, on) }))
         }
@@ -164,7 +180,7 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
       <MultiFilter
         label="Priority"
         options={PRIORITIES.map((value) => ({ value, label: PRIORITY_LABELS[value] }))}
-        selected={filters.priorities}
+        selected={shown.priorities}
         onToggle={(value, on) =>
           update((current) => ({ ...current, priorities: toggled(current.priorities, value, on) }))
         }
@@ -172,7 +188,7 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
       <MultiFilter
         label="Assignee"
         options={assigneeOptions}
-        selected={filters.assignees}
+        selected={shown.assignees}
         onToggle={(value, on) =>
           update((current) => ({ ...current, assignees: toggled(current.assignees, value, on) }))
         }
@@ -183,7 +199,7 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
           value: component.id,
           label: component.name,
         }))}
-        selected={filters.components}
+        selected={shown.components}
         onToggle={(value, on) =>
           update((current) => ({ ...current, components: toggled(current.components, value, on) }))
         }
@@ -191,12 +207,12 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
       <MultiFilter
         label="Label"
         options={options.labels.map((label) => ({ value: label.id, label: label.name }))}
-        selected={filters.labels}
+        selected={shown.labels}
         onToggle={(value, on) =>
           update((current) => ({ ...current, labels: toggled(current.labels, value, on) }))
         }
       />
-      {hasActiveFilters(filters) ? (
+      {hasActiveFilters(shown) ? (
         <Button variant="ghost" size="sm" onClick={() => apply(EMPTY_FILTERS)}>
           <X aria-hidden="true" />
           Clear filters

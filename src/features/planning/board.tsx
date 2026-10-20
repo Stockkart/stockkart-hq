@@ -16,7 +16,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowRightLeft, GripVertical } from "lucide-react";
 import Link from "next/link";
-import { useId, useOptimistic, useState, useTransition } from "react";
+import { useEffect, useId, useOptimistic, useRef, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -59,14 +59,19 @@ export function Board({ issues, statuses, projectKey }: BoardProps) {
   );
   const [, startTransition] = useTransition();
   const [announcement, setAnnouncement] = useState("");
+  // A moved card remounts in its new column, which drops keyboard focus; the card with
+  // this id takes focus (its "Move to…" button) whenever it mounts, so the keyboard user
+  // stays on it after a move or a rollback.
+  const [focusId, setFocusId] = useState<string | null>(null);
   const dndId = useId();
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor),
   );
 
-  function moveTo(issue: PlanningIssue, status: StatusOption) {
+  function moveTo(issue: PlanningIssue, status: StatusOption, keepFocus = false) {
     if (issue.status.id === status.id) return;
+    if (keepFocus) setFocusId(issue.id);
     startTransition(async () => {
       applyOptimistic({ id: issue.id, status });
       const result = await callAction(() =>
@@ -101,7 +106,8 @@ export function Board({ issues, statuses, projectKey }: BoardProps) {
                     issue={issue}
                     projectKey={projectKey}
                     statuses={statuses}
-                    onMove={(next) => moveTo(issue, next)}
+                    takeFocus={focusId === issue.id}
+                    onMove={(next) => moveTo(issue, next, true)}
                   />
                 ))}
               </Column>
@@ -149,16 +155,25 @@ function Card({
   issue,
   projectKey,
   statuses,
+  takeFocus,
   onMove,
 }: {
   issue: PlanningIssue;
   projectKey: string;
   statuses: StatusOption[];
+  takeFocus: boolean;
   onMove: (status: StatusOption) => void;
 }) {
   // Destructured: the React Compiler lint treats the hook's result object as a ref.
   const { attributes, isDragging, listeners, setActivatorNodeRef, setNodeRef, transform } =
     useDraggable({ id: issue.id });
+  const moveButton = useRef<HTMLButtonElement>(null);
+  // Set when a "Move to…" item was chosen: the menu must not return focus to this (old)
+  // card, which is about to remount elsewhere and take focus itself.
+  const moved = useRef(false);
+  useEffect(() => {
+    if (takeFocus) moveButton.current?.focus();
+  }, [takeFocus]);
   const href = `/${projectKey}/issues/${issue.key}`;
   return (
     <li
@@ -188,6 +203,7 @@ function Card({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
+              ref={moveButton}
               variant="ghost"
               size="icon"
               className="size-6"
@@ -196,14 +212,24 @@ function Card({
               <ArrowRightLeft aria-hidden="true" className="size-3.5" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
+          <DropdownMenuContent
+            align="end"
+            onCloseAutoFocus={(event) => {
+              if (!moved.current) return;
+              moved.current = false;
+              event.preventDefault();
+            }}
+          >
             <DropdownMenuLabel>Move to…</DropdownMenuLabel>
             <DropdownMenuSeparator />
             {statuses.map((status) => (
               <DropdownMenuItem
                 key={status.id}
                 disabled={status.id === issue.status.id}
-                onSelect={() => onMove(status)}
+                onSelect={() => {
+                  moved.current = true;
+                  onMove(status);
+                }}
               >
                 {status.name}
               </DropdownMenuItem>

@@ -167,11 +167,18 @@ describe("Board (BRD-1/2)", () => {
     render(<Board issues={issues} statuses={statuses} projectKey="STK" />);
     await user.click(screen.getByRole("button", { name: "Move STK-8 to…" }));
     await user.click(await screen.findByRole("menuitem", { name: "In Progress" }));
-    expect(issueActions.updateIssueFieldAction).toHaveBeenCalledWith({
-      issueId: "i8",
-      field: "status",
-      value: "s-prog",
-    });
+    await waitFor(() =>
+      expect(issueActions.updateIssueFieldAction).toHaveBeenCalledWith({
+        issueId: "i8",
+        field: "status",
+        value: "s-prog",
+      }),
+    );
+    // The card remounts in another column (and back: this test never sends new server
+    // data, so the optimistic move ends) and keeps keyboard focus throughout.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Move STK-8 to…" })).toHaveFocus(),
+    );
   });
 
   it("rolls a failed move back to the original column", async () => {

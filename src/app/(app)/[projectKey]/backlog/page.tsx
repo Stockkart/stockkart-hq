@@ -4,6 +4,7 @@ import { loadProjectFromRoute } from "@/features/issue/project-route";
 import { Backlog } from "@/features/planning/backlog";
 import { FilterBar } from "@/features/planning/filter-bar";
 import { GroupPicker } from "@/features/planning/group-picker";
+import { LimitNotice } from "@/features/planning/limit-notice";
 import {
   filtersToSearchParams,
   hasActiveFilters,
@@ -13,6 +14,7 @@ import {
 import { sumPoints } from "@/lib/planning/groups";
 import { requirePageSession } from "@/server/auth/require-session";
 import { issueQueries, planningQueries } from "@/server/services";
+import { ISSUE_LIST_LIMIT } from "@/server/services/planning-queries";
 
 interface Props {
   params: Promise<{ projectKey: string }>;
@@ -61,6 +63,7 @@ export default async function BacklogPage({ params, searchParams }: Props) {
       >
         <GroupPicker group={group} filters={filters} />
       </FilterBar>
+      <LimitNotice count={issues.length} limit={ISSUE_LIST_LIMIT} />
       <Backlog
         issues={issues}
         projectKey={project.key}

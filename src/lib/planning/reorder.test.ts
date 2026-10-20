@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { applyMove, availableMoves, dropOnto, moveBy, moveToIndex } from "./reorder";
+import { anchorInList, applyMove, availableMoves, dropOnto, moveBy, moveToIndex } from "./reorder";
 
 const ids = ["a", "b", "c", "d"];
 
@@ -48,5 +48,26 @@ describe("reorder maths (BLG-1, MY-2)", () => {
     expect(order("d")).toEqual(["a", "b", "d", "c"]);
     expect(order("missing")).toEqual(ids);
     expect(order(null, "missing")).toEqual(ids);
+  });
+});
+
+describe("anchorInList (grouped backlog)", () => {
+  // Full rank order a1 b1 a2 b2; section "b" is [b1, b2].
+  const full = ["a1", "b1", "a2", "b2"];
+
+  it("moves to the top of a section without leaving it", () => {
+    const reorder = moveBy(["b1", "b2"], "b2", "top");
+    // Right after a1 (before b1), not above every section.
+    expect(reorder && anchorInList(full, reorder, "b2")).toBe("a1");
+  });
+
+  it("uses the very top when the section starts the list", () => {
+    const reorder = moveBy(["a1", "a2"], "a2", "top");
+    expect(reorder && anchorInList(full, reorder, "a2")).toBeNull();
+  });
+
+  it("keeps an explicit predecessor", () => {
+    const reorder = moveBy(["b1", "b2"], "b1", "down");
+    expect(reorder && anchorInList(full, reorder, "b1")).toBe("b2");
   });
 });

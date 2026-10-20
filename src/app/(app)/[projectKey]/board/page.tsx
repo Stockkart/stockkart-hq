@@ -2,10 +2,11 @@ import type { Metadata } from "next";
 
 import { loadProjectFromRoute } from "@/features/issue/project-route";
 import { Board } from "@/features/planning/board";
+import { LimitNotice } from "@/features/planning/limit-notice";
 import { EMPTY_FILTERS } from "@/lib/issues/filters";
 import { requirePageSession } from "@/server/auth/require-session";
 import { issueQueries, planningQueries } from "@/server/services";
-import { BOARD_DONE_DAYS } from "@/server/services/planning-queries";
+import { BOARD_DONE_DAYS, ISSUE_LIST_LIMIT } from "@/server/services/planning-queries";
 
 interface Props {
   params: Promise<{ projectKey: string }>;
@@ -40,6 +41,7 @@ export default async function BoardPage({ params }: Props) {
           with sprints.
         </p>
       </div>
+      <LimitNotice count={issues.length} limit={ISSUE_LIST_LIMIT} />
       <Board issues={issues} statuses={meta.statuses} projectKey={project.key} />
     </div>
   );

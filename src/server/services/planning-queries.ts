@@ -45,6 +45,12 @@ import { type AppDatabase } from "@/server/db/types";
  */
 export type IssueScope = "all" | "backlog" | "board";
 export const BOARD_DONE_DAYS = 14;
+/**
+ * Most rows one planning page loads (SPEC §9.2 targets 1,000 open issues). Pages say so
+ * when they hit it; narrow with filters. Moves stay correct past it: they are expressed
+ * relative to a visible row and read true neighbours from the table.
+ */
+export const ISSUE_LIST_LIMIT = 1000;
 
 export interface ListIssuesOptions {
   scope: IssueScope;
@@ -226,7 +232,8 @@ export function createPlanningQueries(db: AppDatabase) {
             ...filterConditions(options.filters, options.currentUserId),
           ),
         )
-        .orderBy(...orderBy(options.scope, options.sort));
+        .orderBy(...orderBy(options.scope, options.sort))
+        .limit(ISSUE_LIST_LIMIT);
       const labelMap = await labelsFor(rows.map((row) => row.id));
       return rows.map((row) => ({
         id: row.id,

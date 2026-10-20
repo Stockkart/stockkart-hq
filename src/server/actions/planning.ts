@@ -21,7 +21,10 @@ export async function moveIssueAction(input: unknown): Promise<ActionResult<{ ra
     moveIssueInput,
     input,
     (data) => planningService.moveIssue(data),
-    () => revalidatePath("/[projectKey]", "layout"),
+    () => {
+      revalidatePath("/[projectKey]", "layout");
+      revalidatePath("/my-work"); // lists my issues in rank order
+    },
   );
 }
 

@@ -72,3 +72,21 @@ export function applyMove<T extends { id: string }>(
   if (at === -1) return [...list];
   return [...rest.slice(0, at + 1), moved, ...rest.slice(at + 1)];
 }
+
+/**
+ * A section (backlog group) is a slice of one ranked list. Moving a row to the top of its
+ * section must not lift it above other sections, so instead of "the very top" (`null`) it
+ * goes right after whatever precedes the section's new second row in the full list.
+ */
+export function anchorInList(
+  fullIds: readonly string[],
+  reorder: Reorder,
+  id: string,
+): string | null {
+  if (reorder.afterId !== null) return reorder.afterId;
+  const next = reorder.order[1];
+  if (next === undefined) return null;
+  const rest = fullIds.filter((item) => item !== id);
+  const at = rest.indexOf(next);
+  return at > 0 ? (rest[at - 1] ?? null) : null;
+}

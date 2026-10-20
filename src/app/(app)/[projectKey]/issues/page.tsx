@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { IssueList } from "@/features/issue/issue-list";
 import { loadProjectFromRoute } from "@/features/issue/project-route";
 import { FilterBar } from "@/features/planning/filter-bar";
+import { LimitNotice } from "@/features/planning/limit-notice";
 import {
   DEFAULT_SORT,
   filtersToSearchParams,
@@ -11,6 +12,7 @@ import {
 } from "@/lib/issues/filters";
 import { requirePageSession } from "@/server/auth/require-session";
 import { issueQueries, planningQueries } from "@/server/services";
+import { ISSUE_LIST_LIMIT } from "@/server/services/planning-queries";
 
 interface Props {
   params: Promise<{ projectKey: string }>;
@@ -54,6 +56,7 @@ export default async function IssuesPage({ params, searchParams }: Props) {
         </p>
       </div>
       <FilterBar filters={filters} options={meta} preserved={preserved} />
+      <LimitNotice count={issues.length} limit={ISSUE_LIST_LIMIT} />
       <IssueList issues={issues} projectKey={project.key} filters={filters} sort={sort} />
     </div>
   );
