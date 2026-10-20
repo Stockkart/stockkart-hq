@@ -6,11 +6,12 @@ import { IssueFields } from "@/features/issue/issue-fields";
 import { IssueHeader } from "@/features/issue/issue-header";
 import { Links, Subtasks } from "@/features/issue/issue-relations";
 import { IssueTabs } from "@/features/issue/issue-tabs";
-import { loadProjectFromRoute } from "@/features/issue/project-route";
+import { requireProject, resolveProjectKey } from "@/features/issue/project-route";
 import { RecordIssueView } from "@/features/issue/record-view";
 import { formatIssueKey, parseIssueKey } from "@/lib/issues/keys";
 import { requirePageSession } from "@/server/auth/require-session";
 import { commentService, docQueries, issueQueries } from "@/server/services";
+import { issueIdByNumber, projectIdByKey } from "@/server/services/sql";
 
 interface Props {
   params: Promise<{ projectKey: string; key: string }>;
@@ -30,28 +31,42 @@ export default async function IssuePage({ params }: Props) {
   const ref = parseIssueKey(rawKey);
   if (!ref) notFound();
   const canonicalKey = formatIssueKey(ref.projectKey, ref.number);
-  const project = await loadProjectFromRoute(projectKey, `/issues/${canonicalKey}`);
+  const projectRouteKey = resolveProjectKey(projectKey, `/issues/${canonicalKey}`);
   // The key's prefix must match the project in the path; `/STK/issues/stk-5` → canonical.
-  if (ref.projectKey !== project.key) notFound();
-  if (rawKey !== canonicalKey) redirect(`/${project.key}/issues/${canonicalKey}`);
+  if (ref.projectKey !== projectRouteKey) notFound();
+  if (rawKey !== canonicalKey) redirect(`/${projectRouteKey}/issues/${canonicalKey}`);
 
-  const issue = await issueQueries.getIssue(project.id, ref.number);
+  // ONE round trip: every query finds the project by key and the issue by number itself,
+  // so none waits for another (they were three to five rounds before).
+  const projectId = projectIdByKey(projectRouteKey);
+  const issueId = issueIdByNumber(projectId, ref.number);
+  const [
+    project,
+    issue,
+    meta,
+    children,
+    links,
+    mentions,
+    comments,
+    activity,
+    projectKeys,
+    subtaskParents,
+    docs,
+  ] = await Promise.all([
+    requireProject(projectRouteKey),
+    issueQueries.getIssue(projectId, ref.number),
+    issueQueries.getProjectMeta(projectId),
+    issueQueries.listChildren(issueId),
+    issueQueries.listLinks(issueId),
+    issueQueries.listMentionedIn(issueId),
+    commentService.listForIssue(issueId),
+    issueQueries.listActivity(issueId),
+    issueQueries.listProjectKeys(),
+    // Empty unless the issue is a subtask.
+    issueQueries.listSubtaskParents(projectId, issueId),
+    docQueries.docsLinkingTo(issueId),
+  ]);
   if (!issue) notFound();
-
-  const [meta, children, links, mentions, comments, activity, projectKeys, subtaskParents, docs] =
-    await Promise.all([
-      issueQueries.getProjectMeta(project.id),
-      issueQueries.listChildren(issue.id),
-      issueQueries.listLinks(issue.id),
-      issueQueries.listMentionedIn(issue.id),
-      commentService.listForIssue(issue.id),
-      issueQueries.listActivity(issue.id),
-      issueQueries.listProjectKeys(),
-      issue.type === "subtask"
-        ? issueQueries.listSubtaskParents(project.id, issue.id)
-        : Promise.resolve([]),
-      docQueries.docsLinkingTo(issue.id),
-    ]);
   const parentOptions = issue.type === "subtask" ? subtaskParents : meta.epics;
 
   return (

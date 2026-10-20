@@ -1,9 +1,9 @@
-import { and, asc, eq, gt, isNull, ne, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { generateKeyBetween } from "fractional-indexing";
 import { z } from "zod";
 
 import { type moveIssueInput, type recordViewInput } from "@/lib/planning/schemas";
-import { issues } from "@/server/db/schema";
+import { directRead, type Read } from "@/server/db/read-batch";
 import { type AppDatabase } from "@/server/db/types";
 
 import { conflict, notFound, pgErrorInfo, UNIQUE_VIOLATION } from "./errors";
@@ -18,25 +18,46 @@ const RANK_ATTEMPTS = 20;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export interface PlanningServiceOptions {
+  /** How reads run; on Neon, reads started together share one round trip. */
+  read?: Read;
   /** Test hook: runs between reading the neighbours and writing the new rank. */
   beforeRankWrite?: () => Promise<void>;
 }
 
 /** Backlog ordering (BLG-1) and My Work view tracking (MY-1). */
 export function createPlanningService(db: AppDatabase, options: PlanningServiceOptions = {}) {
-  async function rankOf(issueId: string, projectId?: string): Promise<string | null> {
-    const [row] = await db
-      .select({ rank: issues.rank })
-      .from(issues)
-      .where(
-        and(
-          eq(issues.id, issueId),
-          isNull(issues.deletedAt),
-          projectId ? eq(issues.projectId, projectId) : undefined,
-        ),
-      )
-      .limit(1);
-    return row?.rank ?? null;
+  const read = options.read ?? directRead;
+
+  /**
+   * Everything a move needs in ONE statement: the issue's rank, its predecessor's (null
+   * for the top, or when `afterIssueId` is not a live issue of the same project) and the
+   * predecessor's true successor among the project's other issues.
+   */
+  async function neighbours(issueId: string, afterIssueId: string | null) {
+    const result = await read(
+      db.execute(sql`
+        SELECT i.rank AS current, p.rank AS prev, nx.rank AS next
+        FROM issues i
+        LEFT JOIN LATERAL (
+          SELECT a.rank FROM issues a
+          WHERE a.id = ${afterIssueId}::uuid AND a.project_id = i.project_id
+            AND a.deleted_at IS NULL
+        ) p ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT n.rank FROM issues n
+          WHERE n.project_id = i.project_id AND n.id <> i.id
+            AND (p.rank IS NULL OR n.rank > p.rank)
+          ORDER BY n.rank
+          LIMIT 1
+        ) nx ON TRUE
+        WHERE i.id = ${issueId}::uuid AND i.deleted_at IS NULL
+      `),
+    );
+    const [row] = rowsOf(
+      result,
+      z.object({ current: z.string(), prev: z.string().nullable(), next: z.string().nullable() }),
+    );
+    return row ?? null;
   }
 
   return {
@@ -52,34 +73,13 @@ export function createPlanningService(db: AppDatabase, options: PlanningServiceO
      * retries, as `createIssue` does.
      */
     async moveIssue(input: MoveIssueData): Promise<{ rank: string }> {
-      const [issue] = await db
-        .select({ id: issues.id, projectId: issues.projectId })
-        .from(issues)
-        .where(and(eq(issues.id, input.issueId), isNull(issues.deletedAt)))
-        .limit(1);
-      if (!issue) throw notFound("Issue");
-
+      const afterIssueId = input.afterIssueId ?? null;
       for (let attempt = 1; ; attempt += 1) {
-        const current = await rankOf(issue.id);
-        if (current === null) throw notFound("Issue");
-        let prev: string | null = null;
-        if (input.afterIssueId) {
-          prev = await rankOf(input.afterIssueId, issue.projectId);
-          if (prev === null) throw notFound("The issue to move after");
-        }
-        const [successor] = await db
-          .select({ rank: issues.rank })
-          .from(issues)
-          .where(
-            and(
-              eq(issues.projectId, issue.projectId),
-              ne(issues.id, issue.id),
-              prev === null ? undefined : gt(issues.rank, prev),
-            ),
-          )
-          .orderBy(asc(issues.rank))
-          .limit(1);
-        const next = successor?.rank ?? null;
+        // One read per attempt (it was four serial ones): the ranks around the target gap.
+        const found = await neighbours(input.issueId, afterIssueId);
+        if (!found) throw notFound("Issue");
+        const { current, prev, next } = found;
+        if (afterIssueId && prev === null) throw notFound("The issue to move after");
         // Already in place: nothing to write. (Keys compare bytewise, like COLLATE "C".)
         if ((prev === null || current > prev) && (next === null || current < next)) {
           return { rank: current };
@@ -91,7 +91,7 @@ export function createPlanningService(db: AppDatabase, options: PlanningServiceO
           // list's "Updated" column and the issue history only show real changes.
           const result = await db.execute(sql`
             UPDATE issues SET rank = ${rank}
-            WHERE id = ${issue.id}::uuid AND deleted_at IS NULL
+            WHERE id = ${input.issueId}::uuid AND deleted_at IS NULL
             RETURNING rank
           `);
           const [row] = rowsOf(result, z.object({ rank: z.string() }));

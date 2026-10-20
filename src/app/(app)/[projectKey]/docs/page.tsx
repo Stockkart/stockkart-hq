@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 
 import { DocList } from "@/features/docs/doc-list";
 import { DocsToolbar } from "@/features/docs/docs-toolbar";
-import { loadProjectFromRoute } from "@/features/issue/project-route";
+import { docTree } from "@/features/docs/doc-route";
+import { requireProject, resolveProjectKey } from "@/features/issue/project-route";
 import { requirePageSession } from "@/server/auth/require-session";
-import { docQueries, issueQueries } from "@/server/services";
+import { issueQueries } from "@/server/services";
 
 interface Props {
   params: Promise<{ projectKey: string }>;
@@ -20,9 +21,11 @@ export default async function DocsPage({ params }: Props) {
   // Layouts and pages render in parallel, so each page checks the session itself too.
   await requirePageSession();
   const { projectKey } = await params;
-  const project = await loadProjectFromRoute(projectKey, "/docs");
-  const [docs, projectKeys] = await Promise.all([
-    docQueries.listTree(project.id),
+  const key = resolveProjectKey(projectKey, "/docs");
+  // One round trip, shared with the layout (same project and tree, cached per request).
+  const [project, docs, projectKeys] = await Promise.all([
+    requireProject(key),
+    docTree(key),
     issueQueries.listProjectKeys(),
   ]);
 

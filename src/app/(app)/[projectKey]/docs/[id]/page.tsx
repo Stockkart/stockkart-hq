@@ -3,9 +3,11 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 
 import { DocEditor } from "@/features/docs/doc-editor";
-import { loadProjectFromRoute } from "@/features/issue/project-route";
+import { docTree } from "@/features/docs/doc-route";
+import { requireProject, resolveProjectKey } from "@/features/issue/project-route";
 import { requirePageSession } from "@/server/auth/require-session";
 import { docQueries, issueQueries } from "@/server/services";
+import { projectIdByKey } from "@/server/services/sql";
 
 interface Props {
   params: Promise<{ projectKey: string; id: string }>;
@@ -25,19 +27,25 @@ export default async function DocPage({ params }: Props) {
   const { projectKey, id } = await params;
   const parsed = docId.safeParse(id);
   if (!parsed.success) notFound();
-  const project = await loadProjectFromRoute(projectKey, `/docs/${parsed.data}`);
-  const doc = await docQueries.getDoc(project.id, parsed.data);
+  const key = resolveProjectKey(projectKey, `/docs/${parsed.data}`);
+  const projectId = projectIdByKey(key);
+  const docUuid = parsed.data;
+  // ONE round trip for the page and the docs layout: every query takes the project by key
+  // and the doc by its id, so none waits for another. Rows for a doc that turns out not to
+  // exist (or to be in another project) are simply not rendered: the page 404s.
+  const [, doc, ancestors, linkedIssues, versions, users, projectKeys, adrs, tree] =
+    await Promise.all([
+      requireProject(key),
+      docQueries.getDoc(projectId, docUuid),
+      docQueries.ancestors(docUuid),
+      docQueries.linkedIssues(docUuid),
+      docQueries.listVersions(docUuid),
+      docQueries.listUsers(),
+      issueQueries.listProjectKeys(),
+      docQueries.supersedeOptions(projectId, docUuid),
+      docTree(key),
+    ]);
   if (!doc) notFound();
-
-  const [ancestors, linkedIssues, versions, users, projectKeys, adrs, tree] = await Promise.all([
-    docQueries.ancestors(doc.id),
-    docQueries.linkedIssues(doc.id),
-    docQueries.listVersions(doc.id),
-    docQueries.listUsers(),
-    issueQueries.listProjectKeys(),
-    doc.type === "adr" ? docQueries.listAdrs(project.id) : Promise.resolve([]),
-    docQueries.listTree(project.id),
-  ]);
 
   return (
     <DocEditor
@@ -49,9 +57,7 @@ export default async function DocPage({ params }: Props) {
       versions={versions}
       users={users}
       projectKeys={projectKeys}
-      adrs={adrs
-        .filter((adr) => adr.id !== doc.id)
-        .map((adr) => ({ id: adr.id, title: adr.title }))}
+      adrs={adrs}
       childCount={tree.filter((item) => item.parentId === doc.id).length}
     />
   );

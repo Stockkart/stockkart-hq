@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 import { IssueList } from "@/features/issue/issue-list";
-import { loadProjectFromRoute } from "@/features/issue/project-route";
+import { requireProject, resolveProjectKey } from "@/features/issue/project-route";
 import { FilterBar } from "@/features/planning/filter-bar";
 import { LimitNotice } from "@/features/planning/limit-notice";
 import {
@@ -13,6 +13,7 @@ import {
 import { requirePageSession } from "@/server/auth/require-session";
 import { issueQueries, planningQueries } from "@/server/services";
 import { ISSUE_LIST_LIMIT } from "@/server/services/planning-queries";
+import { projectIdByKey } from "@/server/services/sql";
 
 interface Props {
   params: Promise<{ projectKey: string }>;
@@ -35,15 +36,18 @@ export default async function IssuesPage({ params, searchParams }: Props) {
   // Only an explicit, valid sort goes back into URLs; the default stays implicit.
   const preserved = sort === DEFAULT_SORT ? {} : { sort: sort.by, dir: sort.dir };
   const query = filtersToSearchParams(filters, preserved).toString();
-  const project = await loadProjectFromRoute(projectKey, `/issues${query ? `?${query}` : ""}`);
-  const [issues, meta] = await Promise.all([
-    planningQueries.listIssues(project.id, {
+  const key = resolveProjectKey(projectKey, `/issues${query ? `?${query}` : ""}`);
+  // One round trip: the queries find the project by key themselves.
+  const projectId = projectIdByKey(key);
+  const [project, issues, meta] = await Promise.all([
+    requireProject(key),
+    planningQueries.listIssues(projectId, {
       scope: "all",
       filters,
       sort,
       currentUserId: session.user.id,
     }),
-    issueQueries.getProjectMeta(project.id),
+    issueQueries.getProjectMeta(projectId),
   ]);
 
   return (

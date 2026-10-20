@@ -42,6 +42,13 @@ describe("env validation (fail fast, fail closed)", () => {
     ).toBe("http://localhost:8080");
   });
 
+  it("keeps the query log off unless HQ_LOG_QUERIES is exactly 1", () => {
+    expect(parseEnv(valid).HQ_LOG_QUERIES).toBe(false);
+    expect(parseEnv({ ...valid, HQ_LOG_QUERIES: "0" }).HQ_LOG_QUERIES).toBe(false);
+    expect(parseEnv({ ...valid, HQ_LOG_QUERIES: "true" }).HQ_LOG_QUERIES).toBe(false);
+    expect(parseEnv({ ...valid, HQ_LOG_QUERIES: "1" }).HQ_LOG_QUERIES).toBe(true);
+  });
+
   it("never echoes secret values in the error", () => {
     const secret = "short-secret-value";
     expect(() => parseEnv({ ...valid, AUTH_SECRET: secret })).toThrow(

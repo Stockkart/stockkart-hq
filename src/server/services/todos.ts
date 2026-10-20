@@ -10,6 +10,7 @@ import {
   type setTodoDoneInput,
 } from "@/lib/todos/schemas";
 import { issues, projects, todos } from "@/server/db/schema";
+import { directRead, type Read } from "@/server/db/read-batch";
 import { type AppDatabase } from "@/server/db/types";
 
 import { notFound } from "./errors";
@@ -36,36 +37,36 @@ export interface TodoView {
  * are private, so the only race is one user's two tabs. Equal keys are harmless (ties sort
  * by creation time), and moves only ever pick a key strictly between distinct neighbours.
  */
-export function createTodoService(db: AppDatabase) {
+export function createTodoService(db: AppDatabase, { read = directRead }: { read?: Read } = {}) {
   const own = (userId: string, todoId: string) =>
     and(eq(todos.id, todoId), eq(todos.userId, userId));
 
   async function positionOf(userId: string, todoId: string): Promise<string | null> {
-    const [row] = await db
-      .select({ position: todos.position })
-      .from(todos)
-      .where(own(userId, todoId))
-      .limit(1);
+    const [row] = await read(
+      db.select({ position: todos.position }).from(todos).where(own(userId, todoId)).limit(1),
+    );
     return row?.position ?? null;
   }
 
   return {
     async list(userId: string): Promise<TodoView[]> {
-      const rows = await db
-        .select({
-          id: todos.id,
-          text: todos.text,
-          done: todos.done,
-          position: todos.position,
-          issueNumber: issues.number,
-          issueDeletedAt: issues.deletedAt,
-          projectKey: projects.key,
-        })
-        .from(todos)
-        .leftJoin(issues, eq(issues.id, todos.promotedIssueId))
-        .leftJoin(projects, eq(projects.id, issues.projectId))
-        .where(eq(todos.userId, userId))
-        .orderBy(asc(todos.position), asc(todos.createdAt), asc(todos.id));
+      const rows = await read(
+        db
+          .select({
+            id: todos.id,
+            text: todos.text,
+            done: todos.done,
+            position: todos.position,
+            issueNumber: issues.number,
+            issueDeletedAt: issues.deletedAt,
+            projectKey: projects.key,
+          })
+          .from(todos)
+          .leftJoin(issues, eq(issues.id, todos.promotedIssueId))
+          .leftJoin(projects, eq(projects.id, issues.projectId))
+          .where(eq(todos.userId, userId))
+          .orderBy(asc(todos.position), asc(todos.createdAt), asc(todos.id)),
+      );
       return rows.map((row) => ({
         id: row.id,
         text: row.text,
@@ -128,13 +129,13 @@ export function createTodoService(db: AppDatabase) {
 
     /** Moves a todo to just after `afterTodoId` (or the top); see `moveIssue`. */
     async move(userId: string, input: z.output<typeof moveTodoInput>): Promise<void> {
-      const current = await positionOf(userId, input.todoId);
+      // Both positions in one round trip.
+      const [current, prev] = await Promise.all([
+        positionOf(userId, input.todoId),
+        input.afterTodoId ? positionOf(userId, input.afterTodoId) : Promise.resolve(null),
+      ]);
       if (current === null) throw notFound("Todo");
-      let prev: string | null = null;
-      if (input.afterTodoId) {
-        prev = await positionOf(userId, input.afterTodoId);
-        if (prev === null) throw notFound("Todo");
-      }
+      if (input.afterTodoId && prev === null) throw notFound("Todo");
       // The predecessor's true successor among this user's todos (strictly greater, so a
       // tie with the predecessor can never make the key range empty).
       const [successor] = await db

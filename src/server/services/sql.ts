@@ -1,4 +1,4 @@
-import { type SQL, sql } from "drizzle-orm";
+import { type SQL, sql, type SQLWrapper } from "drizzle-orm";
 import { z } from "zod";
 
 import { type EntityType } from "@/lib/issues/constants";
@@ -16,6 +16,40 @@ export function rowsOf<T extends z.ZodType>(result: unknown, row: T): z.infer<T>
 
 /** A nullable uuid parameter. */
 export const uuidOrNull = (value: string | null | undefined) => sql`${value ?? null}::uuid`;
+
+/**
+ * An id, or a scalar subquery that yields it. Read queries accept either, so a page can
+ * send "the project with key STK" and the queries that need its id in ONE batch, instead
+ * of first looking the project up and then running the rest (one more round trip).
+ */
+export type IdRef = string | SQL;
+
+/** The id of the live (unarchived) project with this key; NULL when there is none. */
+export const projectIdByKey = (key: string): SQL =>
+  sql`(SELECT id FROM projects WHERE key = ${key} AND archived_at IS NULL)`;
+
+/** The id of the live issue with this number in that project; NULL when there is none. */
+export const issueIdByNumber = (projectId: IdRef, number: number): SQL =>
+  sql`(SELECT id FROM issues WHERE project_id = ${projectId}::uuid AND number = ${number}
+    AND deleted_at IS NULL)`;
+
+const labelRow = z.object({ id: z.string(), name: z.string(), color: z.string().nullable() });
+
+/**
+ * An issue's labels as one json column (by name), so a list loads its labels in the same
+ * statement instead of a second query keyed by the first one's ids.
+ */
+export const labelsJson = (issueId: SQL | SQLWrapper): SQL =>
+  sql`COALESCE((
+    SELECT json_agg(json_build_object('id', l.id, 'name', l.name, 'color', l.color)
+      ORDER BY l.name)
+    FROM issue_labels il JOIN labels l ON l.id = il.label_id
+    WHERE il.issue_id = ${issueId}
+  ), '[]'::json)`;
+
+/** Parses a `labelsJson` column. */
+export const parseLabels = (value: unknown): z.infer<typeof labelRow>[] =>
+  z.array(labelRow).parse(value);
 
 /** A jsonb parameter (or SQL NULL). */
 export const jsonbOrNull = (value: unknown) =>

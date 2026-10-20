@@ -1,4 +1,4 @@
-import { db, runAtomic } from "@/server/db/client";
+import { db, read, runAtomic } from "@/server/db/client";
 
 import { createCommentService } from "./comments";
 import { createDocQueries } from "./doc-queries";
@@ -12,12 +12,13 @@ import { createTodoService } from "./todos";
 
 // Wiring only: the real Neon database for the app. Tests build the same services on a
 // node-postgres handle (src/test/db.ts).
-export const issueService = createIssueService(db, { runAtomic });
-export const issueQueries = createIssueQueries(db);
-export const commentService = createCommentService(db, { runAtomic });
-export const planningService = createPlanningService(db);
-export const planningQueries = createPlanningQueries(db);
-export const todoService = createTodoService(db);
+// `read` batches the reads one request starts together into one Neon round trip.
+export const issueService = createIssueService(db, { runAtomic, read });
+export const issueQueries = createIssueQueries(db, { read });
+export const commentService = createCommentService(db, { runAtomic, read });
+export const planningService = createPlanningService(db, { read });
+export const planningQueries = createPlanningQueries(db, { read });
+export const todoService = createTodoService(db, { read });
 export const searchService = createSearchService(db);
-export const docService = createDocService(db, { runAtomic });
-export const docQueries = createDocQueries(db);
+export const docService = createDocService(db, { runAtomic, read });
+export const docQueries = createDocQueries(db, { read });

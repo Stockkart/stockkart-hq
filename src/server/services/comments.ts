@@ -4,10 +4,11 @@ import { z } from "zod";
 import { type CommentView } from "@/lib/issues/views";
 import { extractPlainText, type RichTextDoc } from "@/lib/rich-text";
 import { comments, projects, users } from "@/server/db/schema";
+import { directRead, type Read } from "@/server/db/read-batch";
 import { type AppDatabase, type RunAtomic } from "@/server/db/types";
 
 import { forbidden, notFound } from "./errors";
-import { docRefs, mentionSyncCtes, mentionSyncStatement, rowsOf } from "./sql";
+import { docRefs, type IdRef, mentionSyncCtes, mentionSyncStatement, rowsOf } from "./sql";
 
 /**
  * ISS-7 comments on issues: anyone signed in can comment; only the author can edit or delete
@@ -15,7 +16,11 @@ import { docRefs, mentionSyncCtes, mentionSyncStatement, rowsOf } from "./sql";
  * links from the comment to the issue, kept in sync on edit and removed on delete.
  */
 
-export function createCommentService(db: AppDatabase, options: { runAtomic: RunAtomic }) {
+export function createCommentService(
+  db: AppDatabase,
+  options: { runAtomic: RunAtomic; read?: Read },
+) {
+  const read = options.read ?? directRead;
   async function projectKeys(): Promise<string[]> {
     const rows = await db.select({ key: projects.key }).from(projects);
     return rows.map((row) => row.key);
@@ -113,26 +118,28 @@ export function createCommentService(db: AppDatabase, options: { runAtomic: RunA
       }
     },
 
-    async listForIssue(issueId: string): Promise<CommentView[]> {
-      return db
-        .select({
-          id: comments.id,
-          authorId: comments.authorId,
-          authorName: users.name,
-          body: comments.body,
-          createdAt: comments.createdAt,
-          editedAt: comments.editedAt,
-        })
-        .from(comments)
-        .leftJoin(users, eq(users.id, comments.authorId))
-        .where(
-          and(
-            eq(comments.entityType, "issue"),
-            eq(comments.entityId, issueId),
-            isNull(comments.deletedAt),
-          ),
-        )
-        .orderBy(asc(comments.createdAt));
+    async listForIssue(issueId: IdRef): Promise<CommentView[]> {
+      return read(
+        db
+          .select({
+            id: comments.id,
+            authorId: comments.authorId,
+            authorName: users.name,
+            body: comments.body,
+            createdAt: comments.createdAt,
+            editedAt: comments.editedAt,
+          })
+          .from(comments)
+          .leftJoin(users, eq(users.id, comments.authorId))
+          .where(
+            and(
+              eq(comments.entityType, "issue"),
+              eq(comments.entityId, issueId),
+              isNull(comments.deletedAt),
+            ),
+          )
+          .orderBy(asc(comments.createdAt)),
+      );
     },
   };
 }

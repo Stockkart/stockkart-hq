@@ -22,19 +22,22 @@ import {
   type IssueSort,
 } from "@/lib/issues/filters";
 import { formatIssueKey, issuePath, parseIssueKey } from "@/lib/issues/keys";
-import { type LabelView, type PlanningIssue } from "@/lib/issues/views";
+import { type PlanningIssue } from "@/lib/issues/views";
+import { directRead } from "@/server/db/read-batch";
 import {
   components,
   docs,
   issueLabels,
   issues,
-  labels,
   projects,
   recentViews,
   statuses,
   users,
 } from "@/server/db/schema";
 import { type AppDatabase } from "@/server/db/types";
+
+import { type QueryOptions } from "./issue-queries";
+import { type IdRef, labelsJson, parseLabels } from "./sql";
 
 /**
  * Which issues a planning page shows:
@@ -75,7 +78,7 @@ export interface RecentItem {
 const likePattern = (text: string) => `%${text.replace(/[\\%_]/g, (char) => `\\${char}`)}%`;
 
 /** Read side for the list, backlog, board and My Work. Every query skips deleted rows. */
-export function createPlanningQueries(db: AppDatabase) {
+export function createPlanningQueries(db: AppDatabase, { read = directRead }: QueryOptions = {}) {
   const epic = pgAlias(issues, "epic");
 
   function filterConditions(filters: IssueFilters, currentUserId: string): SQL[] {
@@ -167,74 +170,55 @@ export function createPlanningQueries(db: AppDatabase) {
     return [primary[sort.by], desc(issues.number)];
   }
 
-  async function labelsFor(issueIds: string[]): Promise<Map<string, LabelView[]>> {
-    const byIssue = new Map<string, LabelView[]>();
-    if (issueIds.length === 0) return byIssue;
-    const rows = await db
-      .select({
-        issueId: issueLabels.issueId,
-        id: labels.id,
-        name: labels.name,
-        color: labels.color,
-      })
-      .from(issueLabels)
-      .innerJoin(labels, eq(labels.id, issueLabels.labelId))
-      .where(inArray(issueLabels.issueId, issueIds))
-      .orderBy(asc(labels.name));
-    for (const { issueId, ...label } of rows) {
-      const list = byIssue.get(issueId) ?? [];
-      list.push(label);
-      byIssue.set(issueId, list);
-    }
-    return byIssue;
-  }
-
   return {
-    async listIssues(projectId: string, options: ListIssuesOptions): Promise<PlanningIssue[]> {
-      const rows = await db
-        .select({
-          id: issues.id,
-          number: issues.number,
-          title: issues.title,
-          type: issues.type,
-          priority: issues.priority,
-          storyPoints: issues.storyPoints,
-          rank: issues.rank,
-          createdAt: issues.createdAt,
-          updatedAt: issues.updatedAt,
-          resolvedAt: issues.resolvedAt,
-          projectKey: projects.key,
-          statusId: statuses.id,
-          statusName: statuses.name,
-          statusCategory: statuses.category,
-          assigneeId: users.id,
-          assigneeName: users.name,
-          componentId: components.id,
-          componentName: components.name,
-          epicId: epic.id,
-          epicNumber: epic.number,
-          epicTitle: epic.title,
-        })
-        .from(issues)
-        .innerJoin(projects, eq(projects.id, issues.projectId))
-        .innerJoin(statuses, eq(statuses.id, issues.statusId))
-        .leftJoin(users, eq(users.id, issues.assigneeId))
-        .leftJoin(components, eq(components.id, issues.componentId))
-        .leftJoin(
-          epic,
-          and(eq(epic.id, issues.parentId), eq(epic.type, "epic"), isNull(epic.deletedAt)),
-        )
-        .where(
-          and(
-            eq(issues.projectId, projectId),
-            isNull(issues.deletedAt),
-            scopeCondition(options.scope),
-            ...filterConditions(options.filters, options.currentUserId),
-          ),
-        )
-        .orderBy(...orderBy(options.scope, options.sort))
-        .limit(ISSUE_LIST_LIMIT);
-      const labelMap = await labelsFor(rows.map((row) => row.id));
+    /** One statement: labels come as a json column (no second query keyed by the ids). */
+    async listIssues(projectId: IdRef, options: ListIssuesOptions): Promise<PlanningIssue[]> {
+      const rows = await read(
+        db
+          .select({
+            id: issues.id,
+            number: issues.number,
+            title: issues.title,
+            type: issues.type,
+            priority: issues.priority,
+            storyPoints: issues.storyPoints,
+            rank: issues.rank,
+            createdAt: issues.createdAt,
+            updatedAt: issues.updatedAt,
+            resolvedAt: issues.resolvedAt,
+            projectKey: projects.key,
+            statusId: statuses.id,
+            statusName: statuses.name,
+            statusCategory: statuses.category,
+            assigneeId: users.id,
+            assigneeName: users.name,
+            componentId: components.id,
+            componentName: components.name,
+            epicId: epic.id,
+            epicNumber: epic.number,
+            epicTitle: epic.title,
+            labels: labelsJson(issues.id),
+          })
+          .from(issues)
+          .innerJoin(projects, eq(projects.id, issues.projectId))
+          .innerJoin(statuses, eq(statuses.id, issues.statusId))
+          .leftJoin(users, eq(users.id, issues.assigneeId))
+          .leftJoin(components, eq(components.id, issues.componentId))
+          .leftJoin(
+            epic,
+            and(eq(epic.id, issues.parentId), eq(epic.type, "epic"), isNull(epic.deletedAt)),
+          )
+          .where(
+            and(
+              eq(issues.projectId, projectId),
+              isNull(issues.deletedAt),
+              scopeCondition(options.scope),
+              ...filterConditions(options.filters, options.currentUserId),
+            ),
+          )
+          .orderBy(...orderBy(options.scope, options.sort))
+          .limit(ISSUE_LIST_LIMIT),
+      );
       return rows.map((row) => ({
         id: row.id,
         key: formatIssueKey(row.projectKey, row.number),
@@ -261,7 +245,7 @@ export function createPlanningQueries(db: AppDatabase) {
               }
             : null,
         storyPoints: row.storyPoints,
-        labels: labelMap.get(row.id) ?? [],
+        labels: parseLabels(row.labels),
         rank: row.rank,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
@@ -274,32 +258,34 @@ export function createPlanningQueries(db: AppDatabase) {
      * the last `BOARD_DONE_DAYS` days, so the page does not grow forever.
      */
     async listAssignedTo(userId: string) {
-      const rows = await db
-        .select({
-          id: issues.id,
-          number: issues.number,
-          title: issues.title,
-          type: issues.type,
-          priority: issues.priority,
-          projectKey: projects.key,
-          statusId: statuses.id,
-          statusName: statuses.name,
-          statusCategory: statuses.category,
-        })
-        .from(issues)
-        .innerJoin(projects, eq(projects.id, issues.projectId))
-        .innerJoin(statuses, eq(statuses.id, issues.statusId))
-        .where(
-          and(
-            eq(issues.assigneeId, userId),
-            isNull(issues.deletedAt),
-            or(
-              ne(statuses.category, "done"),
-              sql`${issues.resolvedAt} >= now() - make_interval(days => ${BOARD_DONE_DAYS})`,
+      const rows = await read(
+        db
+          .select({
+            id: issues.id,
+            number: issues.number,
+            title: issues.title,
+            type: issues.type,
+            priority: issues.priority,
+            projectKey: projects.key,
+            statusId: statuses.id,
+            statusName: statuses.name,
+            statusCategory: statuses.category,
+          })
+          .from(issues)
+          .innerJoin(projects, eq(projects.id, issues.projectId))
+          .innerJoin(statuses, eq(statuses.id, issues.statusId))
+          .where(
+            and(
+              eq(issues.assigneeId, userId),
+              isNull(issues.deletedAt),
+              or(
+                ne(statuses.category, "done"),
+                sql`${issues.resolvedAt} >= now() - make_interval(days => ${BOARD_DONE_DAYS})`,
+              ),
             ),
-          ),
-        )
-        .orderBy(asc(issues.priority), asc(issues.rank));
+          )
+          .orderBy(asc(issues.priority), asc(issues.rank)),
+      );
       const groups: Record<StatusCategory, AssignedIssue[]> = {
         in_progress: [],
         todo: [],
@@ -322,46 +308,50 @@ export function createPlanningQueries(db: AppDatabase) {
     /** MY-1 "recently viewed": live issues and docs the user opened, newest first. */
     async listRecentlyViewed(userId: string, limit = 10): Promise<RecentItem[]> {
       const [issueRows, docRows] = await Promise.all([
-        db
-          .select({
-            id: issues.id,
-            number: issues.number,
-            title: issues.title,
-            projectKey: projects.key,
-            viewedAt: recentViews.viewedAt,
-          })
-          .from(recentViews)
-          .innerJoin(issues, eq(issues.id, recentViews.entityId))
-          .innerJoin(projects, eq(projects.id, issues.projectId))
-          .where(
-            and(
-              eq(recentViews.userId, userId),
-              eq(recentViews.entityType, "issue"),
-              isNull(issues.deletedAt),
-            ),
-          )
-          .orderBy(desc(recentViews.viewedAt))
-          .limit(limit),
+        read(
+          db
+            .select({
+              id: issues.id,
+              number: issues.number,
+              title: issues.title,
+              projectKey: projects.key,
+              viewedAt: recentViews.viewedAt,
+            })
+            .from(recentViews)
+            .innerJoin(issues, eq(issues.id, recentViews.entityId))
+            .innerJoin(projects, eq(projects.id, issues.projectId))
+            .where(
+              and(
+                eq(recentViews.userId, userId),
+                eq(recentViews.entityType, "issue"),
+                isNull(issues.deletedAt),
+              ),
+            )
+            .orderBy(desc(recentViews.viewedAt))
+            .limit(limit),
+        ),
         // Docs are recorded by the docs pages (slice 3); listed here as soon as rows exist.
-        db
-          .select({
-            id: docs.id,
-            title: docs.title,
-            projectKey: projects.key,
-            viewedAt: recentViews.viewedAt,
-          })
-          .from(recentViews)
-          .innerJoin(docs, eq(docs.id, recentViews.entityId))
-          .innerJoin(projects, eq(projects.id, docs.projectId))
-          .where(
-            and(
-              eq(recentViews.userId, userId),
-              eq(recentViews.entityType, "doc"),
-              isNull(docs.deletedAt),
-            ),
-          )
-          .orderBy(desc(recentViews.viewedAt))
-          .limit(limit),
+        read(
+          db
+            .select({
+              id: docs.id,
+              title: docs.title,
+              projectKey: projects.key,
+              viewedAt: recentViews.viewedAt,
+            })
+            .from(recentViews)
+            .innerJoin(docs, eq(docs.id, recentViews.entityId))
+            .innerJoin(projects, eq(projects.id, docs.projectId))
+            .where(
+              and(
+                eq(recentViews.userId, userId),
+                eq(recentViews.entityType, "doc"),
+                isNull(docs.deletedAt),
+              ),
+            )
+            .orderBy(desc(recentViews.viewedAt))
+            .limit(limit),
+        ),
       ]);
       const items: RecentItem[] = [
         ...issueRows.map((row) => ({
