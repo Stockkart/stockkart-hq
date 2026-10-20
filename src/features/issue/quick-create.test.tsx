@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,6 +8,9 @@ const actions = vi.hoisted(() => ({
   loadIssueTemplatesAction: vi.fn(),
 }));
 vi.mock("@/server/actions/issues", () => actions);
+
+const todoActions = vi.hoisted(() => ({ promoteTodoAction: vi.fn() }));
+vi.mock("@/server/actions/todos", () => todoActions);
 
 const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({
@@ -113,4 +116,47 @@ describe("QuickCreate (ISS-4)", () => {
       expect(screen.getByRole("alert")).toHaveTextContent("Project STK not found"),
     );
   });
+
+  it("promotes a todo (MY-3): pre-filled title, promote action, then the callback", async () => {
+    const { openQuickCreate } = await import("./quick-create-events");
+    todoActions.promoteTodoAction.mockResolvedValue({
+      ok: true,
+      data: { id: "x", number: 8, key: "STK-8" },
+    });
+    const onCreated = vi.fn();
+    const user = userEvent.setup();
+    render(<QuickCreate defaultProjectKey="STK" />);
+    act(() =>
+      openQuickCreate({ title: "  Write   the runbook ", promoteTodoId: TODO_ID, onCreated }),
+    );
+    const title = await screen.findByLabelText("Title");
+    expect(title).toHaveValue("Write the runbook");
+    expect(screen.getByRole("heading", { name: /promote todo/i })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Create issue" }));
+
+    await waitFor(() => expect(todoActions.promoteTodoAction).toHaveBeenCalledTimes(1));
+    expect(todoActions.promoteTodoAction).toHaveBeenCalledWith(
+      expect.objectContaining({ todoId: TODO_ID, title: "Write the runbook", projectKey: "STK" }),
+    );
+    expect(actions.createIssueAction).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(onCreated).toHaveBeenCalledWith({ id: "x", number: 8, key: "STK-8" }),
+    );
+
+    // The request was for that one dialog: a later plain create does not promote again.
+    await user.keyboard("c");
+    await user.type(await screen.findByLabelText("Title"), "Plain");
+    await user.click(screen.getByRole("button", { name: "Create issue" }));
+    await waitFor(() => expect(actions.createIssueAction).toHaveBeenCalledTimes(1));
+    expect(todoActions.promoteTodoAction).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens with a requested type, e.g. Create bug from ⌘K", async () => {
+    const { openQuickCreate } = await import("./quick-create-events");
+    render(<QuickCreate defaultProjectKey="STK" />);
+    act(() => openQuickCreate({ type: "bug" }));
+    expect(await screen.findByLabelText("Type")).toHaveValue("bug");
+  });
 });
+
+const TODO_ID = "7d1a2c4e-1f3b-4c5d-8e9f-0a1b2c3d4e5f";

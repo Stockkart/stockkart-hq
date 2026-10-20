@@ -35,6 +35,24 @@ export interface IssueListItem extends IssueSummary {
   assignee: NamedOption | null;
 }
 
+/** A row on the issue list, backlog and board (VW-1, BLG-*, BRD-*). */
+export interface PlanningIssue extends IssueSummary {
+  number: number;
+  priority: Priority;
+  status: StatusOption;
+  assignee: NamedOption | null;
+  component: NamedOption | null;
+  /** The parent, when it is an epic (BLG-2 "group by epic"). */
+  epic: IssueSummary | null;
+  storyPoints: number | null;
+  labels: LabelView[];
+  /** Backlog order (`fractional-indexing` key). */
+  rank: string;
+  createdAt: Date;
+  updatedAt: Date;
+  resolvedAt: Date | null;
+}
+
 export interface ChildIssue extends IssueSummary {
   status: StatusOption;
   priority: Priority;
