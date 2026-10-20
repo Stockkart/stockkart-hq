@@ -4,7 +4,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { type RichTextDoc } from "@/lib/rich-text";
 import { comments, entityLinks } from "@/server/db/schema";
 import { seed } from "@/server/db/seed";
-import { type AppDatabase } from "@/server/db/types";
+import { type AppDatabase, transactionRunner } from "@/server/db/types";
 import { createTestDatabase, createTestUser, describeDb, type TestDatabase } from "@/test/db";
 
 import { createCommentService } from "./comments";
@@ -31,7 +31,7 @@ describeDb("comment service (Postgres)", () => {
     await seed(db);
     author = await createTestUser(db, "Author");
     someoneElse = await createTestUser(db, "Someone Else");
-    const issues = createIssueService(db);
+    const issues = createIssueService(db, { runAtomic: transactionRunner(db) });
     const base = { projectKey: "STK", type: "task", priority: 2 } as const;
     issueId = (await issues.createIssue(author, { ...base, title: "Commented" })).id;
     const target = await issues.createIssue(author, { ...base, title: "Mentioned" });
@@ -43,7 +43,7 @@ describeDb("comment service (Postgres)", () => {
     await testDb?.close();
   });
 
-  const service = () => createCommentService(db);
+  const service = () => createCommentService(db, { runAtomic: transactionRunner(db) });
   const mentionTargets = async (commentId: string) =>
     (
       await db
@@ -98,7 +98,7 @@ describeDb("comment service (Postgres)", () => {
   });
 
   it("refuses comments on a missing or deleted issue", async () => {
-    const issues = createIssueService(db);
+    const issues = createIssueService(db, { runAtomic: transactionRunner(db) });
     const doomed = await issues.createIssue(author, {
       projectKey: "STK",
       title: "Doomed",

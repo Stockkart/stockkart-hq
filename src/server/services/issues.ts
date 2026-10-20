@@ -3,7 +3,7 @@ import { generateKeyBetween } from "fractional-indexing";
 import { z } from "zod";
 
 import { type IssueType } from "@/lib/issues/constants";
-import { extractIssueRefs, formatIssueKey, parseIssueKey } from "@/lib/issues/keys";
+import { formatIssueKey, parseIssueKey } from "@/lib/issues/keys";
 import { toStoredLink, viewLink } from "@/lib/issues/links";
 import {
   type addLabelInput,
@@ -13,11 +13,18 @@ import {
 } from "@/lib/issues/schemas";
 import { extractPlainText, type RichTextDoc } from "@/lib/rich-text";
 import { components, issues, projects, statuses, users } from "@/server/db/schema";
-import { type AppDatabase } from "@/server/db/types";
+import { type AppDatabase, type RunAtomic } from "@/server/db/types";
 
 import { conflict, invalid, notFound, pgErrorInfo, UNIQUE_VIOLATION } from "./errors";
 import { parentProblem } from "./parent-rules";
-import { jsonbOrNull, mentionSyncCtes, rowsOf, uuidOrNull } from "./sql";
+import {
+  docRefs,
+  jsonbOrNull,
+  mentionSyncCtes,
+  mentionSyncStatement,
+  rowsOf,
+  uuidOrNull,
+} from "./sql";
 
 export type CreateIssueData = z.output<typeof createIssueInput>;
 export type UpdateIssueFieldData = z.output<typeof updateIssueFieldInput>;
@@ -43,11 +50,13 @@ const RANK_ATTEMPTS = 20;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export interface IssueServiceOptions {
+  /** Transactions of several statements (see `RunAtomic`). */
+  runAtomic: RunAtomic;
   /** Test hook: runs between reading the current top rank and the insert. */
   beforeInsert?: () => Promise<void>;
 }
 
-export function createIssueService(db: AppDatabase, options: IssueServiceOptions = {}) {
+export function createIssueService(db: AppDatabase, options: IssueServiceOptions) {
   async function projectByKey(key: string) {
     const [project] = await db
       .select({ id: projects.id, key: projects.key })
@@ -176,7 +185,7 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
       const statusId = await defaultStatusId(project.id, input.type);
       const description = input.description ?? null;
       const descriptionText = description ? extractPlainText(description) : "";
-      const refs = extractIssueRefs(descriptionText, await allProjectKeys());
+      const refs = docRefs(description, await allProjectKeys());
 
       for (let attempt = 1; ; attempt += 1) {
         const id = crypto.randomUUID();
@@ -207,6 +216,7 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
               FROM inserted
             ),
             ${mentionSyncCtes({
+              // Safe inline: the issue is new, so no other request can be syncing it.
               fromType: "issue",
               fromId: id,
               refs,
@@ -234,14 +244,18 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
      * Updates one field and records `activity` (from → to) in the same statement. The `old`
      * CTE row-locks the issue and reads the previous value; `changed` CTE writes and returns
      * both; the activity row is written only when the value really changed.
+     *
+     * A description change also resyncs its mention links, as a second statement in the same
+     * transaction (see `mentionSyncCtes` for why it cannot be part of the first).
      */
     async updateIssueField(actorId: string, input: UpdateIssueFieldData): Promise<FieldChange> {
       const issue = await liveIssue(input.issueId);
       let column: string;
       let value: SQL;
       let alsoSet: SQL = sql``;
+      let alsoWhere: SQL = sql``;
       let recordValues = true;
-      let mentions: SQL = sql``;
+      let mentionSync: SQL | null = null;
 
       switch (input.field) {
         case "title":
@@ -251,19 +265,17 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
         case "description": {
           column = "description";
           const doc: RichTextDoc | null = input.value;
-          const text = doc ? extractPlainText(doc) : "";
           value = jsonbOrNull(doc);
-          alsoSet = sql`description_text = ${text},`;
+          alsoSet = sql`description_text = ${doc ? extractPlainText(doc) : ""},`;
           // Descriptions are large; activity records only that it changed.
           recordValues = false;
-          const refs = extractIssueRefs(text, await allProjectKeys());
-          mentions = sql`, ${mentionSyncCtes({
+          mentionSync = mentionSyncStatement({
             fromType: "issue",
             fromId: issue.id,
-            refs,
+            refs: docRefs(doc, await allProjectKeys()),
             actorId,
-            gate: sql`EXISTS (SELECT 1 FROM changed)`,
-          })}`;
+            gate: sql`EXISTS (SELECT 1 FROM issues WHERE id = ${issue.id}::uuid AND deleted_at IS NULL)`,
+          });
           break;
         }
         case "status": {
@@ -310,11 +322,17 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
           await checkParentId(issue, input.value);
           column = "parent_id";
           value = uuidOrNull(input.value);
+          // Re-checked at write time: the parent may have been deleted since the check.
+          if (input.value) {
+            alsoWhere = sql`AND EXISTS (
+              SELECT 1 FROM issues p WHERE p.id = ${input.value}::uuid AND p.deleted_at IS NULL
+            )`;
+          }
           break;
       }
 
       const col = sql.identifier(column);
-      const result = await db.execute(sql`
+      const write = sql`
         WITH old AS (
           SELECT id, ${col}::text AS v FROM issues
           WHERE id = ${issue.id}::uuid AND deleted_at IS NULL
@@ -322,7 +340,7 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
         ),
         changed AS (
           UPDATE issues SET ${col} = ${value}, ${alsoSet} updated_at = now()
-          FROM old WHERE issues.id = old.id
+          FROM old WHERE issues.id = old.id ${alsoWhere}
           RETURNING issues.id, old.v AS from_value, issues.${col}::text AS to_value
         ),
         field_activity AS (
@@ -334,14 +352,17 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
           FROM changed
           WHERE from_value IS DISTINCT FROM to_value
         )
-        ${mentions}
         SELECT from_value, to_value FROM changed
-      `);
+      `;
+      const [result] = mentionSync
+        ? await options.runAtomic([write, mentionSync])
+        : [await db.execute(write)];
       const [row] = rowsOf(
         result,
         z.object({ from_value: z.string().nullable(), to_value: z.string().nullable() }),
       );
-      if (!row) throw notFound("Issue");
+      // No row: the issue was deleted meanwhile, or (parent) the new parent was.
+      if (!row) throw notFound(input.field === "parent" ? "Issue or parent issue" : "Issue");
       return {
         from: recordValues ? row.from_value : null,
         to: recordValues ? row.to_value : null,
@@ -428,18 +449,14 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
       const stored = toStoredLink(input.relation, issue.id, target.id);
       const sourceView = viewLink(stored, stored.sourceIssueId).relation;
       const targetView = viewLink(stored, stored.targetIssueId).relation;
+      // `issue_links_pair_unique` (type, unordered pair) rejects the same link in either
+      // direction, so concurrent requests cannot both add "A relates B" / "B relates A" or
+      // the contradictory "A blocks B" / "B blocks A".
       const result = await db.execute(sql`
         WITH link AS (
           INSERT INTO issue_links (source_issue_id, target_issue_id, type, created_by)
-          SELECT ${stored.sourceIssueId}::uuid, ${stored.targetIssueId}::uuid,
-            ${stored.type}::issue_link_type, ${actorId}::uuid
-          -- "relates" is symmetric: B relates A already says A relates B.
-          WHERE NOT EXISTS (
-            SELECT 1 FROM issue_links
-            WHERE type = 'relates' AND ${stored.type} = 'relates'
-              AND source_issue_id = ${stored.targetIssueId}::uuid
-              AND target_issue_id = ${stored.sourceIssueId}::uuid
-          )
+          VALUES (${stored.sourceIssueId}::uuid, ${stored.targetIssueId}::uuid,
+            ${stored.type}::issue_link_type, ${actorId}::uuid)
           ON CONFLICT DO NOTHING
           RETURNING id
         ),
@@ -455,7 +472,7 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
         SELECT id::text AS link_id FROM link
       `);
       const [row] = rowsOf(result, z.object({ link_id: z.string() }));
-      if (!row) throw conflict("These issues are already linked that way");
+      if (!row) throw conflict("These issues are already linked that way (in one direction)");
       return { linkId: row.link_id };
     },
 

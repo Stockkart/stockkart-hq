@@ -36,7 +36,8 @@ export function parseIssueKey(value: string): IssueRef | null {
   return { projectKey: match[1].toUpperCase(), number };
 }
 
-/** Upper-case only in running text, so "utf-8" or "abc-1" in prose are not references. */
+/** Upper-case only in running text, so "utf-8" or "abc-1" in prose are not references.
+ * Branch names (GH-5) are lower case; GH-2 matching must use a case-insensitive pattern. */
 const REF_PATTERN = /\b([A-Z]{2,5})-(\d{1,10})\b/g;
 
 export type RefSegment =

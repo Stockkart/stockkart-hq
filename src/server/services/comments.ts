@@ -1,14 +1,13 @@
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
-import { extractIssueRefs } from "@/lib/issues/keys";
 import { type CommentView } from "@/lib/issues/views";
 import { extractPlainText, type RichTextDoc } from "@/lib/rich-text";
 import { comments, projects, users } from "@/server/db/schema";
-import { type AppDatabase } from "@/server/db/types";
+import { type AppDatabase, type RunAtomic } from "@/server/db/types";
 
 import { forbidden, notFound } from "./errors";
-import { mentionSyncCtes, rowsOf } from "./sql";
+import { docRefs, mentionSyncCtes, mentionSyncStatement, rowsOf } from "./sql";
 
 /**
  * ISS-7 comments on issues: anyone signed in can comment; only the author can edit or delete
@@ -16,7 +15,7 @@ import { mentionSyncCtes, rowsOf } from "./sql";
  * links from the comment to the issue, kept in sync on edit and removed on delete.
  */
 
-export function createCommentService(db: AppDatabase) {
+export function createCommentService(db: AppDatabase, options: { runAtomic: RunAtomic }) {
   async function projectKeys(): Promise<string[]> {
     const rows = await db.select({ key: projects.key }).from(projects);
     return rows.map((row) => row.key);
@@ -32,6 +31,11 @@ export function createCommentService(db: AppDatabase) {
     throw row ? forbidden("You can only change your own comments") : notFound("Comment");
   }
 
+  /** The comment exists, is not deleted and belongs to the actor. */
+  const ownLiveComment = (commentId: string, actorId: string) =>
+    sql`EXISTS (SELECT 1 FROM comments WHERE id = ${commentId}::uuid
+      AND author_id = ${actorId}::uuid AND deleted_at IS NULL)`;
+
   return {
     async createComment(
       actorId: string,
@@ -39,7 +43,8 @@ export function createCommentService(db: AppDatabase) {
     ): Promise<{ id: string }> {
       const id = crypto.randomUUID();
       const text = extractPlainText(input.body);
-      const refs = extractIssueRefs(text, await projectKeys());
+      const refs = docRefs(input.body, await projectKeys());
+      // One statement: the comment is new, so nobody else can be syncing its mentions.
       const result = await db.execute(sql`
         WITH created AS (
           INSERT INTO comments (id, entity_type, entity_id, author_id, body, body_text)
@@ -63,44 +68,46 @@ export function createCommentService(db: AppDatabase) {
 
     async editComment(actorId: string, input: { commentId: string; body: RichTextDoc }) {
       const text = extractPlainText(input.body);
-      const refs = extractIssueRefs(text, await projectKeys());
-      // Ownership is part of the WHERE clause, so a non-author's edit changes nothing.
-      const result = await db.execute(sql`
-        WITH edited AS (
+      const refs = docRefs(input.body, await projectKeys());
+      // Ownership is part of the WHERE clause, so a non-author's edit changes nothing. The
+      // mention sync is a second statement in the same transaction, after the row lock.
+      const [result] = await options.runAtomic([
+        sql`
           UPDATE comments
           SET body = ${JSON.stringify(input.body)}::jsonb, body_text = ${text},
             edited_at = now(), updated_at = now()
           WHERE id = ${input.commentId}::uuid AND author_id = ${actorId}::uuid
             AND deleted_at IS NULL
-          RETURNING id
-        ),
-        ${mentionSyncCtes({
+          RETURNING id::text
+        `,
+        mentionSyncStatement({
           fromType: "comment",
           fromId: input.commentId,
           refs,
           actorId,
-          gate: sql`EXISTS (SELECT 1 FROM edited)`,
-        })}
-        SELECT id::text FROM edited
-      `);
+          gate: ownLiveComment(input.commentId, actorId),
+        }),
+      ]);
       if (rowsOf(result, z.object({ id: z.string() })).length === 0) {
         await explainMiss(input.commentId);
       }
     },
 
     async deleteComment(actorId: string, commentId: string) {
-      const result = await db.execute(sql`
-        WITH deleted AS (
+      const [result] = await options.runAtomic([
+        sql`
           UPDATE comments SET deleted_at = now(), updated_at = now()
           WHERE id = ${commentId}::uuid AND author_id = ${actorId}::uuid AND deleted_at IS NULL
-          RETURNING id
-        ),
-        unlinked AS (
+          RETURNING id::text
+        `,
+        // Second statement: also sees links a concurrent edit committed while we waited.
+        sql`
           DELETE FROM entity_links
-          WHERE from_type = 'comment' AND from_id IN (SELECT id FROM deleted)
-        )
-        SELECT id::text FROM deleted
-      `);
+          WHERE from_type = 'comment' AND from_id = ${commentId}::uuid
+            AND EXISTS (SELECT 1 FROM comments WHERE id = ${commentId}::uuid
+              AND author_id = ${actorId}::uuid AND deleted_at IS NOT NULL)
+        `,
+      ]);
       if (rowsOf(result, z.object({ id: z.string() })).length === 0) {
         await explainMiss(commentId);
       }

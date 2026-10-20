@@ -20,7 +20,7 @@ import {
 import { type RichTextDoc } from "@/lib/rich-text";
 import { requireSession } from "@/server/auth/require-session";
 import { commentService, issueQueries, issueService } from "@/server/services";
-import { ServiceError } from "@/server/services/errors";
+import { FOREIGN_KEY_VIOLATION, pgErrorInfo, ServiceError } from "@/server/services/errors";
 import { type CreatedIssue, type FieldChange } from "@/server/services/issues";
 
 /**
@@ -49,6 +49,10 @@ async function run<S extends z.ZodType, T>(
     return { ok: true, data };
   } catch (error) {
     if (error instanceof ServiceError) return { ok: false, error: error.message };
+    // A referenced user, component or issue was deleted between the check and the write.
+    if (pgErrorInfo(error)?.code === FOREIGN_KEY_VIOLATION) {
+      return { ok: false, error: "Something it refers to no longer exists; reload and retry" };
+    }
     throw error;
   }
 }

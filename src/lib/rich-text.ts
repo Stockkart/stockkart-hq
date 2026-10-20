@@ -105,8 +105,10 @@ const BLOCK_TYPES = new Set([
   "horizontalRule",
 ]);
 
-/** Plain text for search and `STK-123` extraction: one line per block. */
-export function extractPlainText(doc: RichTextNode): string {
+/** Plain text for search and `STK-123` extraction: one line per block. With `skipCode`,
+ * inline code and code blocks are left out (references there are not mentions, matching
+ * the renderer, which shows no chip inside code). */
+export function extractPlainText(doc: RichTextNode, options: { skipCode?: boolean } = {}): string {
   const lines: string[] = [];
   let current = "";
   const flush = () => {
@@ -115,6 +117,7 @@ export function extractPlainText(doc: RichTextNode): string {
   };
   const visit = (node: RichTextNode) => {
     if (node.type === "text") {
+      if (options.skipCode && node.marks?.some((mark) => mark.type === "code")) return;
       current += node.text ?? "";
       return;
     }
@@ -122,6 +125,7 @@ export function extractPlainText(doc: RichTextNode): string {
       current += "\n";
       return;
     }
+    if (options.skipCode && node.type === "codeBlock") return;
     const isBlock = BLOCK_TYPES.has(node.type);
     if (isBlock) flush();
     for (const child of node.content ?? []) visit(child);

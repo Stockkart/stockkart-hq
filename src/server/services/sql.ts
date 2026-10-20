@@ -1,8 +1,9 @@
 import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 
-import { type IssueRef } from "@/lib/issues/keys";
 import { type EntityType } from "@/lib/issues/constants";
+import { extractIssueRefs, type IssueRef } from "@/lib/issues/keys";
+import { extractPlainText, type RichTextDoc } from "@/lib/rich-text";
 
 /**
  * Helpers for the raw, single-statement writes (see `AppDatabase` for why writes are single
@@ -30,8 +31,13 @@ export const jsonbOrNull = (value: unknown) =>
  *
  * Deleting only the stale links (instead of delete-all-then-insert) keeps the statement
  * correct: all CTEs in one statement see the same snapshot, so a delete and an insert of the
- * same key would conflict. `gate` is a boolean SQL expression (usually `EXISTS (SELECT 1
- * FROM <write cte>)`) so nothing changes when the main write matched no row.
+ * same key would conflict. `gate` is a boolean SQL expression so nothing changes when the
+ * entity is gone (or the actor may not edit it).
+ *
+ * Inline these CTEs only into the statement that CREATES the entity (nobody else can be
+ * syncing it yet). For an edit use `mentionSyncStatement` as the second statement of a
+ * `RunAtomic` transaction: a concurrent edit's links committed while this one waited for
+ * the row lock are invisible to the first statement's snapshot, but not to the second's.
  */
 export function mentionSyncCtes(input: {
   fromType: EntityType;
@@ -64,4 +70,14 @@ export function mentionSyncCtes(input: {
       WHERE ${input.gate}
       ON CONFLICT DO NOTHING
     )`;
+}
+
+/** `mentionSyncCtes` as a statement of its own (see there for when to use which). */
+export function mentionSyncStatement(input: Parameters<typeof mentionSyncCtes>[0]): SQL {
+  return sql`WITH ${mentionSyncCtes(input)} SELECT 1 AS synced`;
+}
+
+/** Issue references in a document's text, ignoring code (ISS-7). */
+export function docRefs(doc: RichTextDoc | null, projectKeys: readonly string[]): IssueRef[] {
+  return doc ? extractIssueRefs(extractPlainText(doc, { skipCode: true }), projectKeys) : [];
 }

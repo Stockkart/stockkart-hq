@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { activity, entityLinks, issues, projects, statuses } from "@/server/db/schema";
 import { seed } from "@/server/db/seed";
-import { type AppDatabase } from "@/server/db/types";
+import { type AppDatabase, transactionRunner } from "@/server/db/types";
 import { createTestDatabase, createTestUser, describeDb, type TestDatabase } from "@/test/db";
 
 import { ServiceError } from "./errors";
@@ -17,7 +17,7 @@ describeDb("issue service (Postgres)", () => {
   let testDb: TestDatabase;
   let db: AppDatabase;
   let actor: string;
-  const service = () => createIssueService(db);
+  const service = () => createIssueService(db, { runAtomic: transactionRunner(db) });
   const queries = () => createIssueQueries(db);
 
   const create = (overrides: Partial<CreateIssueData> = {}) =>
@@ -75,6 +75,7 @@ describeDb("issue service (Postgres)", () => {
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => (release = resolve));
     const racing = createIssueService(db, {
+      runAtomic: transactionRunner(db),
       beforeInsert: async () => {
         waiting += 1;
         if (waiting === 12) release();
@@ -283,6 +284,18 @@ describeDb("issue service (Postgres)", () => {
     await expect(
       service().addLink(actor, { issueId: dup.id, relation: "relates", targetKey: blocker.key }),
     ).rejects.toThrow("already linked");
+    // "Blocked blocks Blocker" would contradict "Blocker blocks Blocked".
+    await expect(
+      service().addLink(actor, { issueId: blocked.id, relation: "blocks", targetKey: blocker.key }),
+    ).rejects.toThrow("already linked");
+    // Concurrent reverse "relates" requests: exactly one wins.
+    const [x, y] = await Promise.all([create({ title: "X" }), create({ title: "Y" })]);
+    const racing = await Promise.allSettled([
+      service().addLink(actor, { issueId: x.id, relation: "relates", targetKey: y.key }),
+      service().addLink(actor, { issueId: y.id, relation: "relates", targetKey: x.key }),
+    ]);
+    expect(racing.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(await queries().listLinks(x.id)).toHaveLength(1);
     await expect(
       service().addLink(actor, { issueId: dup.id, relation: "blocks", targetKey: dup.key }),
     ).rejects.toThrow("cannot link to itself");
@@ -350,6 +363,56 @@ describeDb("issue service (Postgres)", () => {
     );
     expect(descriptionChange).toMatchObject({ fromValue: null, toValue: null });
     expect((await issueRow(source.id)).descriptionText).toBe(`Now ${other.key}`);
+  });
+
+  it("ignores refs inside code, like the renderer", async () => {
+    const target = await create({ title: "Only in code" });
+    const source = await create({
+      description: {
+        type: "doc",
+        content: [
+          { type: "codeBlock", content: [{ type: "text", text: `git checkout ${target.key}` }] },
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: target.key, marks: [{ type: "code" }] }],
+          },
+        ],
+      },
+    });
+    expect(await queries().listMentionedIn(target.id)).toEqual([]);
+    // Still searchable: the plain text keeps the code.
+    expect((await issueRow(source.id)).descriptionText).toContain(target.key);
+  });
+
+  it("keeps mention links matching the final text under concurrent description edits", async () => {
+    const a = await create({ title: "Target A" });
+    const b = await create({ title: "Target B" });
+    const source = await create({ title: "Edited twice at once" });
+    const doc = (text: string) => ({
+      type: "doc" as const,
+      content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+    });
+    for (let round = 0; round < 8; round += 1) {
+      await Promise.all([
+        service().updateIssueField(actor, {
+          issueId: source.id,
+          field: "description",
+          value: doc(`only ${a.key}`),
+        }),
+        service().updateIssueField(actor, {
+          issueId: source.id,
+          field: "description",
+          value: doc(`only ${b.key}`),
+        }),
+      ]);
+      const text = (await issueRow(source.id)).descriptionText;
+      const expected = text.includes(a.key) ? a.id : b.id;
+      const links = await db
+        .select({ toId: entityLinks.toId })
+        .from(entityLinks)
+        .where(and(eq(entityLinks.fromId, source.id), eq(entityLinks.origin, "mention")));
+      expect(links.map((link) => link.toId)).toEqual([expected]);
+    }
   });
 
   it("soft-deletes an issue: hidden from reads, kept in the table", async () => {
