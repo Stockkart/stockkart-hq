@@ -44,6 +44,8 @@ import {
 } from "./autosaver";
 import { DeleteDocDialog } from "./doc-dialogs";
 import { DocSidePanel } from "./doc-side-panel";
+import { LazyDraftBanner } from "./draft-banner";
+import { clearDraft, type DocDraft, saveDraft } from "./draft-store";
 
 export interface DocEditorProps {
   doc: DocDetail;
@@ -190,6 +192,7 @@ export function DocEditor({
         save: (request) => saveRequest(doc.id, request),
         onState: setState,
         onSaved: ({ titleChanged, snapshotted, content }) => {
+          clearDraft(doc.id);
           const refs = refsKey(content, projectKeys);
           const refsChanged = refs !== lastRefs;
           lastRefs = refs;
@@ -201,17 +204,46 @@ export function DocEditor({
   });
 
   useEffect(() => {
+    // Keep my copy in this tab if it could not be saved, so leaving never loses it.
+    const stash = () => {
+      if (saver.hasUnsavedChanges) saveDraft(doc.id, saver.mine);
+    };
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      if (saver.hasUnsavedChanges) event.preventDefault();
+      if (!saver.hasUnsavedChanges) return;
+      stash();
+      event.preventDefault();
     };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => {
       window.removeEventListener("beforeunload", onBeforeUnload);
-      // Leaving the page (client navigation): save what is pending, then stop.
+      // Leaving the page (client navigation): stash, save what is pending, then stop. A
+      // successful save clears the stash again (onSaved).
+      stash();
       saver.saveNow();
       saver.dispose();
     };
-  }, [saver]);
+  }, [saver, doc.id]);
+
+  // A refresh brought a newer version (e.g. renamed from the tree). Continue from it only
+  // if it holds exactly my content; otherwise the next save reports the conflict.
+  const [seenVersion, setSeenVersion] = useState(doc.version);
+  if (seenVersion !== doc.version) {
+    setSeenVersion(doc.version);
+    const adopted = saver.rebase(doc);
+    if (adopted !== null) {
+      const parts = isAdr ? splitAdrTitle(adopted) : null;
+      setTitleText(parts ? parts.title : adopted);
+    }
+  }
+
+  function restoreDraft(draft: DocDraft) {
+    const parts = isAdr ? splitAdrTitle(draft.title) : null;
+    setTitleText(parts ? parts.title : draft.title);
+    setEditorContent(draft.content);
+    setEditorKey((key) => key + 1);
+    // Saved like any edit: against the current version, so a newer save still conflicts.
+    saver.change({ content: draft.content, title: draft.title });
+  }
 
   function reload() {
     const latest = saver.reload();
@@ -301,6 +333,12 @@ export function DocEditor({
             onCopyMine={() => void copyMine()}
           />
         ) : null}
+
+        <LazyDraftBanner
+          docId={doc.id}
+          current={{ title: doc.title, content: doc.content }}
+          onRestore={restoreDraft}
+        />
 
         <div className="flex items-baseline gap-1">
           {prefix ? (

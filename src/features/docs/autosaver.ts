@@ -1,3 +1,4 @@
+import { canonicalJson } from "@/lib/canonical-json";
 import { type RichTextDoc } from "@/lib/rich-text";
 
 /**
@@ -136,6 +137,23 @@ export class DocAutosaver {
     this.saveNow();
   }
 
+  /**
+   * Adopt a newer server version that holds exactly my content (e.g. the doc was renamed
+   * from the tree, which bumps the version). Only then is it safe to continue from it: if
+   * the content differs, someone else saved and the next save must conflict. Returns the
+   * server title when it was adopted (unless I have an unsaved title of my own), else null.
+   */
+  rebase(server: { version: number; title: string; content: RichTextDoc | null }): string | null {
+    if (this.inFlight || this.state.status === "conflict") return null;
+    if (server.version <= this.state.version) return null;
+    if (canonicalJson(server.content) !== canonicalJson(this.content)) return null;
+    const titleIsMine = this.title !== this.savedTitle;
+    this.savedTitle = server.title;
+    if (!titleIsMine) this.title = server.title;
+    this.setState({ version: server.version });
+    return titleIsMine ? null : server.title;
+  }
+
   dispose() {
     this.clearTimer();
   }
@@ -188,7 +206,7 @@ export class DocAutosaver {
       this.savedTitle = sentTitle;
       this.forceTitle = false;
       if (snapshot) this.snapshotRequested = false;
-      const pending = this.revision !== sentRevision;
+      const pending = this.revision !== sentRevision || this.snapshotRequested || this.forceTitle;
       this.setState({ status: pending ? "dirty" : "saved", version: response.version });
       this.deps.onSaved?.({
         version: response.version,
@@ -196,7 +214,11 @@ export class DocAutosaver {
         snapshotted: response.snapshotted ?? false,
         content: sentContent,
       });
-      if (pending) this.schedule();
+      if (pending) {
+        // A "Save version" clicked during this save runs right away; edits wait as usual.
+        if (this.snapshotRequested) void this.run();
+        else this.schedule();
+      }
     } else if (response.status === "conflict") {
       this.setState({ status: "conflict", conflict: response.latest });
     } else {

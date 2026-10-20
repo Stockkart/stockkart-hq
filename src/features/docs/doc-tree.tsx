@@ -184,7 +184,10 @@ export function DocTree({ projectKey, docs }: { projectKey: string; docs: DocTre
             className="opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
             actions={[
               { label: "New sub-page", onSelect: () => setDialog({ kind: "new", parent: node }) },
-              { label: "Rename…", onSelect: () => setDialog({ kind: "rename", doc: node }) },
+              // ADR titles carry their number; they are renamed in the editor.
+              ...(node.type === "adr"
+                ? []
+                : [{ label: "Rename…", onSelect: () => setDialog({ kind: "rename", doc: node }) }]),
               { label: "Move to…", onSelect: () => setDialog({ kind: "move", doc: node }) },
               {
                 label: "Delete…",

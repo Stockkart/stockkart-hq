@@ -132,3 +132,46 @@ describe("DocAutosaver (§7.4)", () => {
     expect(saver.current.status).toBe("saved");
   });
 });
+
+describe("DocAutosaver edge cases", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("keeps a Save version clicked while a save is in flight", async () => {
+    let resolveFirst: (response: SaveResponse) => void = () => {};
+    const { saver, save, requests } = setup([savedAs(6)]);
+    save.mockImplementationOnce(async (request) => {
+      requests.push(request);
+      return new Promise<SaveResponse>((resolve) => (resolveFirst = resolve));
+    });
+    saver.change({ content: doc("x") });
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS);
+    expect(requests[0]).toMatchObject({ snapshot: false });
+    saver.saveNow(true);
+    resolveFirst({ status: "saved", version: 5 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requests[1]).toMatchObject({ baseVersion: 5, snapshot: true });
+    expect(saver.current).toMatchObject({ status: "saved", version: 6 });
+  });
+
+  it("adopts a newer server version only when it holds my exact content", () => {
+    const { saver } = setup([]);
+    // Someone else saved different content: never rebase (the next save must conflict).
+    expect(saver.rebase({ version: 5, title: "Title", content: doc("theirs") })).toBeNull();
+    expect(saver.current.version).toBe(4);
+    // Renamed from the tree: same content, new title and version.
+    expect(saver.rebase({ version: 5, title: "Renamed", content: doc("start") })).toBe("Renamed");
+    expect(saver.current.version).toBe(5);
+    expect(saver.mine.title).toBe("Renamed");
+    // An older or equal version is ignored.
+    expect(saver.rebase({ version: 5, title: "Again", content: doc("start") })).toBeNull();
+  });
+
+  it("keeps my unsaved title when rebasing", () => {
+    const { saver } = setup([]);
+    saver.change({ title: "Mine" });
+    expect(saver.rebase({ version: 5, title: "Theirs", content: doc("start") })).toBeNull();
+    expect(saver.mine.title).toBe("Mine");
+    expect(saver.current.version).toBe(5);
+  });
+});
