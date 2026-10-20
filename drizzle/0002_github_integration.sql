@@ -19,6 +19,7 @@ CREATE TABLE "github_refs" (
 	"state" "github_pr_state",
 	"author_login" text,
 	"merged_at" timestamp with time zone,
+	"github_updated_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "github_refs_kind_columns" CHECK (("github_refs"."kind" = 'pr' AND "github_refs"."number" IS NOT NULL AND "github_refs"."state" IS NOT NULL)

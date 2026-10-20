@@ -156,6 +156,29 @@ describe("GitHub webhook (GH-1, S-4)", () => {
     expect(ctx.apply).toHaveBeenCalledTimes(1);
   });
 
+  it("answers 500 on a database error and logs only the error code", async () => {
+    ctx.apply.mockRejectedValue(
+      Object.assign(new Error("Failed query: … params: STK-1 private title"), { code: "40P01" }),
+    );
+    const response = await ctx.handler(
+      webhookRequest("pull_request", pullRequestPayload({ title: "STK-1 private title" })),
+    );
+    expect(response.status).toBe(500);
+    const logged = JSON.stringify(ctx.log.mock.calls);
+    expect(logged).toContain("40P01");
+    expect(logged).not.toContain("private title");
+  });
+
+  it("refuses links into another repository (400)", async () => {
+    const pr = pullRequestPayload({ title: "STK-1" });
+    pr.pull_request.html_url = "https://github.com/evil/phish/pull/1";
+    expect((await ctx.handler(webhookRequest("pull_request", pr))).status).toBe(400);
+    const push = pushPayload({ commits: [commit("STK-1")] });
+    push.repository.html_url = "https://github.com/evil/phish";
+    expect((await ctx.handler(webhookRequest("push", push))).status).toBe(400);
+    expect(ctx.apply).not.toHaveBeenCalled();
+  });
+
   it("reports a redelivery as a duplicate and refreshes nothing", async () => {
     ctx.apply.mockResolvedValue({ duplicate: true, linked: 0, updated: 0, moved: 0 });
     const response = await ctx.handler(webhookRequest("push", linkingPush()));

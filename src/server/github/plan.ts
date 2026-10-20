@@ -28,6 +28,8 @@ export interface PlannedRef {
   authorLogin: string | null;
   /** ISO timestamp. */
   mergedAt: string | null;
+  /** PRs: `pull_request.updated_at` (ISO), so older events never overwrite newer ones. */
+  githubUpdatedAt: string | null;
 }
 
 export interface PlannedPullRequest {
@@ -38,6 +40,7 @@ export interface PlannedPullRequest {
   authorLogin: string | null;
   mergedAt: string | null;
   headRef: string;
+  githubUpdatedAt: string | null;
 }
 
 export interface DeliveryPlan {
@@ -104,6 +107,7 @@ function branchRefs(repository: GithubRepository, branch: string): PlannedRef[] 
     state: null,
     authorLogin: null,
     mergedAt: null,
+    githubUpdatedAt: null,
   }));
 }
 
@@ -145,6 +149,7 @@ export function planPush(base: Base, payload: PushPayload): DeliveryPlan {
         state: null,
         authorLogin: commit.author?.username ?? null,
         mergedAt: null,
+        githubUpdatedAt: null,
       });
     }
   }
@@ -175,6 +180,7 @@ export function planPullRequest(base: Base, payload: PullRequestPayload): Delive
   const mergedAt = state === "merged" ? (pr.merged_at ?? null) : null;
   const title = pr.title.slice(0, MAX_TITLE_LENGTH);
   const authorLogin = pr.user?.login ?? null;
+  const githubUpdatedAt = pr.updated_at ?? null;
   const refs: PlannedRef[] = extractIssueKeys(pr.head.ref, pr.title, pr.body).map((issue) => ({
     issue,
     kind: "pr",
@@ -186,6 +192,7 @@ export function planPullRequest(base: Base, payload: PullRequestPayload): Delive
     state,
     authorLogin,
     mergedAt,
+    githubUpdatedAt,
   }));
   // The head branch too, unless it lives in a fork (its link would point outside the org).
   if (pr.head.repo?.full_name.toLowerCase() === repository.full_name.toLowerCase()) {
@@ -208,6 +215,7 @@ export function planPullRequest(base: Base, payload: PullRequestPayload): Delive
       authorLogin,
       mergedAt,
       headRef: pr.head.ref,
+      githubUpdatedAt,
     },
     closes:
       closing.length > 0

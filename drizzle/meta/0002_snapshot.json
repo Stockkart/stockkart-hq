@@ -1,5 +1,5 @@
 {
-  "id": "3fd6c66d-21eb-4a3b-b724-df38b59ff997",
+  "id": "ee9d2c64-f961-47c4-9ac6-3bbc089c280e",
   "prevId": "8b80c859-b3a3-4e68-af06-cf00bcd9685b",
   "version": "7",
   "dialect": "postgresql",
@@ -1061,6 +1061,12 @@
         },
         "merged_at": {
           "name": "merged_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "github_updated_at": {
+          "name": "github_updated_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

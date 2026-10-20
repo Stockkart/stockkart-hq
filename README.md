@@ -252,7 +252,8 @@ The webhook needs the deployed **HTTPS** URL; GitHub cannot reach a local `127.0
    applied delivery changes nothing). `401` means the secrets differ; `503` means
    `GITHUB_WEBHOOK_SECRET` is not set on that deployment.
 5. Each HQ user sets their GitHub username under **Settings → Profile**, so their PRs and
-   commits show with their HQ name.
+   commits show with their HQ name. Usernames are unique in HQ but not verified against
+   GitHub (first come, display only: it never grants access or changes an issue).
 
 ### Behaviour
 
@@ -272,9 +273,12 @@ are ignored. Closing keywords are `close`, `closes`, `closed`, `fix`, `fixes`, `
 
 Security: every delivery must carry a valid `X-Hub-Signature-256` (HMAC-SHA256 of the raw
 body, compared in constant time) before anything is parsed; bodies over 1 MB get `413`;
-each `X-GitHub-Delivery` is applied once (remembered for 30 days); payloads are validated
-with Zod; logs hold the event, delivery id, repository and counts, never the payload or the
-secret.
+each `X-GitHub-Delivery` is applied once (remembered for 30 days). The delivery id is not
+signed, so it only dedupes redeliveries; replays are harmless because every rule is
+idempotent on its own (a PR's state never moves back to an older event's, and a merge
+closes its issues once). Payloads are validated with Zod, and links must point into the
+delivering repository; logs hold the event, delivery id, repository and counts, never the
+payload or the secret.
 
 ### Local testing
 

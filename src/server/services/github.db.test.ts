@@ -261,6 +261,47 @@ describeDb("GitHub webhook (Postgres)", () => {
     expect((await refsOf(issue.id)).map((ref) => ref.state)).toEqual(["merged", "merged"]);
   });
 
+  it("never moves a PR's state backwards on a late (older) event, and keeps merged", async () => {
+    const issue = await newIssue();
+    const pr = { number: 207, title: `${issue.key} work` };
+    const opened = pullRequestPayload({ ...pr, updatedAt: "2026-03-01T10:00:00Z" });
+    await send(
+      "pull_request",
+      pullRequestPayload({
+        ...pr,
+        action: "closed",
+        state: "closed",
+        merged: true,
+        updatedAt: "2026-03-01T11:00:00Z",
+      }),
+    );
+    await send("pull_request", opened);
+    expect((await refsOf(issue.id))[0]).toMatchObject({ state: "merged" });
+    // Even a "newer" open event cannot un-merge it.
+    await send(
+      "pull_request",
+      pullRequestPayload({ ...pr, action: "edited", updatedAt: "2026-03-02T00:00:00Z" }),
+    );
+    expect((await refsOf(issue.id))[0]).toMatchObject({ state: "merged" });
+  });
+
+  it("closes once per merge: a replayed merge under a new delivery id does not re-close", async () => {
+    const issue = await newIssue();
+    const merge = pullRequestPayload({
+      number: 208,
+      action: "closed",
+      state: "closed",
+      merged: true,
+      body: `Fixes ${issue.key}`,
+    });
+    expect(await send("pull_request", merge)).toMatchObject({ moved: 1 });
+    // Someone reopens the issue; the same signed body is sent again with a fresh GUID.
+    await setStatus(issue.id, "In Progress");
+    expect(await send("pull_request", merge)).toMatchObject({ moved: 0 });
+    expect((await statusName(issue.id))?.name).toBe("In Progress");
+    expect((await statusActivity(issue.id)).filter((row) => row.actorId === null)).toHaveLength(1);
+  });
+
   it("ignores repositories outside Stockkart", async () => {
     const issue = await newIssue();
     await send(

@@ -65,12 +65,18 @@ export interface PrOptions {
   defaultBranch?: string;
   author?: string;
   mergedBy?: string | null;
+  /** ISO; defaults to a time later than every earlier call's (events in send order). */
+  updatedAt?: string;
 }
+
+let prClock = Date.UTC(2026, 0, 1);
 
 export function pullRequestPayload(options: PrOptions = {}) {
   const repo = options.repo ?? "Stockkart/inventory-api";
   const number = options.number ?? 118;
   const merged = options.merged ?? false;
+  prClock += 1000;
+  const updatedAt = options.updatedAt ?? new Date(prClock).toISOString();
   return {
     action: options.action ?? "opened",
     number,
@@ -83,6 +89,7 @@ export function pullRequestPayload(options: PrOptions = {}) {
       draft: options.draft ?? false,
       merged,
       merged_at: merged ? "2026-01-02T03:04:05Z" : null,
+      updated_at: updatedAt,
       user: { login: options.author ?? "imf-ali" },
       merged_by:
         merged && options.mergedBy !== null ? { login: options.mergedBy ?? "imf-ali" } : null,

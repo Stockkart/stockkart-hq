@@ -1,6 +1,7 @@
 import { type z } from "zod";
 
 import { type DeliveryResult } from "@/server/services/github";
+import { pgErrorInfo } from "@/server/services/errors";
 
 import { createPayload, type GithubRepository, pullRequestPayload, pushPayload } from "./payloads";
 import { type DeliveryPlan, isOrgRepository, planCreate, planPullRequest, planPush } from "./plan";
@@ -16,7 +17,8 @@ import { verifyGithubSignature } from "./signature";
  *   4. signature mismatch        → 401, before any JSON parsing or database work
  *   5. ping → 200; unhandled events → 202; malformed JSON or payload shape → 400
  *   6. repository outside the Stockkart org → 200, no effect
- *   7. apply in one statement, deduped by X-GitHub-Delivery → 200
+ *   7. apply in one statement, deduped by X-GitHub-Delivery → 200 (a database error → 500,
+ *      nothing written, so "Redeliver" in GitHub retries it)
  *
  * Logs carry the event, delivery id, repository and counts only: never the secret, the
  * signature or the payload.
@@ -26,6 +28,7 @@ export const MAX_BODY_BYTES = 1024 * 1024;
 
 const HANDLED_EVENTS = new Set(["pull_request", "push", "create"]);
 const DELIVERY_ID = /^[A-Za-z0-9-]{1,100}$/;
+const EVENT_NAME = /^[a-z_]{1,50}$/;
 
 export interface WebhookDeps {
   /** Read per request, so a secret set later takes effect without a code change. */
@@ -138,7 +141,7 @@ export function createGithubWebhookHandler(deps: WebhookDeps) {
     // Authenticated from here on.
     const event = request.headers.get("x-github-event") ?? "";
     const deliveryId = request.headers.get("x-github-delivery") ?? "";
-    if (!DELIVERY_ID.test(deliveryId) || !/^[a-z_]{1,50}$/.test(event)) {
+    if (!DELIVERY_ID.test(deliveryId) || !EVENT_NAME.test(event)) {
       return json(400, { error: "bad_headers" });
     }
     if (event === "ping") return json(200, { ok: true, event });
@@ -170,7 +173,16 @@ export function createGithubWebhookHandler(deps: WebhookDeps) {
       return json(200, { ok: true, linked: 0, updated: 0, moved: 0 });
     }
 
-    const result = await deps.apply(plan);
+    let result: DeliveryResult;
+    try {
+      result = await deps.apply(plan);
+    } catch (error) {
+      // Driver errors can carry the statement's parameters (titles, commit messages), so
+      // only the Postgres error code is logged. Nothing was written (one statement), so
+      // GitHub's "Redeliver" retries it cleanly.
+      log({ event, deliveryId, repo, ...counts, outcome: "error", code: pgErrorInfo(error)?.code });
+      return json(500, { error: "internal" });
+    }
     log({ event, deliveryId, repo, ...counts, ...result, outcome: "applied" });
     if (result.duplicate) return json(200, { ok: true, duplicate: true });
     if (result.linked > 0 || result.updated > 0 || result.moved > 0) deps.refresh(result);

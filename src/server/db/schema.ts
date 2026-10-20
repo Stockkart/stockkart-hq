@@ -596,6 +596,11 @@ export const githubRefs = pgTable(
     state: githubPrStateEnum("state"),
     authorLogin: text("author_login"),
     mergedAt: timestamp("merged_at", { withTimezone: true }),
+    /**
+     * PRs: `pull_request.updated_at` of the event that last wrote the row. GitHub does not
+     * deliver in order, so an older event never overwrites a newer state.
+     */
+    githubUpdatedAt: timestamp("github_updated_at", { withTimezone: true }),
     ...timestamps,
   },
   (table) => [
