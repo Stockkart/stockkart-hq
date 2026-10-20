@@ -1,11 +1,17 @@
 "use client";
 
 import { FileCheck2, FilePlus2, LayoutTemplate } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { whenIdle } from "@/lib/idle";
 
-import { NewAdrDialog, NewDocDialog, TemplatePickerDialog } from "./doc-dialogs";
+import {
+  NewAdrDialog,
+  NewDocDialog,
+  preloadDocTemplates,
+  TemplatePickerDialog,
+} from "./doc-dialogs";
 
 /** "New page", "New from template" (DOC-5) and "New ADR" (ADR-1) buttons. */
 export function DocsToolbar({
@@ -21,6 +27,9 @@ export function DocsToolbar({
   const close = (isOpen: boolean) => {
     if (!isOpen) setOpen(null);
   };
+  const offersTemplates = show.includes("template");
+  // The template picker opens with its list: fetch it while the browser is idle.
+  useEffect(() => (offersTemplates ? whenIdle(preloadDocTemplates) : undefined), [offersTemplates]);
   return (
     <div className="flex flex-wrap items-center gap-2">
       {show.includes("page") ? (
@@ -30,7 +39,13 @@ export function DocsToolbar({
         </Button>
       ) : null}
       {show.includes("template") ? (
-        <Button size="sm" variant="outline" onClick={() => setOpen("template")}>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => setOpen("template")}
+          onPointerEnter={preloadDocTemplates}
+          onFocus={preloadDocTemplates}
+        >
           <LayoutTemplate aria-hidden="true" />
           New from template
         </Button>

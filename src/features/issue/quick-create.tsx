@@ -17,7 +17,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
-import { LazyRichTextEditor } from "@/features/editor/lazy-rich-text-editor";
+import { LazyRichTextEditor, preloadRichTextEditor } from "@/features/editor/lazy-rich-text-editor";
 import {
   DEFAULT_PRIORITY,
   ISSUE_TYPE_LABELS,
@@ -27,6 +27,7 @@ import {
   PRIORITIES,
   PRIORITY_LABELS,
 } from "@/lib/issues/constants";
+import { whenIdle } from "@/lib/idle";
 import { PROJECT_KEY_PATTERN } from "@/lib/issues/keys";
 import { TITLE_MAX } from "@/lib/issues/schemas";
 import { isEmptyDoc, type RichTextDoc } from "@/lib/rich-text";
@@ -97,9 +98,12 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
     [],
   );
 
-  /** Opens the dialog; templates are fetched once, the first time. */
-  const openDialog = useCallback(() => {
-    setOpen(true);
+  /**
+   * Fetches the templates once. Called when the browser is idle after the page loads and
+   * when the pointer or focus reaches "Create", so opening the dialog needs no network.
+   */
+  const preload = useCallback(() => {
+    void preloadRichTextEditor().catch(() => {});
     if (current.current.templatesRequested) return;
     current.current.templatesRequested = true;
     loadIssueTemplatesAction()
@@ -113,6 +117,14 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
         current.current.templatesRequested = false;
       });
   }, [prefill]);
+
+  useEffect(() => whenIdle(preload), [preload]);
+
+  /** Opens at once; the templates are normally there already (see `preload`). */
+  const openDialog = useCallback(() => {
+    setOpen(true);
+    preload();
+  }, [preload]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -203,7 +215,14 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
 
   return (
     <>
-      <Button variant="outline" size="sm" onClick={openDialog} aria-keyshortcuts="C">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={openDialog}
+        onPointerEnter={preload}
+        onFocus={preload}
+        aria-keyshortcuts="C"
+      >
         <Plus aria-hidden="true" />
         Create
       </Button>

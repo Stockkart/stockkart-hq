@@ -22,6 +22,7 @@ import { DOC_TYPE_LABELS, type DocType, PICKABLE_DOC_TYPES } from "@/lib/docs/co
 import { DOC_TITLE_MAX } from "@/lib/docs/schemas";
 import { buildTree, descendantIds, flattenTree, siblingsOf } from "@/lib/docs/tree";
 import { docPath, type DocTemplateView, type DocTreeItem } from "@/lib/docs/views";
+import { preloader } from "@/lib/idle";
 import { cn } from "@/lib/utils";
 import {
   createAdrAction,
@@ -202,6 +203,22 @@ export function NewAdrDialog({
   );
 }
 
+/**
+ * DOC-5 templates, fetched once per page load and shared: the toolbar starts it when the
+ * browser is idle (or the pointer reaches the button), so the picker opens with its list.
+ * Templates are seed data that change with deploys, not while a page is open.
+ */
+const loadDocTemplates = preloader(async () => {
+  const result = await loadDocTemplatesAction();
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+});
+
+/** Warms the template list (errors are reported when the picker opens, not here). */
+export function preloadDocTemplates() {
+  loadDocTemplates().catch(() => {});
+}
+
 /** DOC-5 "New from template": pick a template, preview it, name the doc. */
 export function TemplatePickerDialog({
   open,
@@ -219,11 +236,13 @@ export function TemplatePickerDialog({
   useEffect(() => {
     if (!open || templates !== null) return;
     let cancelled = false;
-    void callAction(() => loadDocTemplatesAction()).then((loaded) => {
+    const show = (loaded: DocTemplateView[] | null) => {
       if (cancelled || !loaded) return;
       setTemplates(loaded);
       setSelectedId((current) => current ?? loaded[0]?.id ?? null);
-    });
+    };
+    // Normally already loaded; if the preload failed, ask again and report the error.
+    loadDocTemplates().then(show, () => void callAction(() => loadDocTemplatesAction()).then(show));
     return () => {
       cancelled = true;
     };

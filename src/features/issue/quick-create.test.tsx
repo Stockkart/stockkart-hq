@@ -23,6 +23,7 @@ vi.mock("sonner", () => ({ toast }));
 
 // The real editor is client-only and lazy; a textarea stands in for it here.
 vi.mock("@/features/editor/lazy-rich-text-editor", () => ({
+  preloadRichTextEditor: () => Promise.resolve(),
   LazyRichTextEditor: ({
     label,
     initialContent,

@@ -8,7 +8,7 @@ import { type SearchResults } from "@/lib/search/schemas";
 const searchAction = vi.hoisted(() => vi.fn());
 vi.mock("@/server/actions/search", () => ({ searchAction }));
 
-const router = vi.hoisted(() => ({ push: vi.fn() }));
+const router = vi.hoisted(() => ({ push: vi.fn(), prefetch: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router, usePathname: () => "/my-work" }));
 
 const quickCreate = vi.hoisted(() => ({ openQuickCreate: vi.fn() }));
