@@ -34,10 +34,10 @@ comments and commit bodies.
 ```
 src/
   app/(auth)/login/       login page + client form
-  app/(app)/              signed-in app shell (layout calls requirePageSession)
-  app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, docs/ (tree layout, list,
-                          docs/[id] editor), adrs/, and a "coming soon" [section]
-                          placeholder that real routes (backlog/ …) override
+  app/(app)/              signed-in app shell (layout calls requirePageSession); my-work/, todos/
+  app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, backlog/, board/, docs/
+                          (tree layout, list, docs/[id] editor), adrs/, and a "coming soon"
+                          [section] placeholder for the rest (sprints, roadmap, …)
   app/api/auth/           Auth.js route handlers
   app/api/webhooks/github placeholder (501) until GH-1
   proxy.ts                default-deny gate (Next.js 16 name for middleware.ts)
@@ -49,7 +49,7 @@ src/
   server/import/          handbook import (IMP-1…3), driven by scripts/import-handbook.ts
   lib/                    isomorphic code: constants, Zod input schemas, keys, rich text,
                           markdown → editor JSON (lib/markdown)
-  features/               feature UI (shell/, issue/, docs/, editor/, later backlog/, board/, …)
+  features/               feature UI (shell/, issue/, planning/, todos/, search/, docs/, editor/)
   features/editor/        shared Tiptap editor (client-only; `variant="doc"` adds tables,
                           callouts and Mermaid blocks) and the safe JSON renderer
   components/ui/          shadcn/ui components (owned code, edit freely)
@@ -117,7 +117,8 @@ e2e/                      Playwright smoke tests
 3. Export the action from a `"use server"` file in `src/server/actions/`. Its first
    statement is `await requireSession()` (the guard test fails otherwise); then validate
    with the schema and return `ActionResult<T>` (`{ ok: true, data }` or
-   `{ ok: false, error }`). See `actions/issues.ts` (`run()` does parse, call, revalidate).
+   `{ ok: false, error }`). Use `runAction()` from `actions/action-runner.ts` (parse, call,
+   refresh, map `ServiceError`s); see `actions/issues.ts` or `actions/docs.ts`.
 4. Test the service against Postgres (`describeDb`) and the action with mocks (session
    required, bad input rejected before the service runs).
 

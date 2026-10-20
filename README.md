@@ -7,12 +7,15 @@ and technical spec.
 **The code is public; the data is private.** Every page and API route requires a session,
 and only Stockkart accounts with the `SUPER_USER` role can sign in.
 
-Status: **Phase 1, slice 3** (docs). Sign-in, sessions, default-deny routing, rate limiting,
-the app shell, issues (list, quick create (`C`), issue detail with comments, activity, links
-and subtasks) and docs: a page tree with drag and drop, docs from 13 built-in templates, an
-autosaving editor with optimistic locking, tables, callouts and Mermaid diagrams, ADRs with
-numbering and a log, and a one-time handbook import. The database schema already covers all
-of Phase 1; backlog, board, todos and search arrive in slice 2.
+Status: **Phase 1 MVP** (slices 1–3: issues, planning, docs). Sign-in, sessions, default-deny
+routing, rate limiting and the app shell; issues (list with filters, quick create (`C`),
+issue detail with comments, activity, links, linked docs and subtasks); planning (a ranked
+backlog with drag and drop, a board, My Work with recently viewed issues, personal todos that
+can be promoted to issues, and a ⌘K palette that searches issues, docs and comments); and
+docs: a page tree with drag and drop, docs from 13 built-in templates, an autosaving editor
+with optimistic locking, tables, callouts and Mermaid diagrams, ADRs with numbering and a
+log, and a one-time handbook import. The database schema covers all of Phase 1; sprints,
+roadmap, diagrams, incidents and services are still "coming soon".
 
 ## Stack
 
@@ -23,6 +26,7 @@ of Phase 1; backlog, board, todos and search arrive in slice 2.
 | DB        | Neon Postgres, Drizzle ORM, `@neondatabase/serverless` (HTTP driver)                    |
 | UI        | Tailwind CSS 4, shadcn/ui components, lucide-react                                      |
 | Editor    | Tiptap 3 (MIT packages only), loaded client-only                                        |
+| Planning  | dnd-kit (MIT) for backlog and board drag and drop                                       |
 | Diagrams  | Mermaid (MIT, strict mode, client-only) with DOMPurify (Apache-2.0 option) on its SVG   |
 | Import    | markdown-it (MIT) for the handbook import                                               |
 | Tests     | Vitest + Testing Library (unit), Playwright (smoke)                                     |
