@@ -33,16 +33,21 @@ describe("MermaidPreview (DOC-7)", () => {
     behaveLikeMermaid();
   });
 
-  it("renders sanitised SVG from strict-mode mermaid", async () => {
+  it("renders sanitised SVG from strict-mode mermaid, isolated in a shadow root", async () => {
     render(<MermaidPreview source={"flowchart LR\n  A --> B"} />);
     const preview = await screen.findByRole("img", { name: "Diagram preview" });
-    expect(preview).toHaveTextContent("Start");
-    const svg = preview.querySelector("svg");
-    expect(svg).not.toBeNull();
+    await waitFor(() => expect(preview.shadowRoot?.querySelector("svg")).toBeTruthy());
+    const shadow = preview.shadowRoot;
+    expect(shadow?.textContent).toContain("Start");
+    const svg = shadow?.querySelector("svg");
     expect(svg?.getAttribute("onload")).toBeNull();
-    expect(preview.querySelector("script")).toBeNull();
+    expect(shadow?.querySelector("script")).toBeNull();
     expect(mermaidMock.initialize).toHaveBeenCalledWith(
-      expect.objectContaining({ startOnLoad: false, securityLevel: "strict" }),
+      expect.objectContaining({
+        startOnLoad: false,
+        securityLevel: "strict",
+        secure: expect.arrayContaining(["securityLevel", "themeCSS"]),
+      }),
     );
   });
 

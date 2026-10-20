@@ -10,9 +10,12 @@ import { type Mermaid } from "mermaid";
  *   tags in labels).
  * - `htmlLabels: false` makes labels plain SVG `<text>`, so the output needs no
  *   `<foreignObject>` HTML (which the SVG sanitiser profile below removes anyway).
+ * - `secure` stops `%%{init: …}%%` directives in a diagram from changing the security level
+ *   or injecting CSS (`themeCSS`, `themeVariables`, fonts) into the page.
  * - mermaid returns SVG as a markup string, and the preview inserts it with innerHTML. Even
  *   strict mode output is passed through DOMPurify with the SVG profile first: defence in
- *   depth, so a mermaid bug can never put script, event handlers or HTML into the page.
+ *   depth, so a mermaid bug can never put script, event handlers or HTML into the page. The
+ *   preview then puts it in a shadow root, so the SVG's own `<style>` cannot reach the page.
  */
 
 export type MermaidResult =
@@ -30,6 +33,22 @@ function loadMermaid(): Promise<Mermaid> {
         securityLevel: "strict",
         htmlLabels: false,
         theme: "neutral",
+        secure: [
+          "secure",
+          "securityLevel",
+          "startOnLoad",
+          "maxTextSize",
+          "maxEdges",
+          "htmlLabels",
+          "theme",
+          "themeCSS",
+          "themeVariables",
+          "fontFamily",
+          "altFontFamily",
+        ],
+        // Bounds for very large diagrams (the defaults, stated so they cannot be raised).
+        maxTextSize: 50_000,
+        maxEdges: 500,
       });
       return mermaid;
     })
