@@ -5,6 +5,7 @@ import { createIssueQueries } from "./issue-queries";
 import { createIssueService } from "./issues";
 import { createPlanningService } from "./planning";
 import { createPlanningQueries } from "./planning-queries";
+import { createTodoService } from "./todos";
 
 // Wiring only: the real Neon database for the app. Tests build the same services on a
 // node-postgres handle (src/test/db.ts).
@@ -13,3 +14,4 @@ export const issueQueries = createIssueQueries(db);
 export const commentService = createCommentService(db, { runAtomic });
 export const planningService = createPlanningService(db);
 export const planningQueries = createPlanningQueries(db);
+export const todoService = createTodoService(db);

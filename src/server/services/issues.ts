@@ -44,6 +44,12 @@ export interface FieldChange {
   changed: boolean;
 }
 
+/** Optional side effects of `createIssue`, written in the same statement. */
+export interface CreateIssueExtra {
+  /** MY-3: the actor's todo to link to the new issue (`todos.promoted_issue_id`). */
+  promoteTodoId?: string;
+}
+
 /** Number of attempts when two creators race for the same top-of-backlog rank. */
 const RANK_ATTEMPTS = 20;
 
@@ -171,8 +177,18 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
      * New issues go to the top of the backlog: rank = a key before the current first one.
      * Two creators reading the same top rank would produce the same key; the unique
      * (project_id, rank) index rejects the second, which retries with the new top.
+     *
+     * MY-3 promote (`extra.promoteTodoId`): the same statement first row-locks the actor's
+     * OWN, not-yet-promoted todo (`todo_lock`), creates the issue only if that row exists,
+     * and points the todo at the new issue. Under READ COMMITTED a concurrent promote of the
+     * same todo waits for the lock, re-checks `promoted_issue_id IS NULL` on the committed
+     * row, finds it set and creates nothing, so a double click cannot make two issues.
      */
-    async createIssue(actorId: string, input: CreateIssueData): Promise<CreatedIssue> {
+    async createIssue(
+      actorId: string,
+      input: CreateIssueData,
+      extra: CreateIssueExtra = {},
+    ): Promise<CreatedIssue> {
       const project = await projectByKey(input.projectKey);
       const parentId = input.parentId ?? null;
       const assigneeId = input.assigneeId ?? null;
@@ -186,6 +202,22 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
       const description = input.description ?? null;
       const descriptionText = description ? extractPlainText(description) : "";
       const refs = docRefs(description, await allProjectKeys());
+      const todoId = extra.promoteTodoId ?? null;
+      const todoLock = todoId
+        ? sql`todo_lock AS (
+              SELECT id FROM todos
+              WHERE id = ${todoId}::uuid AND user_id = ${actorId}::uuid
+                AND promoted_issue_id IS NULL
+              FOR UPDATE
+            ),`
+        : sql``;
+      const todoGate = todoId ? sql`AND EXISTS (SELECT 1 FROM todo_lock)` : sql``;
+      const todoLink = todoId
+        ? sql`promoted_todo AS (
+              UPDATE todos SET promoted_issue_id = inserted.id, updated_at = now()
+              FROM inserted WHERE todos.id = ${todoId}::uuid
+            ),`
+        : sql``;
 
       for (let attempt = 1; ; attempt += 1) {
         const id = crypto.randomUUID();
@@ -193,9 +225,10 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
         await options.beforeInsert?.();
         try {
           const result = await db.execute(sql`
-            WITH counter AS (
+            WITH ${todoLock}
+            counter AS (
               UPDATE projects SET issue_counter = issue_counter + 1, updated_at = now()
-              WHERE id = ${project.id}::uuid
+              WHERE id = ${project.id}::uuid ${todoGate}
               RETURNING issue_counter
             ),
             inserted AS (
@@ -215,6 +248,7 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
               SELECT 'issue', inserted.id, ${actorId}::uuid, 'created', ${input.type}
               FROM inserted
             ),
+            ${todoLink}
             ${mentionSyncCtes({
               // Safe inline: the issue is new, so no other request can be syncing it.
               fromType: "issue",
@@ -226,7 +260,12 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
             SELECT id, number FROM inserted
           `);
           const [row] = rowsOf(result, z.object({ id: z.string(), number: z.number() }));
-          if (!row) throw notFound(`Project ${input.projectKey}`);
+          if (!row) {
+            // Promote: the todo is not the actor's, does not exist or was already promoted.
+            throw todoId
+              ? notFound("Todo (or it was already promoted)")
+              : notFound(`Project ${input.projectKey}`);
+          }
           return { id: row.id, number: row.number, key: formatIssueKey(project.key, row.number) };
         } catch (error) {
           const info = pgErrorInfo(error);
