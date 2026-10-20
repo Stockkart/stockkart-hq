@@ -15,6 +15,13 @@
       "when": 1792502500588,
       "tag": "0001_phase1_issues_docs",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792520079465,
+      "tag": "0002_github_integration",
+      "breakpoints": true
     }
   ]
 }

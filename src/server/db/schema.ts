@@ -19,6 +19,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { ADR_STATUSES, DOC_STATUSES, DOC_TYPES, TEMPLATE_KINDS } from "@/lib/docs/constants";
+import { GITHUB_PR_STATES, GITHUB_REF_KINDS } from "@/lib/github/constants";
 import {
   COMMENT_ENTITY_TYPES,
   ENTITY_TYPES,
@@ -33,8 +34,8 @@ import { type RichTextDoc } from "@/lib/rich-text";
 /**
  * SPEC §8. Phase 0 tables (users, login_attempts) plus every table Phase 1 needs, defined up
  * front so the Phase 1 slices (issues; backlog/board/todos/search; docs/ADRs) share one
- * migration. Diagrams, watchers, saved views, notifications, attachments, GitHub refs,
- * incidents and services arrive with their phases.
+ * migration. Diagrams, watchers, saved views, notifications, attachments, incidents and
+ * services arrive with their phases; GitHub refs and deliveries arrived with GH-1…GH-4.
  *
  * Conventions:
  * - Every table has `id uuid`, `created_at`, `updated_at` unless SPEC §8 says otherwise.
@@ -84,18 +85,27 @@ export const templateKindEnum = pgEnum("template_kind", TEMPLATE_KINDS);
 // ── Phase 0: sign-in ─────────────────────────────────────────────────────────────────────
 
 /** HQ user, created on first sign-in and keyed by the Stockkart (inventory-api) userId. */
-export const users = pgTable("users", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  stockkartUserId: text("stockkart_user_id").notNull().unique(),
-  name: text("name").notNull(),
-  email: text("email").notNull(),
-  avatarUrl: text("avatar_url"),
-  githubLogin: text("github_login"),
-  lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
-  // S-3: "sign out everywhere" (P1) bumps this; sessions carrying an older value are rejected.
-  sessionVersion: integer("session_version").notNull().default(0),
-  ...timestamps,
-});
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    stockkartUserId: text("stockkart_user_id").notNull().unique(),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    avatarUrl: text("avatar_url"),
+    githubLogin: text("github_login"),
+    lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
+    // S-3: "sign out everywhere" (P1) bumps this; sessions carrying an older value are rejected.
+    sessionVersion: integer("session_version").notNull().default(0),
+    ...timestamps,
+  },
+  (table) => [
+    // GH-4: one HQ user per GitHub account; GitHub logins are case-insensitive.
+    uniqueIndex("users_github_login_unique")
+      .on(sql`lower(${table.githubLogin})`)
+      .where(sql`${table.githubLogin} IS NOT NULL`),
+  ],
+);
 
 /**
  * AUTH-8 rate limiting. One row per sign-in attempt per key, where key is
@@ -551,6 +561,81 @@ export const recentViews = pgTable(
     primaryKey({ columns: [table.userId, table.entityType, table.entityId] }),
     index("recent_views_user_viewed_idx").on(table.userId, table.viewedAt.desc()),
   ],
+);
+
+// ── GitHub integration (GH-1…GH-4) ───────────────────────────────────────────────────────
+
+export const githubRefKindEnum = pgEnum("github_ref_kind", GITHUB_REF_KINDS);
+export const githubPrStateEnum = pgEnum("github_pr_state", GITHUB_PR_STATES);
+
+/**
+ * A branch, pull request or commit that mentions an issue key (GH-2), one row per issue it
+ * mentions. Written only by the signature-verified webhook. The partial unique indexes make
+ * a redelivered or repeated event an upsert of the same row, never a duplicate.
+ */
+export const githubRefs = pgTable(
+  "github_refs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    issueId: uuid("issue_id")
+      .notNull()
+      .references(() => issues.id, { onDelete: "cascade" }),
+    /** `Owner/repo`, e.g. `Stockkart/inventory-api`. */
+    repo: text("repo").notNull(),
+    kind: githubRefKindEnum("kind").notNull(),
+    /** PR number (kind `pr`). */
+    number: integer("number"),
+    /** Commit sha (kind `commit`). */
+    sha: text("sha"),
+    /** Branch name (kind `branch`; the head branch for a PR). */
+    refName: text("ref_name"),
+    /** PR title or the commit message's first line; the branch name for branches. */
+    title: text("title").notNull(),
+    url: text("url").notNull(),
+    /** PRs only; null for branches and commits. */
+    state: githubPrStateEnum("state"),
+    authorLogin: text("author_login"),
+    mergedAt: timestamp("merged_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    index("github_refs_issue_idx").on(table.issueId),
+    uniqueIndex("github_refs_pr_unique")
+      .on(table.issueId, table.repo, table.kind, table.number)
+      .where(sql`${table.kind} = 'pr'`),
+    uniqueIndex("github_refs_commit_unique")
+      .on(table.issueId, table.repo, table.kind, table.sha)
+      .where(sql`${table.kind} = 'commit'`),
+    uniqueIndex("github_refs_branch_unique")
+      .on(table.issueId, table.repo, table.kind, table.refName)
+      .where(sql`${table.kind} = 'branch'`),
+    // Every PR state change updates all rows of that PR, whichever issues it links.
+    index("github_refs_pr_idx")
+      .on(table.repo, table.number)
+      .where(sql`${table.kind} = 'pr'`),
+    check(
+      "github_refs_kind_columns",
+      sql`(${table.kind} = 'pr' AND ${table.number} IS NOT NULL AND ${table.state} IS NOT NULL)
+        OR (${table.kind} = 'commit' AND ${table.sha} IS NOT NULL AND ${table.state} IS NULL)
+        OR (${table.kind} = 'branch' AND ${table.refName} IS NOT NULL AND ${table.state} IS NULL)`,
+    ),
+  ],
+);
+
+/**
+ * Webhook deliveries already applied, keyed by `X-GitHub-Delivery`, so a redelivery changes
+ * nothing (GH-1). Rows older than 30 days are pruned by the webhook itself; GitHub only
+ * offers redelivery of recent deliveries. Not in SPEC §8's list; append-only, so no
+ * `id`/`updated_at`.
+ */
+export const githubDeliveries = pgTable(
+  "github_deliveries",
+  {
+    deliveryId: text("delivery_id").primaryKey(),
+    event: text("event").notNull(),
+    receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("github_deliveries_received_idx").on(table.receivedAt)],
 );
 
 export type UserRow = typeof users.$inferSelect;
