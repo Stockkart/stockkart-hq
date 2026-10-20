@@ -5,9 +5,10 @@ import Link from "next/link";
 import { useId, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { Combobox } from "@/components/ui/combobox";
 import { IssueTypeIcon, StatusBadge } from "@/features/issue/issue-badges";
 import { callAction, RelativeTime } from "@/features/issue/client-utils";
+import { searchIssueOptions } from "@/features/search/issue-picker-search";
 import { type DocVersionView, type LinkedIssueView } from "@/lib/docs/views";
 import { issuePathForKey } from "@/lib/issues/keys";
 import { linkDocIssueAction, unlinkDocIssueAction } from "@/server/actions/docs";
@@ -86,7 +87,7 @@ function LinkedIssues({
   links: LinkedIssueView[];
 }) {
   const [adding, setAdding] = useState(false);
-  const [issueKey, setIssueKey] = useState("");
+  const [target, setTarget] = useState<{ key: string; label: string } | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
   const ids = { heading: useId(), key: useId() };
@@ -101,12 +102,12 @@ function LinkedIssues({
   const visible = [...byIssue.values()];
 
   function add() {
-    const key = issueKey.trim();
-    if (!key) return;
+    if (!target || pending) return;
+    const key = target.key;
     startTransition(async () => {
       const result = await callAction(() => linkDocIssueAction({ docId, issueKey: key }));
       if (result === null) return;
-      setIssueKey("");
+      setTarget(null);
       setAdding(false);
       // No router.refresh(): the action already re-rendered this page in its response.
     });
@@ -147,21 +148,28 @@ function LinkedIssues({
         >
           <div className="flex flex-col gap-1">
             <label htmlFor={ids.key} className="text-xs text-muted-foreground">
-              Issue key
+              Issue
             </label>
-            <Input
+            <Combobox
               id={ids.key}
-              autoFocus
-              className="h-8 w-32 font-mono"
-              placeholder={`${projectKey}-1`}
-              value={issueKey}
-              onChange={(event) => setIssueKey(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setAdding(false);
-              }}
+              label="Issue"
+              className="w-52"
+              align="end"
+              value={target?.key ?? null}
+              valueLabel={target?.label ?? null}
+              placeholder={`Search, or type ${projectKey}-1`}
+              searchPlaceholder="Key or words…"
+              emptyText="No matching issue"
+              promptText="Type a key or words to search"
+              loadOptions={(query) =>
+                searchIssueOptions(query, { exclude: visible.map((link) => link.issue.key) })
+              }
+              onChange={(key, option) =>
+                setTarget(key && option ? { key, label: option.label } : null)
+              }
             />
           </div>
-          <Button type="submit" size="sm" disabled={pending || !issueKey.trim()}>
+          <Button type="submit" size="sm" disabled={pending || !target}>
             Link
           </Button>
         </form>

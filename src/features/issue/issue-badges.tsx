@@ -59,6 +59,12 @@ export function IssueTypeIcon({
   );
 }
 
+/** The type icon alone (decorative), e.g. inside a picker option that already says the type. */
+export function IssueTypeGlyph({ type }: { type: IssueType }) {
+  const { icon: Icon, className: color } = TYPE_ICONS[type];
+  return <Icon aria-hidden="true" className={cn("size-4 shrink-0", color)} />;
+}
+
 const PRIORITY_ICONS: Record<Priority, { icon: LucideIcon; className: string }> = {
   0: { icon: TriangleAlert, className: "text-red-600 dark:text-red-400" },
   1: { icon: SignalHigh, className: "text-orange-600 dark:text-orange-400" },
@@ -93,6 +99,12 @@ export function PriorityLabel({
   );
 }
 
+/** The priority icon alone (decorative). */
+export function PriorityGlyph({ priority }: { priority: Priority }) {
+  const { icon: Icon, className: color } = PRIORITY_ICONS[priority];
+  return <Icon aria-hidden="true" className={cn("size-4 shrink-0", color)} />;
+}
+
 const STATUS_STYLES: Record<StatusCategory, { icon: LucideIcon; className: string }> = {
   todo: { icon: CircleDashed, className: "text-muted-foreground" },
   in_progress: { icon: CircleDot, className: "text-sky-600 dark:text-sky-400" },
@@ -120,6 +132,12 @@ export function StatusBadge({
       {name}
     </span>
   );
+}
+
+/** The status category icon alone (decorative). */
+export function StatusGlyph({ category }: { category: StatusCategory }) {
+  const { icon: Icon, className: color } = STATUS_STYLES[category];
+  return <Icon aria-hidden="true" className={cn("size-4 shrink-0", color)} />;
 }
 
 export function initials(name: string): string {

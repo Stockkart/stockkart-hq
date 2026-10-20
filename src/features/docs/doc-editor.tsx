@@ -7,9 +7,11 @@ import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { NativeSelect } from "@/components/ui/native-select";
+import { Combobox } from "@/components/ui/combobox";
+import { matchesQuery, Select } from "@/components/ui/select";
 import { LazyRichTextEditor } from "@/features/editor/lazy-rich-text-editor";
 import { callAction } from "@/features/issue/client-utils";
+import { userOptions } from "@/features/issue/field-options";
 import { splitAdrTitle } from "@/lib/docs/adr";
 import {
   ADR_STATUS_LABELS,
@@ -444,23 +446,22 @@ function DocMetaControls({
             <label htmlFor={ids.type} className={labelClass}>
               Type
             </label>
-            <NativeSelect
+            <Select
               id={ids.type}
+              label="Type"
+              className="w-40"
               value={type}
-              onChange={(event) => {
-                const next = PICKABLE_DOC_TYPES.find((value) => value === event.target.value);
+              options={PICKABLE_DOC_TYPES.map((value) => ({
+                value,
+                label: DOC_TYPE_LABELS[value],
+              }))}
+              onChange={(next) => {
                 if (next)
                   void update(setType, type, next, () =>
                     updateDocMetaAction({ docId: doc.id, field: "type", value: next }),
                   );
               }}
-            >
-              {PICKABLE_DOC_TYPES.map((value) => (
-                <option key={value} value={value}>
-                  {DOC_TYPE_LABELS[value]}
-                </option>
-              ))}
-            </NativeSelect>
+            />
           </>
         )}
       </div>
@@ -468,45 +469,37 @@ function DocMetaControls({
         <label htmlFor={ids.status} className={labelClass}>
           Doc status
         </label>
-        <NativeSelect
+        <Select
           id={ids.status}
+          label="Doc status"
+          className="w-36"
           value={status}
-          onChange={(event) => {
-            const next = DOC_STATUSES.find((value) => value === event.target.value);
+          options={DOC_STATUSES.map((value) => ({ value, label: DOC_STATUS_LABELS[value] }))}
+          onChange={(next) => {
             if (next)
               void update(setStatus, status, next, () =>
                 updateDocMetaAction({ docId: doc.id, field: "status", value: next }),
               );
           }}
-        >
-          {DOC_STATUSES.map((value) => (
-            <option key={value} value={value}>
-              {DOC_STATUS_LABELS[value]}
-            </option>
-          ))}
-        </NativeSelect>
+        />
       </div>
       <div className="flex flex-col gap-1">
         <label htmlFor={ids.owner} className={labelClass}>
           Owner
         </label>
-        <NativeSelect
+        <Select
           id={ids.owner}
-          value={ownerId ?? ""}
-          onChange={(event) => {
-            const next = event.target.value || null;
+          label="Owner"
+          className="w-44"
+          value={ownerId}
+          options={userOptions(users)}
+          clearLabel="No owner"
+          onChange={(next) => {
             void update(setOwnerId, ownerId, next, () =>
               updateDocMetaAction({ docId: doc.id, field: "owner", value: next }),
             );
           }}
-        >
-          <option value="">No owner</option>
-          {users.map((user) => (
-            <option key={user.id} value={user.id}>
-              {user.name}
-            </option>
-          ))}
-        </NativeSelect>
+        />
       </div>
       {isAdr ? (
         <>
@@ -514,11 +507,13 @@ function DocMetaControls({
             <label htmlFor={ids.adr} className={labelClass}>
               ADR status
             </label>
-            <NativeSelect
+            <Select
               id={ids.adr}
+              label="ADR status"
+              className="w-36"
               value={adrStatus}
-              onChange={(event) => {
-                const next = ADR_STATUSES.find((value) => value === event.target.value);
+              options={ADR_STATUSES.map((value) => ({ value, label: ADR_STATUS_LABELS[value] }))}
+              onChange={(next) => {
                 if (!next) return;
                 // "Superseded" needs a target first; it is saved once one is chosen.
                 if (next === "superseded" && !successor) {
@@ -534,24 +529,29 @@ function DocMetaControls({
                   }),
                 );
               }}
-            >
-              {ADR_STATUSES.map((value) => (
-                <option key={value} value={value}>
-                  {ADR_STATUS_LABELS[value]}
-                </option>
-              ))}
-            </NativeSelect>
+            />
           </div>
           {adrStatus === "superseded" ? (
             <div className="flex flex-col gap-1">
               <label htmlFor={ids.successor} className={labelClass}>
                 Superseded by
               </label>
-              <NativeSelect
+              <Combobox
                 id={ids.successor}
-                value={successor ?? ""}
-                onChange={(event) => {
-                  const next = event.target.value || null;
+                label="Superseded by"
+                className="w-64"
+                value={successor}
+                valueLabel={adrs.find((adr) => adr.id === successor)?.title ?? null}
+                placeholder="Choose an ADR…"
+                searchPlaceholder="Number or title…"
+                emptyText="No matching ADR"
+                // The project's ADRs came with the page: filtering needs no request.
+                loadOptions={async (query) =>
+                  adrs
+                    .map((adr) => ({ value: adr.id, label: adr.title }))
+                    .filter((option) => matchesQuery(option, query))
+                }
+                onChange={(next) => {
                   if (!next) return;
                   void update(setSuccessor, successor, next, () =>
                     updateDocMetaAction({
@@ -562,16 +562,7 @@ function DocMetaControls({
                     }),
                   );
                 }}
-              >
-                <option value="" disabled>
-                  Choose an ADR…
-                </option>
-                {adrs.map((adr) => (
-                  <option key={adr.id} value={adr.id}>
-                    {adr.title}
-                  </option>
-                ))}
-              </NativeSelect>
+              />
             </div>
           ) : null}
         </>

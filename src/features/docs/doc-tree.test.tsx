@@ -107,7 +107,8 @@ describe("DocTree", () => {
     await userEvent.click(screen.getByRole("menuitem", { name: "Move to…" }));
     const parent = await screen.findByRole("combobox", { name: "Parent" });
     expect(parent).toHaveTextContent("Top level");
-    await userEvent.selectOptions(parent, "b");
+    await userEvent.click(parent);
+    await userEvent.click(screen.getByRole("option", { name: "B" }));
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     await waitFor(() =>
       expect(actions.moveDocAction).toHaveBeenCalledWith({ docId: "d", parentId: "b", index: 0 }),
@@ -119,8 +120,9 @@ describe("DocTree", () => {
     await userEvent.click(screen.getByRole("button", { name: "Actions for A" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "Move to…" }));
     const parent = await screen.findByRole("combobox", { name: "Parent" });
-    const options = [...parent.querySelectorAll("option")].map((option) => option.value);
-    expect(options).toEqual(["__root__", "d"]);
+    await userEvent.click(parent);
+    const options = screen.getAllByRole("option").map((option) => option.textContent);
+    expect(options).toEqual(["Top level", "D"]);
   });
 });
 

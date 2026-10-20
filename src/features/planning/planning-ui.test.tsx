@@ -121,9 +121,8 @@ describe("Backlog (BLG-1/2/4)", () => {
     render(
       <Backlog issues={issues} projectKey="STK" group="none" users={[ada]} filtered={false} />,
     );
-    const select = screen.getByLabelText("Priority of STK-2");
-    await user.selectOptions(select, "0");
-    await user.tab();
+    await user.click(screen.getByRole("combobox", { name: "Priority of STK-2" }));
+    await user.click(screen.getByRole("option", { name: /^P0/ }));
     await waitFor(() =>
       expect(issueActions.updateIssueFieldAction).toHaveBeenCalledWith({
         issueId: "i2",

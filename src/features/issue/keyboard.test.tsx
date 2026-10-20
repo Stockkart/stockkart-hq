@@ -29,6 +29,14 @@ describe("shouldIgnoreShortcut (SPEC §9.5)", () => {
     ["a textarea", () => document.createElement("textarea")],
     ["a select", () => document.createElement("select")],
     [
+      "a picker (type-ahead)",
+      () => {
+        const button = document.createElement("button");
+        button.setAttribute("role", "combobox");
+        return button;
+      },
+    ],
+    [
       "a rich-text editor",
       () => {
         const div = document.createElement("div");

@@ -32,6 +32,8 @@ export interface ComboboxProps<V extends OptionValue> extends ListboxTriggerProp
   debounceMs?: number;
   /** Shown when the query has no results. */
   emptyText?: string;
+  /** Shown instead of `emptyText` while the query is empty, e.g. "Type to search". */
+  promptText?: string;
   align?: "start" | "center" | "end";
 }
 
@@ -51,6 +53,7 @@ export function Combobox<V extends OptionValue>({
   clearLabel,
   debounceMs = COMBOBOX_DEBOUNCE_MS,
   emptyText = "No matches",
+  promptText,
   align,
   className,
   ...trigger
@@ -127,7 +130,9 @@ export function Combobox<V extends OptionValue>({
       : state.status === "error"
         ? "Could not search. Try again."
         : state.status === "done" && state.options.length === 0
-          ? emptyText
+          ? query.trim() === "" && promptText
+            ? promptText
+            : emptyText
           : null;
   const shownLabel =
     value === null

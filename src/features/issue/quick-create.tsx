@@ -16,16 +16,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { NativeSelect } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import { LazyRichTextEditor, preloadRichTextEditor } from "@/features/editor/lazy-rich-text-editor";
 import {
   DEFAULT_PRIORITY,
-  ISSUE_TYPE_LABELS,
   ISSUE_TYPES,
   type IssueType,
   type Priority,
-  PRIORITIES,
-  PRIORITY_LABELS,
 } from "@/lib/issues/constants";
 import { whenIdle } from "@/lib/idle";
 import { PROJECT_KEY_PATTERN } from "@/lib/issues/keys";
@@ -34,6 +31,7 @@ import { isEmptyDoc, type RichTextDoc } from "@/lib/rich-text";
 import { createIssueAction, loadIssueTemplatesAction } from "@/server/actions/issues";
 import { promoteTodoAction } from "@/server/actions/todos";
 
+import { priorityOptions, typeOptions } from "./field-options";
 import { shouldIgnoreShortcut } from "./keyboard";
 import {
   isQuickCreateEvent,
@@ -43,6 +41,8 @@ import {
 
 /** Subtasks need a parent, so they are created from the parent issue instead. */
 const QUICK_CREATE_TYPES = ISSUE_TYPES.filter((type) => type !== "subtask");
+const TYPE_OPTIONS = typeOptions(QUICK_CREATE_TYPES);
+const PRIORITY_OPTIONS = priorityOptions();
 
 interface QuickCreateProps {
   /** Project used when the current page is not inside one. */
@@ -275,39 +275,29 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
             <div className="flex flex-wrap gap-3">
               <div className="flex min-w-36 flex-col gap-1.5">
                 <Label htmlFor={ids.type}>Type</Label>
-                <NativeSelect
+                <Select
                   id={ids.type}
+                  label="Type"
                   value={type}
-                  onChange={(event) => {
-                    const next = QUICK_CREATE_TYPES.find((t) => t === event.target.value);
+                  options={TYPE_OPTIONS}
+                  onChange={(next) => {
                     if (!next) return;
                     setType(next);
                     prefill(next, templates);
                   }}
-                >
-                  {QUICK_CREATE_TYPES.map((value) => (
-                    <option key={value} value={value}>
-                      {ISSUE_TYPE_LABELS[value]}
-                    </option>
-                  ))}
-                </NativeSelect>
+                />
               </div>
               <div className="flex min-w-36 flex-col gap-1.5">
                 <Label htmlFor={ids.priority}>Priority</Label>
-                <NativeSelect
+                <Select
                   id={ids.priority}
+                  label="Priority"
                   value={priority}
-                  onChange={(event) => {
-                    const next = PRIORITIES.find((p) => String(p) === event.target.value);
-                    if (next !== undefined) setPriority(next);
+                  options={PRIORITY_OPTIONS}
+                  onChange={(next) => {
+                    if (next !== null) setPriority(next);
                   }}
-                >
-                  {PRIORITIES.map((value) => (
-                    <option key={value} value={value}>
-                      {PRIORITY_LABELS[value]}
-                    </option>
-                  ))}
-                </NativeSelect>
+                />
               </div>
             </div>
 
