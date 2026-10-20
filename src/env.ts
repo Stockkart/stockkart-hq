@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { databaseUrlUsesTls, LOOPBACK_HOSTS } from "./server/db/database-url";
+
 /**
  * Server-side environment, validated once at module load.
  *
@@ -10,8 +12,6 @@ import { z } from "zod";
  *
  * Never import this from client components: it holds secrets.
  */
-
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 const stockkartApiUrl = z
   .url()
@@ -32,20 +32,6 @@ const optionalString = z
   .string()
   .optional()
   .transform((value) => (value === "" ? undefined : value));
-
-/** `sslmode=require` or stronger (verify-ca / verify-full), unless the host is loopback. */
-const TLS_SSL_MODES = new Set(["require", "verify-ca", "verify-full"]);
-
-function databaseUrlUsesTls(value: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return false;
-  }
-  if (LOOPBACK_HOSTS.has(url.hostname)) return true;
-  return TLS_SSL_MODES.has(url.searchParams.get("sslmode") ?? "");
-}
 
 export const envSchema = z.object({
   DATABASE_URL: z
