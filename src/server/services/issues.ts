@@ -269,6 +269,15 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
             ),`
         : sql``;
       const todoGate = todoId ? sql`AND EXISTS (SELECT 1 FROM todo_lock)` : sql``;
+      // BLG-3: the sprint is re-checked (and share-locked, ordering this against a start or
+      // completion of it) at write time; a sprint closed since the check creates nothing.
+      const sprintGate = sprintId
+        ? sql`AND EXISTS (
+            SELECT 1 FROM sprints s WHERE s.id = ${sprintId}::uuid
+              AND s.project_id = ${project.id}::uuid AND s.state <> 'closed'
+            FOR SHARE
+          )`
+        : sql``;
       const todoLink = todoId
         ? sql`promoted_todo AS (
               UPDATE todos SET promoted_issue_id = inserted.id, updated_at = now()
@@ -289,7 +298,7 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
             WITH ${todoLock}
             counter AS (
               UPDATE projects SET issue_counter = issue_counter + 1, updated_at = now()
-              WHERE id = ${project.id}::uuid ${todoGate}
+              WHERE id = ${project.id}::uuid ${todoGate} ${sprintGate}
               RETURNING issue_counter
             ),
             inserted AS (
@@ -330,9 +339,12 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
           const [row] = rowsOf(result, z.object({ id: z.string(), number: z.number() }));
           if (!row) {
             // Promote: the todo is not the actor's, does not exist or was already promoted.
+            // With a sprint: it was closed or deleted since the check.
             throw todoId
               ? notFound("Todo (or it was already promoted)")
-              : notFound(`Project ${input.projectKey}`);
+              : sprintId
+                ? notFound(`Project ${input.projectKey} or open sprint`)
+                : notFound(`Project ${input.projectKey}`);
           }
           return { id: row.id, number: row.number, key: formatIssueKey(project.key, row.number) };
         } catch (error) {
@@ -461,11 +473,13 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
         case "sprint":
           column = "sprint_id";
           value = uuidOrNull(input.value);
-          // Re-checked at write time: the sprint may have been closed or deleted since.
+          // Re-checked at write time: the sprint may have been closed or deleted since. The
+          // share lock orders this against a concurrent start or completion of the sprint.
           if (input.value) {
             alsoWhere = sql`AND EXISTS (
               SELECT 1 FROM sprints s WHERE s.id = ${input.value}::uuid
                 AND s.project_id = issues.project_id AND s.state <> 'closed'
+              FOR SHARE
             )`;
           }
           break;

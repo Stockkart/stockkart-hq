@@ -192,7 +192,11 @@ describeDb("sprints (Postgres)", () => {
     expect(result.committedPoints).toBe(8);
     expect([...result.issueIds].sort()).toEqual([a, b].sort());
     const [started] = await sprintActivity(id, "sprint_started");
-    expect(started?.meta).toEqual({ committedPoints: 8, issueIds: [a, b].sort() });
+    expect(started?.meta).toEqual({
+      committedPoints: 8,
+      issueIds: [a, b].sort(),
+      memberIds: [a, b, done].sort(),
+    });
     const [row] = await db.select({ state: sprints.state }).from(sprints).where(eq(sprints.id, id));
     expect(row?.state).toBe("active");
   });
@@ -269,6 +273,17 @@ describeDb("sprints (Postgres)", () => {
       endDate: "2026-06-28",
     });
     expect(await sprintOf(open)).toBe(created?.id);
+  });
+
+  it("creates no next sprint when nothing is left open", async () => {
+    const id = await createSprint("Sprint 1");
+    const done = await createIssue("done", 3);
+    await addToSprint(done, id);
+    await sprintService().startSprint(actor, id);
+    await setStatus(done, "Done");
+    const result = await sprintService().completeSprint(actor, { sprintId: id, carryTo: "next" });
+    expect(result).toEqual({ carried: 0, targetSprintId: null, completedPoints: 3 });
+    expect(await db.select().from(sprints).where(eq(sprints.state, "planned"))).toEqual([]);
   });
 
   it("completes into the backlog", async () => {

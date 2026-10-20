@@ -11,8 +11,8 @@ import { LazyBurndownChart, LazyVelocityChart } from "./lazy-charts";
 /**
  * A chart with its accessible alternative (SPEC §9.5): the numbers as a table. The table is
  * always in the page (visually hidden while the chart shows, so screen readers read it);
- * "Show table" swaps the chart for the visible table. The chart itself is hidden from
- * assistive technology, since the table carries the same data.
+ * the "Show table" toggle swaps the chart for the visible table. The chart itself is hidden
+ * from assistive technology, since the table carries the same data.
  */
 function ChartFigure({
   title,
@@ -34,6 +34,7 @@ function ChartFigure({
           {title}
           <span className="block text-xs font-normal text-muted-foreground">{summary}</span>
         </figcaption>
+        {/* A toggle keeps its name; `aria-pressed` tells whether the table is shown. */}
         <Button
           type="button"
           variant="ghost"
@@ -41,7 +42,7 @@ function ChartFigure({
           aria-pressed={asTable}
           onClick={() => setAsTable((value) => !value)}
         >
-          {asTable ? "Show chart" : "Show table"}
+          Show table
         </Button>
       </div>
       {asTable ? null : <div aria-hidden="true">{chart}</div>}

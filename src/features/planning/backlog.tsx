@@ -23,6 +23,7 @@ import { ChevronRight, GripVertical } from "lucide-react";
 import Link from "next/link";
 import {
   type ReactNode,
+  useCallback,
   useEffect,
   useId,
   useOptimistic,
@@ -169,8 +170,10 @@ export function Backlog({
   const [, startTransition] = useTransition();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [announcement, setAnnouncement] = useState("");
-  // A row moved by the menu to another section remounts there; it takes focus on mount.
-  const [focusId, setFocusId] = useState<string | null>(null);
+  // A row moved by the menu to another section remounts there and takes focus on mount;
+  // only in its new section (`container`), and only once.
+  const [focus, setFocus] = useState<{ id: string; container: string } | null>(null);
+  const clearFocus = useCallback(() => setFocus(null), []);
   const container = useRef<HTMLDivElement>(null);
   const dndId = useId();
   useListNavigation(container);
@@ -186,7 +189,8 @@ export function Backlog({
   const sectionOf = (issueId: string) =>
     sections.find((section) => section.issues.some((issue) => issue.id === issueId));
   const targets = sections
-    .filter((section) => section.sprint !== null)
+    // A sprint still being created (optimistic `new:` id) takes no issues yet.
+    .filter((section) => section.sprint !== null && !section.sprint.id.startsWith("new:"))
     .map((section) => ({ container: section.container, label: section.label }));
   const context: SprintContext = {
     projectKey,
@@ -240,6 +244,7 @@ export function Backlog({
       ? sections.find((section) => `${DROP_PREFIX}${section.id}` === overId)
       : sectionOf(overId);
     if (!source || !overSection) return;
+    if (overSection.container.startsWith("new:")) return;
     const overRow = overId.startsWith(DROP_PREFIX) ? null : overId;
 
     if (overSection.id === source.id) {
@@ -306,6 +311,7 @@ export function Backlog({
               section={section}
               listId={`${dndId}-${section.id}`}
               collapsed={isCollapsed}
+              filtered={filtered}
               onToggle={() =>
                 setCollapsed((current) => {
                   const next = new Set(current);
@@ -342,13 +348,14 @@ export function Backlog({
                     users={users}
                     available={availableMoves(index, ids.length)}
                     onMove={(kind) => onMenuMove(ids, issue.id, kind)}
-                    takeFocus={focusId === issue.id}
+                    takeFocus={focus?.id === issue.id && focus.container === section.container}
+                    onFocused={clearFocus}
                     moveTargets={[
                       ...targets,
                       { container: BACKLOG_CONTAINER, label: "Backlog" },
                     ].filter((target) => target.container !== section.container)}
                     onMoveTo={(target) => {
-                      setFocusId(issue.id);
+                      setFocus({ id: issue.id, container: target });
                       moveToContainer(issue.id, target);
                     }}
                   />
@@ -387,6 +394,7 @@ function PlanningSectionView({
   section,
   listId,
   collapsed,
+  filtered,
   onToggle,
   actions,
   empty,
@@ -395,17 +403,22 @@ function PlanningSectionView({
   section: PlanningSection;
   listId: string;
   collapsed: boolean;
+  /** Filters hide rows, so counts and points cover only the shown ones. */
+  filtered: boolean;
   onToggle: () => void;
   actions: ReactNode;
   empty: ReactNode;
   children: ReactNode;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `${DROP_PREFIX}${section.id}` });
+  const { setNodeRef, isOver } = useDroppable({
+    id: `${DROP_PREFIX}${section.id}`,
+    disabled: section.id.startsWith("new:"),
+  });
   const { sprint } = section;
   const count = section.issues.length;
   return (
     <section
-      aria-label={sprint ? `Sprint ${sprint.name}` : section.label}
+      aria-label={sprint ? sprint.name : section.label}
       className={cn("rounded-lg border", isOver && "ring-2 ring-ring/50")}
     >
       <div className="flex flex-wrap items-center gap-2 border-b bg-muted/40 px-3 py-2 text-sm">
@@ -430,6 +443,7 @@ function PlanningSectionView({
             ) : null}
             <span className="shrink-0 font-normal text-muted-foreground">
               {count} {count === 1 ? "issue" : "issues"}
+              {filtered ? " (filtered)" : null}
             </span>
           </button>
         </h2>
@@ -457,6 +471,7 @@ function BacklogRow({
   available,
   onMove,
   takeFocus,
+  onFocused,
   moveTargets,
   onMoveTo,
 }: {
@@ -466,6 +481,8 @@ function BacklogRow({
   available: Record<MoveKind, boolean>;
   onMove: (kind: MoveKind) => void;
   takeFocus: boolean;
+  /** Called once the row took focus, so a later remount does not take it again. */
+  onFocused: () => void;
   /** BLG-3 keyboard alternative to dragging into another section. */
   moveTargets: { container: string; label: string }[];
   onMoveTo: (container: string) => void;
@@ -496,8 +513,10 @@ function BacklogRow({
   // Set when "Move to sprint…" was chosen: this row is about to remount in another section.
   const movedAway = useRef(false);
   useEffect(() => {
-    if (takeFocus) menuButton.current?.focus();
-  }, [takeFocus]);
+    if (!takeFocus) return;
+    menuButton.current?.focus();
+    onFocused();
+  }, [takeFocus, onFocused]);
   const href = `/${projectKey}/issues/${issue.key}`;
   const points = saver.valueOf("storyPoints");
   const assignee = saver.valueOf("assignee");

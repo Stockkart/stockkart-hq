@@ -203,7 +203,7 @@ export function createSprintQueries(db: AppDatabase, { read = directRead }: Quer
             SELECT s.id, s.name, s.start_date::text AS start_date, s.end_date::text AS end_date,
               ${epochMs(sql`s.closed_at`)} AS closed_ms,
               ${epochMs(sql`started.created_at`)} AS started_ms,
-              started.meta -> 'issueIds' AS issue_ids
+              COALESCE(started.meta -> 'memberIds', started.meta -> 'issueIds') AS issue_ids
             FROM sprints s
             LEFT JOIN LATERAL (
               SELECT a.created_at, a.meta FROM activity a
@@ -226,7 +226,9 @@ export function createSprintQueries(db: AppDatabase, { read = directRead }: Quer
                 AND (a.from_value IN (SELECT id::text FROM targets)
                   OR a.to_value IN (SELECT id::text FROM targets))
               UNION
-              SELECT (jsonb_array_elements_text(a.meta -> 'issueIds'))::uuid FROM activity a
+              SELECT (jsonb_array_elements_text(
+                COALESCE(a.meta -> 'memberIds', a.meta -> 'issueIds')))::uuid
+              FROM activity a
               WHERE a.entity_type = 'sprint' AND a.action = ${SPRINT_ACTIONS.started}
                 AND a.entity_id IN (SELECT id FROM targets)
             )

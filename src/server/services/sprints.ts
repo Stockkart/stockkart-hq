@@ -36,6 +36,9 @@ const stateRow = z.object({ state: z.string().nullable() });
 /** The unique index that enforces SPR-1 "one active sprint per project". */
 const ONE_ACTIVE = "sprints_one_active_per_project";
 
+/** Guard for the `sprints` row writes: archived projects are read-only. */
+const liveProject = sql`AND project_id IN (SELECT id FROM projects WHERE archived_at IS NULL)`;
+
 /**
  * Sprint lifecycle (SPR-1, SPR-2). Every write is one statement (or, for the completion,
  * one transaction) that also appends its `activity` rows: issue sprint changes as
@@ -93,7 +96,7 @@ export function createSprintService(db: AppDatabase, options: SprintServiceOptio
           UPDATE sprints SET name = ${input.name}, goal = ${input.goal},
             start_date = ${input.startDate}::date, end_date = ${input.endDate}::date,
             updated_at = now()
-          WHERE id = ${input.sprintId}::uuid AND state = 'planned'
+          WHERE id = ${input.sprintId}::uuid AND state = 'planned' ${liveProject}
           RETURNING id
         ),
         logged AS (
@@ -120,7 +123,7 @@ export function createSprintService(db: AppDatabase, options: SprintServiceOptio
       const result = await db.execute(sql`
         WITH target AS (
           SELECT id, name FROM sprints
-          WHERE id = ${sprintId}::uuid AND state = 'planned'
+          WHERE id = ${sprintId}::uuid AND state = 'planned' ${liveProject}
           FOR UPDATE
         ),
         moved AS (
@@ -157,40 +160,51 @@ export function createSprintService(db: AppDatabase, options: SprintServiceOptio
     /**
      * SPR-1 start. The partial unique index allows one active sprint per project, so a
      * second start (even a concurrent one) fails on it; that is mapped to a clear message.
-     * `sprint_started.meta` is the burndown's start snapshot: the open (not done-category)
-     * live issues and their points.
+     * `sprint_started.meta` is the burndown's start snapshot: `committedPoints` and
+     * `issueIds` for the open (not done-category) live issues, `memberIds` for all of them.
      */
     async startSprint(
       actorId: string,
       sprintId: string,
     ): Promise<{ committedPoints: number; issueIds: string[] }> {
-      let result: unknown;
+      // Two statements in one transaction: the first takes the sprint's row lock (moves into
+      // or out of the sprint hold a share lock on it, see `planning.moveIssueToSprint`), so
+      // the second reads the members AFTER every racing move committed.
+      const start = sql`
+        UPDATE sprints SET state = 'active', updated_at = now()
+        WHERE id = ${sprintId}::uuid AND state = 'planned'
+          AND start_date IS NOT NULL AND end_date IS NOT NULL ${liveProject}
+        RETURNING id
+      `;
+      const snapshot = sql`
+        WITH started AS (
+          SELECT id FROM sprints
+          WHERE id = ${sprintId}::uuid AND state = 'active' AND updated_at = now()
+        ),
+        members AS (
+          SELECT i.id, COALESCE(i.story_points, 0) AS points, st.category <> 'done' AS open
+          FROM issues i JOIN statuses st ON st.id = i.status_id
+          WHERE i.sprint_id = ${sprintId}::uuid AND i.deleted_at IS NULL
+            AND EXISTS (SELECT 1 FROM started)
+        ),
+        logged AS (
+          INSERT INTO activity (entity_type, entity_id, actor_id, action, meta)
+          SELECT 'sprint', id, ${actorId}::uuid, ${SPRINT_ACTIONS.started},
+            jsonb_build_object(
+              'committedPoints',
+                (SELECT COALESCE(sum(points), 0)::int FROM members WHERE open),
+              'issueIds',
+                COALESCE((SELECT jsonb_agg(id ORDER BY id) FROM members WHERE open), '[]'::jsonb),
+              'memberIds',
+                COALESCE((SELECT jsonb_agg(id ORDER BY id) FROM members), '[]'::jsonb))
+          FROM started
+          RETURNING meta
+        )
+        SELECT meta FROM logged
+      `;
+      let results: unknown[];
       try {
-        result = await db.execute(sql`
-          WITH started AS (
-            UPDATE sprints SET state = 'active', updated_at = now()
-            WHERE id = ${sprintId}::uuid AND state = 'planned'
-              AND start_date IS NOT NULL AND end_date IS NOT NULL
-            RETURNING id
-          ),
-          committed AS (
-            SELECT i.id, COALESCE(i.story_points, 0) AS points
-            FROM issues i JOIN statuses st ON st.id = i.status_id
-            WHERE i.sprint_id = ${sprintId}::uuid AND i.deleted_at IS NULL
-              AND st.category <> 'done' AND EXISTS (SELECT 1 FROM started)
-          ),
-          logged AS (
-            INSERT INTO activity (entity_type, entity_id, actor_id, action, meta)
-            SELECT 'sprint', id, ${actorId}::uuid, ${SPRINT_ACTIONS.started},
-              jsonb_build_object(
-                'committedPoints', (SELECT COALESCE(sum(points), 0)::int FROM committed),
-                'issueIds', COALESCE((SELECT jsonb_agg(id ORDER BY id) FROM committed),
-                  '[]'::jsonb))
-            FROM started
-            RETURNING meta
-          )
-          SELECT meta FROM logged
-        `);
+        results = await options.runAtomic([start, snapshot]);
       } catch (error) {
         const info = pgErrorInfo(error);
         if (info?.code === UNIQUE_VIOLATION && info.constraint === ONE_ACTIVE) {
@@ -199,7 +213,7 @@ export function createSprintService(db: AppDatabase, options: SprintServiceOptio
         throw error;
       }
       const [row] = rowsOf(
-        result,
+        results.at(-1),
         z.object({
           meta: z.object({ committedPoints: z.number(), issueIds: z.array(z.string()) }),
         }),
@@ -209,7 +223,7 @@ export function createSprintService(db: AppDatabase, options: SprintServiceOptio
         if (state === "planned") throw invalid("Give the sprint a start and end date first");
         throw stateError(state, "started", "planned");
       }
-      return row.meta;
+      return { committedPoints: row.meta.committedPoints, issueIds: row.meta.issueIds };
     },
 
     /**
@@ -219,8 +233,9 @@ export function createSprintService(db: AppDatabase, options: SprintServiceOptio
      * 1. close the sprint (`state = 'closed'`, `closed_at = now()`); it must be active.
      *    Later statements act only if THIS transaction closed it (`closed_at = now()`, the
      *    transaction's start time), so a lost race changes nothing;
-     * 2. carry to "next": if the project has no planned sprint, create one ("Sprint N",
-     *    starting the day after the latest sprint ends, the project's sprint length long);
+     * 2. carry to "next": if open issues remain and the project has no planned sprint,
+     *    create one ("Sprint N", starting the day after the latest sprint ends, the
+     *    project's sprint length long);
      * 3. move the open live issues to the earliest planned sprint (or the backlog), one
      *    activity row each, and log `sprint_completed` with the Done points (Won't Do
      *    excluded) and the carried issue ids.
@@ -230,7 +245,7 @@ export function createSprintService(db: AppDatabase, options: SprintServiceOptio
       const closedHere = sql`id = ${id}::uuid AND state = 'closed' AND closed_at = now()`;
       const close = sql`
         UPDATE sprints SET state = 'closed', closed_at = now(), updated_at = now()
-        WHERE id = ${id}::uuid AND state = 'active'
+        WHERE id = ${id}::uuid AND state = 'active' ${liveProject}
         RETURNING id
       `;
       const createNext = sql`
@@ -243,6 +258,11 @@ export function createSprintService(db: AppDatabase, options: SprintServiceOptio
           FROM closed c JOIN projects p ON p.id = c.project_id
           WHERE NOT EXISTS (
             SELECT 1 FROM sprints s WHERE s.project_id = c.project_id AND s.state = 'planned'
+          )
+          -- Only when there is something to carry.
+          AND EXISTS (
+            SELECT 1 FROM issues i JOIN statuses st ON st.id = i.status_id
+            WHERE i.sprint_id = ${id}::uuid AND i.deleted_at IS NULL AND st.category <> 'done'
           )
         ),
         inserted AS (

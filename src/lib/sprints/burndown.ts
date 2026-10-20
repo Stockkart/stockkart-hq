@@ -8,10 +8,10 @@ import { type Burndown, type BurndownPoint, type VelocityBar } from "./views";
  * these; the unit tests feed them synthetic activity.
  *
  * Model: an issue's state at instant T is its CURRENT state with every change made after T
- * undone (newest first, restoring each change's `from` value). Sprint membership after the
- * start comes from the start snapshot (`sprint_started.meta.issueIds`) plus the sprint
- * field changes since; before the start (or without a snapshot) it is replayed like any
- * other field. An issue counts only while it exists (created, not yet deleted).
+ * undone (newest first, restoring each change's `from` value); sprint membership is
+ * replayed the same way (see `isMember`), with the start snapshot
+ * (`sprint_started.meta.memberIds`) as the fallback for issues without sprint changes. An
+ * issue counts only while it exists (created, not yet deleted).
  *
  * For each sprint day the state at the end of that day (UTC) is used; the day the sprint
  * was closed uses the instant just before closing, so the open issues carried out by the
@@ -54,7 +54,10 @@ export interface SprintTimeline {
   /** When `sprint_started` was logged; null for a sprint that never started. */
   startedAt: Date | null;
   closedAt: Date | null;
-  /** `sprint_started.meta.issueIds`; null when missing (older data). */
+  /**
+   * The sprint's live issues when it started (`sprint_started.meta.memberIds`, done ones
+   * included; `issueIds`, the open ones, for older rows); null when missing.
+   */
   snapshotIssueIds: readonly string[] | null;
 }
 
@@ -89,47 +92,57 @@ function evaluator(timeline: SprintTimeline, data: BurndownData) {
   }
   // Newest first, so undoing walks back in time.
   for (const list of byIssue.values()) list.sort((a, b) => b.at.getTime() - a.at.getTime());
-  const sprintChanges = data.changes
-    .filter((change) => change.field === "sprint")
-    .sort((a, b) => a.at.getTime() - b.at.getTime());
-  const { sprintId, startedAt, snapshotIssueIds } = timeline;
+  // Each issue's sprint changes, oldest first.
+  const sprintChanges = new Map<string, IssueChange[]>();
+  for (const [issueId, list] of byIssue) {
+    sprintChanges.set(issueId, list.filter((change) => change.field === "sprint").reverse());
+  }
+  const { sprintId, startedAt } = timeline;
+  const snapshot = timeline.snapshotIssueIds ? new Set(timeline.snapshotIssueIds) : null;
 
   function stateAt(issue: BurndownIssue, at: number) {
-    let sprint = issue.sprintId;
     let status = issue.statusId;
     let points = issue.points;
     for (const change of byIssue.get(issue.id) ?? []) {
       if (change.at.getTime() <= at) break;
-      if (change.field === "sprint") sprint = change.from;
-      else if (change.field === "status" && change.from !== null) status = change.from;
+      if (change.field === "status" && change.from !== null) status = change.from;
       else if (change.field === "storyPoints") points = parsePoints(change.from);
     }
-    return { sprint, status, points };
+    return { status, points };
   }
 
-  /** Members by the start snapshot plus the sprint changes after the start. */
-  function snapshotMembers(at: number): Set<string> | null {
-    if (!snapshotIssueIds || !startedAt || at < startedAt.getTime()) return null;
-    const members = new Set(snapshotIssueIds);
-    for (const change of sprintChanges) {
-      const time = change.at.getTime();
-      if (time <= startedAt.getTime()) continue;
-      if (time > at) break;
-      if (change.to === sprintId) members.add(change.issueId);
-      else if (change.from === sprintId) members.delete(change.issueId);
+  /**
+   * Sprint membership at `at`, from the issue's sprint changes: the latest one at or before
+   * `at` decides, else the `from` of the first later one. Only an issue with no sprint
+   * change at all falls back to the start snapshot (once started; it guards against a
+   * membership change that left no activity row) or to its current sprint. Using every
+   * change, not only those after the start, keeps a move that raced the start correct on
+   * whichever side of the snapshot it landed.
+   */
+  function isMember(issue: BurndownIssue, at: number): boolean {
+    let last: IssueChange | undefined;
+    let next: IssueChange | undefined;
+    for (const change of sprintChanges.get(issue.id) ?? []) {
+      if (change.at.getTime() > at) {
+        next = change;
+        break;
+      }
+      last = change;
     }
-    return members;
+    if (last) return last.to === sprintId;
+    // No change yet: the first later change says what it was before.
+    if (next) return next.from === sprintId;
+    if (snapshot && startedAt && at >= startedAt.getTime()) return snapshot.has(issue.id);
+    return issue.sprintId === sprintId;
   }
 
   return (at: number): Totals => {
-    const members = snapshotMembers(at);
     const totals: Totals = { remaining: 0, completed: 0, scope: 0 };
     for (const issue of data.issues) {
       if (issue.createdAt.getTime() > at) continue;
       if (issue.deletedAt && issue.deletedAt.getTime() <= at) continue;
+      if (!isMember(issue, at)) continue;
       const state = stateAt(issue, at);
-      const member = members ? members.has(issue.id) : state.sprint === sprintId;
-      if (!member) continue;
       const points = state.points ?? 0;
       const kind = data.statusKinds.get(state.status) ?? "open";
       if (kind === "open") totals.remaining += points;
@@ -145,8 +158,10 @@ const lastInstant = (timeline: SprintTimeline, now: Date) =>
   timeline.closedAt ? timeline.closedAt.getTime() - 1 : now.getTime();
 
 /**
- * The burndown of a started sprint: a `start` point (the committed scope) and one point per
- * sprint day, empty (null) for days still to come. Null for a sprint that never started.
+ * The burndown of a started sprint: a `start` point, one point per sprint day (empty, null,
+ * for days still to come) and, for a sprint closed after its end date, a final `closed`
+ * point (the state just before closing, which velocity uses too). `committed` and the ideal
+ * line are the open points at the start. Null for a sprint that never started.
  */
 export function computeBurndown(
   timeline: SprintTimeline,
@@ -158,20 +173,12 @@ export function computeBurndown(
   const totalsAt = evaluator(timeline, data);
   const start = startedAt.getTime();
   const last = Math.max(start, lastInstant(timeline, now));
-  const committed = totalsAt(start).scope;
+  const atStart = totalsAt(start);
+  const committed = atStart.remaining;
   const dates = datesInRange(timeline.startDate, timeline.endDate);
   const count = Math.max(1, dates.length);
 
-  const points: BurndownPoint[] = [
-    {
-      key: "start",
-      label: "Start",
-      remaining: committed,
-      scope: committed,
-      completed: totalsAt(start).completed,
-      ideal: committed,
-    },
-  ];
+  const points: BurndownPoint[] = [{ key: "start", label: "Start", ...atStart, ideal: committed }];
   dates.forEach((date, index) => {
     const ideal = round(committed * (1 - (index + 1) / count));
     const dayEnd = endOfDay(date).getTime();
@@ -190,6 +197,10 @@ export function computeBurndown(
     const totals = totalsAt(Math.max(start, Math.min(dayEnd, last)));
     points.push({ key: date, label: formatShortDate(date), ...totals, ideal });
   });
+  const lastDay = dates.at(-1);
+  if (timeline.closedAt && lastDay && last > endOfDay(lastDay).getTime()) {
+    points.push({ key: "closed", label: "Closed", ...totalsAt(last), ideal: 0 });
+  }
   return { committed, points };
 }
 

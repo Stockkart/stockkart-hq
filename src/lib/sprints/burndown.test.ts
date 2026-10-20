@@ -224,6 +224,56 @@ describe("computeBurndown (SPR-3)", () => {
   it("is null for a sprint that never started", () => {
     expect(computeBurndown(timeline({ startedAt: null }), data([issue("a")]), AFTER)).toBeNull();
   });
+
+  it("brings back an issue that was done at the start and re-opened", () => {
+    const result = computeBurndown(
+      timeline({ snapshotIssueIds: ["a", "b"] }),
+      data(
+        [issue("a"), issue("b", { points: 5 })],
+        [
+          change("a", at(1, 8), "status", "todo", "done"),
+          change("a", at(3), "status", "done", "todo"),
+        ],
+      ),
+      AFTER,
+    );
+    // Committed = the open points at the start; the re-opened issue adds remaining work.
+    expect(result?.committed).toBe(5);
+    expect(result?.points[0]).toMatchObject({ remaining: 5, completed: 3, scope: 8 });
+    expect(remainingByDay(result)).toEqual([5, 5, 8, 8, 8]);
+  });
+
+  it("keeps an issue moved in just before the start even if the snapshot missed it", () => {
+    const result = computeBurndown(
+      timeline({ snapshotIssueIds: ["a"] }),
+      data(
+        [issue("a"), issue("late", { points: 2 })],
+        [change("late", at(1, 8), "sprint", null, S)],
+      ),
+      AFTER,
+    );
+    expect(result?.committed).toBe(5);
+  });
+
+  it("falls back to the snapshot for a membership change without activity", () => {
+    // `gone` left the sprint without an activity row (e.g. a foreign-key SET NULL).
+    const result = computeBurndown(
+      timeline({ snapshotIssueIds: ["a", "gone"] }),
+      data([issue("a"), issue("gone", { sprintId: null })]),
+      AFTER,
+    );
+    expect(result?.committed).toBe(6);
+  });
+
+  it("adds a Closed point when the sprint closed after its end date", () => {
+    const result = computeBurndown(
+      timeline({ closedAt: at(8) }),
+      data([issue("a", { statusId: "done" })], [change("a", at(7), "status", "todo", "done")]),
+      AFTER,
+    );
+    expect(result?.points.at(-2)).toMatchObject({ key: "2026-06-05", remaining: 3 });
+    expect(result?.points.at(-1)).toMatchObject({ key: "closed", remaining: 0, completed: 3 });
+  });
 });
 
 describe("computeVelocity (SPR-4)", () => {
@@ -248,6 +298,15 @@ describe("computeVelocity (SPR-4)", () => {
       ]),
     );
     expect(result).toEqual([{ sprintId: "s1", name: "Sprint 1", completed: 5 }]);
+  });
+
+  it("counts an issue already done at the start, like the completion does", () => {
+    const sprint = closed(1);
+    const result = computeVelocity(
+      [{ ...sprint, snapshotIssueIds: ["done"] }],
+      data([issue("done", { sprintId: "s1", statusId: "done", points: 5 })]),
+    );
+    expect(result[0]?.completed).toBe(5);
   });
 
   it("ignores changes made after the sprint closed", () => {

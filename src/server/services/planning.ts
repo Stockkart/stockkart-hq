@@ -174,8 +174,12 @@ export function createPlanningService(db: AppDatabase, options: PlanningServiceO
                   THEN now() ELSE issues.updated_at END
               FROM old
               WHERE issues.id = old.id AND (${sprintId}::uuid IS NULL OR EXISTS (
+                -- The share lock orders this move against a start or completion of the
+                -- target sprint (which update its row): a sprint closing meanwhile is seen
+                -- closed here, and a starting one snapshots its members after this move.
                 SELECT 1 FROM sprints s WHERE s.id = ${sprintId}::uuid
                   AND s.project_id = issues.project_id AND s.state <> 'closed'
+                FOR SHARE
               ))
               RETURNING issues.id, old.sprint_id::text AS from_value,
                 issues.sprint_id::text AS to_value, issues.rank

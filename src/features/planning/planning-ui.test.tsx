@@ -194,13 +194,13 @@ describe("Backlog sprint sections (BLG-3)", () => {
 
   it("shows a section per open sprint with dates, goal and points", () => {
     render(<Backlog {...backlogProps} sprints={sprints} issues={issues} group="none" />);
-    const active = screen.getByRole("region", { name: "Sprint Sprint 7" });
+    const active = screen.getByRole("region", { name: "Sprint 7" });
     expect(active).toHaveTextContent("Jun 2 – Jun 15");
     expect(active).toHaveTextContent("Make 2 containers safe");
     // The active sprint shows its done issues too.
     expect(within(active).getByText("7 pts")).toBeInTheDocument();
     expect(within(active).getByRole("button", { name: "Complete Sprint 7" })).toBeInTheDocument();
-    const planned = screen.getByRole("region", { name: "Sprint Sprint 8" });
+    const planned = screen.getByRole("region", { name: "Sprint 8" });
     expect(within(planned).getByText(/Drag issues here/)).toBeInTheDocument();
     expect(within(planned).getByRole("button", { name: "Start Sprint 8" })).toBeInTheDocument();
     const backlog = screen.getByRole("region", { name: "Backlog" });
@@ -217,7 +217,7 @@ describe("Backlog sprint sections (BLG-3)", () => {
       sprintId: "sp-8",
     });
     // Optimistic: the row shows in the sprint section at once, and keeps keyboard focus.
-    const planned = screen.getByRole("region", { name: "Sprint Sprint 8" });
+    const planned = screen.getByRole("region", { name: "Sprint 8" });
     expect(within(planned).getByRole("link", { name: /STK-2/ })).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Actions for STK-2" })).toHaveFocus(),

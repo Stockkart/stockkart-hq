@@ -38,7 +38,9 @@ export default async function SprintPage({ params }: Props) {
       sprintId,
     }),
   ]);
-  if (!sprints.some((sprint) => sprint.id === sprintId)) notFound();
+  // A sprint deleted from this very page re-renders it without the sprint: the client
+  // shows "This sprint was deleted" rather than a 404. Any id outside the project's
+  // sprints renders the same message (it reveals nothing; every sprint is listed anyway).
   const [timeline] = inputs.timelines;
   const burndown = timeline ? computeBurndown(timeline, inputs.data, new Date()) : null;
 

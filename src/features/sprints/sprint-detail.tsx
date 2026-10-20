@@ -42,7 +42,7 @@ export function SprintDetail({
   if (!sprint) {
     return (
       <p className="text-sm text-muted-foreground">
-        This sprint was deleted.{" "}
+        This sprint does not exist or was deleted.{" "}
         <Link href={`/${projectKey}/sprints`} className="underline underline-offset-2">
           All sprints
         </Link>
