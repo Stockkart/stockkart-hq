@@ -20,8 +20,9 @@ import {
 import { type RichTextDoc } from "@/lib/rich-text";
 import { requireSession } from "@/server/auth/require-session";
 import { commentService, issueQueries, issueService } from "@/server/services";
-import { FOREIGN_KEY_VIOLATION, pgErrorInfo, ServiceError } from "@/server/services/errors";
 import { type CreatedIssue, type FieldChange } from "@/server/services/issues";
+
+import { runAction } from "./action-runner";
 
 /**
  * Issue mutations (ISS-*). Each action re-checks the session first (S-2: action ids can be
@@ -29,32 +30,21 @@ import { type CreatedIssue, type FieldChange } from "@/server/services/issues";
  * Expected failures come back as `{ ok: false, error }`; a missing session throws.
  */
 
-/** Every issue page lives under /[projectKey]/issues, so refresh that whole subtree. */
+/**
+ * Issues show on every project page (list, detail, backlog, board) and on My Work, so
+ * refresh that whole subtree. Pages are dynamic, so this only re-renders what is open.
+ */
 function refreshIssuePages() {
-  revalidatePath("/[projectKey]/issues", "layout");
+  revalidatePath("/[projectKey]", "layout");
+  revalidatePath("/my-work");
 }
 
-async function run<S extends z.ZodType, T>(
+function run<S extends z.ZodType, T>(
   schema: S,
   input: unknown,
   action: (data: z.output<S>) => Promise<T>,
 ): Promise<ActionResult<T>> {
-  const parsed = schema.safeParse(input);
-  if (!parsed.success) {
-    return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
-  }
-  try {
-    const data = await action(parsed.data);
-    refreshIssuePages();
-    return { ok: true, data };
-  } catch (error) {
-    if (error instanceof ServiceError) return { ok: false, error: error.message };
-    // A referenced user, component or issue was deleted between the check and the write.
-    if (pgErrorInfo(error)?.code === FOREIGN_KEY_VIOLATION) {
-      return { ok: false, error: "Something it refers to no longer exists; reload and retry" };
-    }
-    throw error;
-  }
+  return runAction(schema, input, action, refreshIssuePages);
 }
 
 export async function createIssueAction(input: unknown): Promise<ActionResult<CreatedIssue>> {
