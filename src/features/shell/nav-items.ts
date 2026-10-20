@@ -34,9 +34,9 @@ export const DEFAULT_PROJECT_KEY = "STK";
 const projectHref = (section: string) => `/${DEFAULT_PROJECT_KEY}/${section}`;
 
 /**
- * SPEC §5.1 app shell. Issues, Backlog, Board, My Work and Todos work in Phase 1; the other
- * project pages show a "coming soon" placeholder until their slice lands. Settings has no
- * page yet.
+ * SPEC §5.1 app shell. My Work, Todos, Backlog, Board, Issues, Docs and ADRs work in Phase 1;
+ * Sprints, Roadmap, Diagrams, Incidents and Services show the "coming soon" placeholder
+ * (`[projectKey]/[section]`) until their slice lands. Settings has no page yet.
  */
 export const NAV_SECTIONS: NavSection[] = [
   {
