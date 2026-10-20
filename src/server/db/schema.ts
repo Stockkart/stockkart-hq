@@ -24,6 +24,7 @@ import {
   ENTITY_TYPES,
   ISSUE_LINK_TYPES,
   ISSUE_TYPES,
+  type Priority,
   STATUS_CATEGORIES,
   STATUS_DEFAULT_FOR,
 } from "@/lib/issues/constants";
@@ -250,7 +251,7 @@ export const issues = pgTable(
       .notNull()
       .references(() => statuses.id, { onDelete: "restrict" }),
     /** 0 = P0 Critical … 3 = P3 Low. */
-    priority: smallint("priority").notNull().default(2),
+    priority: smallint("priority").$type<Priority>().notNull().default(2),
     assigneeId: uuid("assignee_id").references(() => users.id, { onDelete: "set null" }),
     reporterId: uuid("reporter_id").references(() => users.id, { onDelete: "set null" }),
     parentId: uuid("parent_id").references((): AnyPgColumn => issues.id, {
