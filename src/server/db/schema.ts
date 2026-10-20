@@ -314,7 +314,9 @@ export const issueLabels = pgTable(
 
 /**
  * ISS-6. One row per link, stored in its "active" direction (`source blocks target`); the
- * inverse wording is derived when viewed from the target.
+ * inverse wording is derived when viewed from the target. At most one link of each type per
+ * pair of issues in either direction: "A relates B" and "B relates A" are the same link, and
+ * "A blocks B" with "B blocks A" (or mutual duplicates) would contradict each other.
  */
 export const issueLinks = pgTable(
   "issue_links",
@@ -331,7 +333,12 @@ export const issueLinks = pgTable(
     ...timestamps,
   },
   (table) => [
-    uniqueIndex("issue_links_unique").on(table.sourceIssueId, table.targetIssueId, table.type),
+    uniqueIndex("issue_links_pair_unique").on(
+      table.type,
+      sql`LEAST(${table.sourceIssueId}, ${table.targetIssueId})`,
+      sql`GREATEST(${table.sourceIssueId}, ${table.targetIssueId})`,
+    ),
+    index("issue_links_source_idx").on(table.sourceIssueId),
     index("issue_links_target_idx").on(table.targetIssueId),
     check("issue_links_not_self", sql`${table.sourceIssueId} <> ${table.targetIssueId}`),
   ],
@@ -462,6 +469,11 @@ export const docs = pgTable(
       onDelete: "set null",
     }),
     templateId: uuid("template_id").references(() => templates.id, { onDelete: "set null" }),
+    /**
+     * Where an imported doc came from (IMP-1, e.g. `decisions/0004-ocr.md`), so re-running
+     * the handbook import updates instead of duplicating. Null for docs written in HQ.
+     */
+    sourcePath: text("source_path"),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     search: tsvector("search").generatedAlwaysAs(
       sql`setweight(to_tsvector('english'::regconfig, coalesce("title", '')), 'A') || setweight(to_tsvector('english'::regconfig, coalesce("content_text", '')), 'B')`,
@@ -474,6 +486,9 @@ export const docs = pgTable(
     uniqueIndex("docs_project_adr_number_unique")
       .on(table.projectId, table.adrNumber)
       .where(sql`${table.adrNumber} IS NOT NULL`),
+    uniqueIndex("docs_project_source_path_unique")
+      .on(table.projectId, table.sourcePath)
+      .where(sql`${table.sourcePath} IS NOT NULL`),
     index("docs_search_idx").using("gin", table.search),
     check("docs_version_positive", sql`${table.version} > 0`),
     check("docs_not_own_parent", sql`${table.parentId} IS DISTINCT FROM ${table.id}`),
@@ -516,6 +531,26 @@ export const todos = pgTable(
     ...timestamps,
   },
   (table) => [index("todos_user_position_idx").on(table.userId, table.position)],
+);
+
+/**
+ * MY-1 "recently viewed" (not in SPEC §8's table list, added so the My Work slice needs no
+ * migration). One row per user and item, upserted with a new `viewed_at` on each visit.
+ */
+export const recentViews = pgTable(
+  "recent_views",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    entityType: entityTypeEnum("entity_type").notNull(),
+    entityId: uuid("entity_id").notNull(),
+    viewedAt: timestamp("viewed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.entityType, table.entityId] }),
+    index("recent_views_user_viewed_idx").on(table.userId, table.viewedAt.desc()),
+  ],
 );
 
 export type UserRow = typeof users.$inferSelect;

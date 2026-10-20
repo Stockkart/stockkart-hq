@@ -3,7 +3,7 @@ CREATE TYPE "public"."comment_entity_type" AS ENUM('issue', 'doc');--> statement
 CREATE TYPE "public"."doc_status" AS ENUM('draft', 'in_review', 'approved', 'obsolete');--> statement-breakpoint
 CREATE TYPE "public"."doc_type" AS ENUM('page', 'design', 'lld', 'adr', 'rfc', 'api_contract', 'runbook', 'postmortem', 'load_test_report', 'meeting_notes', 'retro', 'release_notes', 'onboarding');--> statement-breakpoint
 CREATE TYPE "public"."entity_link_origin" AS ENUM('manual', 'mention');--> statement-breakpoint
-CREATE TYPE "public"."entity_type" AS ENUM('issue', 'doc', 'diagram', 'incident', 'comment');--> statement-breakpoint
+CREATE TYPE "public"."entity_type" AS ENUM('issue', 'doc', 'diagram', 'incident', 'comment', 'user');--> statement-breakpoint
 CREATE TYPE "public"."issue_link_type" AS ENUM('blocks', 'relates', 'duplicates');--> statement-breakpoint
 CREATE TYPE "public"."issue_type" AS ENUM('epic', 'story', 'task', 'bug', 'spike', 'tech_debt', 'subtask');--> statement-breakpoint
 CREATE TYPE "public"."release_state" AS ENUM('unreleased', 'released');--> statement-breakpoint
@@ -74,6 +74,7 @@ CREATE TABLE "docs" (
 	"adr_status" "adr_status",
 	"adr_superseded_by" uuid,
 	"template_id" uuid,
+	"source_path" text,
 	"deleted_at" timestamp with time zone,
 	"search" "tsvector" GENERATED ALWAYS AS (setweight(to_tsvector('english'::regconfig, coalesce("title", '')), 'A') || setweight(to_tsvector('english'::regconfig, coalesce("content_text", '')), 'B')) STORED,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -168,6 +169,14 @@ CREATE TABLE "projects" (
 	CONSTRAINT "projects_issue_counter_nonneg" CHECK ("projects"."issue_counter" >= 0)
 );
 --> statement-breakpoint
+CREATE TABLE "recent_views" (
+	"user_id" uuid NOT NULL,
+	"entity_type" "entity_type" NOT NULL,
+	"entity_id" uuid NOT NULL,
+	"viewed_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "recent_views_user_id_entity_type_entity_id_pk" PRIMARY KEY("user_id","entity_type","entity_id")
+);
+--> statement-breakpoint
 CREATE TABLE "releases" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"project_id" uuid NOT NULL,
@@ -254,6 +263,7 @@ ALTER TABLE "issues" ADD CONSTRAINT "issues_sprint_id_sprints_id_fk" FOREIGN KEY
 ALTER TABLE "issues" ADD CONSTRAINT "issues_release_id_releases_id_fk" FOREIGN KEY ("release_id") REFERENCES "public"."releases"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "labels" ADD CONSTRAINT "labels_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "projects" ADD CONSTRAINT "projects_lead_id_users_id_fk" FOREIGN KEY ("lead_id") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "recent_views" ADD CONSTRAINT "recent_views_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "releases" ADD CONSTRAINT "releases_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "releases" ADD CONSTRAINT "releases_notes_doc_id_docs_id_fk" FOREIGN KEY ("notes_doc_id") REFERENCES "public"."docs"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "sprints" ADD CONSTRAINT "sprints_project_id_projects_id_fk" FOREIGN KEY ("project_id") REFERENCES "public"."projects"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -268,11 +278,13 @@ CREATE UNIQUE INDEX "components_project_name_unique" ON "components" USING btree
 CREATE UNIQUE INDEX "doc_versions_doc_version_unique" ON "doc_versions" USING btree ("doc_id","version");--> statement-breakpoint
 CREATE INDEX "docs_project_parent_position_idx" ON "docs" USING btree ("project_id","parent_id","position");--> statement-breakpoint
 CREATE UNIQUE INDEX "docs_project_adr_number_unique" ON "docs" USING btree ("project_id","adr_number") WHERE "docs"."adr_number" IS NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "docs_project_source_path_unique" ON "docs" USING btree ("project_id","source_path") WHERE "docs"."source_path" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX "docs_search_idx" ON "docs" USING gin ("search");--> statement-breakpoint
 CREATE UNIQUE INDEX "entity_links_unique" ON "entity_links" USING btree ("from_type","from_id","to_type","to_id","origin");--> statement-breakpoint
 CREATE INDEX "entity_links_to_idx" ON "entity_links" USING btree ("to_type","to_id");--> statement-breakpoint
 CREATE INDEX "issue_labels_label_idx" ON "issue_labels" USING btree ("label_id");--> statement-breakpoint
-CREATE UNIQUE INDEX "issue_links_unique" ON "issue_links" USING btree ("source_issue_id","target_issue_id","type");--> statement-breakpoint
+CREATE UNIQUE INDEX "issue_links_pair_unique" ON "issue_links" USING btree ("type",LEAST("source_issue_id", "target_issue_id"),GREATEST("source_issue_id", "target_issue_id"));--> statement-breakpoint
+CREATE INDEX "issue_links_source_idx" ON "issue_links" USING btree ("source_issue_id");--> statement-breakpoint
 CREATE INDEX "issue_links_target_idx" ON "issue_links" USING btree ("target_issue_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "issues_project_number_unique" ON "issues" USING btree ("project_id","number");--> statement-breakpoint
 CREATE UNIQUE INDEX "issues_project_rank_unique" ON "issues" USING btree ("project_id","rank");--> statement-breakpoint
@@ -282,6 +294,7 @@ CREATE INDEX "issues_assignee_open_idx" ON "issues" USING btree ("assignee_id") 
 CREATE INDEX "issues_parent_idx" ON "issues" USING btree ("parent_id");--> statement-breakpoint
 CREATE INDEX "issues_search_idx" ON "issues" USING gin ("search");--> statement-breakpoint
 CREATE UNIQUE INDEX "labels_project_name_unique" ON "labels" USING btree ("project_id","name");--> statement-breakpoint
+CREATE INDEX "recent_views_user_viewed_idx" ON "recent_views" USING btree ("user_id","viewed_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE UNIQUE INDEX "releases_project_name_unique" ON "releases" USING btree ("project_id","name");--> statement-breakpoint
 CREATE INDEX "sprints_project_idx" ON "sprints" USING btree ("project_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "sprints_one_active_per_project" ON "sprints" USING btree ("project_id") WHERE "sprints"."state" = 'active';--> statement-breakpoint
