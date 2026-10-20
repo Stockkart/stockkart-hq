@@ -104,7 +104,10 @@ describe("issue server actions", () => {
       expect(revalidatePath).toHaveBeenCalled();
       for (const [path, type] of revalidatePath.mock.calls) {
         expect(type).toBe("page");
-        expect(path).toMatch(/^\/(\[projectKey\]\/(issues|backlog|board|docs\/\[id\])|my-work)/);
+        expect(path).toMatch(
+          /^\/(\[projectKey\]\/(issues|backlog|board|adrs|docs\/\[id\])|my-work|todos)/,
+        );
+        expect(path).not.toBe("/[projectKey]");
       }
     },
   );

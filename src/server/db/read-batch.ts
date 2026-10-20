@@ -20,7 +20,11 @@ import { type RunnableQuery } from "drizzle-orm/runnable-query";
  * exactly as without batching (costs one extra round trip, on the error path only).
  */
 
-/** A Drizzle query builder (select, raw `execute`, …): runnable on its own or in a batch. */
+/**
+ * A Drizzle read (select, or a raw `execute` that only reads): runnable on its own or in a
+ * batch. Never pass a write (insert/update/delete, data-modifying CTE): a failed batch
+ * re-runs every query in it, which would apply a write twice.
+ */
 export type ReadQuery<R> = RunnableQuery<R, "pg"> & PromiseLike<R>;
 
 export type Read = <R>(query: ReadQuery<R>) => Promise<R>;

@@ -23,6 +23,7 @@ import { type CreatedIssue, type FieldChange } from "@/server/services/issues";
 
 import { runAction } from "./action-runner";
 import {
+  ADR_LOG,
   BACKLOG,
   BOARD,
   DOC_PAGE,
@@ -30,6 +31,7 @@ import {
   ISSUE_PAGE,
   ISSUE_VIEWS,
   refreshPages,
+  TODOS,
 } from "./refresh";
 
 /**
@@ -54,6 +56,8 @@ function run<S extends z.ZodType, T>(
 
 /** Field changes also show in the Linked issues panel of doc pages. */
 const FIELD_PAGES = [...ISSUE_VIEWS, DOC_PAGE];
+/** A deleted issue also leaves the ADR log's links and a promoted todo's link. */
+const DELETE_PAGES = [...FIELD_PAGES, ADR_LOG, TODOS];
 /** Labels show on the issue, the lists and in the filter options. */
 const LABEL_PAGES = [ISSUE_PAGE, ISSUE_LIST, BACKLOG, BOARD];
 /** Links and comments (and the mentions in them) show on issue pages only. */
@@ -134,7 +138,7 @@ export async function deleteIssueAction(input: unknown): Promise<ActionResult> {
       await issueService.deleteIssue(session.user.id, data.issueId);
       return undefined;
     },
-    FIELD_PAGES,
+    DELETE_PAGES,
   );
 }
 

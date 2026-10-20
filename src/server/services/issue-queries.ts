@@ -458,9 +458,13 @@ export function createIssueQueries(db: AppDatabase, { read = directRead }: Query
             .innerJoin(projects, eq(projects.id, issues.projectId))
             .where(
               inArray(
-                sql`${issues.id}::text`,
+                issues.id,
+                // parent/links activity stores issue ids (uuids) as text; cast those, not the
+                // primary key, so the lookup stays an index lookup.
                 db
-                  .select({ value: sql`unnest(ARRAY[${recent.fromValue}, ${recent.toValue}])` })
+                  .select({
+                    value: sql`unnest(ARRAY[${recent.fromValue}, ${recent.toValue}])::uuid`,
+                  })
                   .from(recent)
                   .where(inArray(recent.field, ["parent", "links"])),
               ),

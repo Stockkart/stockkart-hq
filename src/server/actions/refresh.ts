@@ -18,6 +18,8 @@ export const MY_WORK = "/my-work";
 /** Doc pages list their linked issues with title, status and priority (DOC-9). */
 export const DOC_PAGE = "/[projectKey]/docs/[id]";
 export const TODOS = "/todos";
+/** The ADR log lists the keys of the (live) issues each ADR links to. */
+export const ADR_LOG = "/[projectKey]/adrs";
 
 /** Every page that lists or shows issue fields. */
 export const ISSUE_VIEWS = [ISSUE_LIST, ISSUE_PAGE, BACKLOG, BOARD, MY_WORK] as const;

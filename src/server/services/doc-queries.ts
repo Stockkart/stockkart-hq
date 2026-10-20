@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, exists, isNull, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import { alias as pgAlias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
@@ -301,6 +301,7 @@ export function createDocQueries(db: AppDatabase, { read = directRead }: QueryOp
             and(
               eq(docs.projectId, projectId),
               eq(docs.type, "adr"),
+              isNotNull(docs.adrNumber),
               isNull(docs.deletedAt),
               ne(docs.id, docId),
               exists(

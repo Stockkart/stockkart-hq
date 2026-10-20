@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import { cache } from "react";
 import { z } from "zod";
 
@@ -22,14 +24,24 @@ export interface RequestDbStats {
   startedAt: number | null;
 }
 
-/** One stats object per server request (React `cache` is request-scoped in RSC/actions). */
-const requestStats = cache((): RequestDbStats => ({
+const newStats = (): RequestDbStats => ({
   id: Math.random().toString(36).slice(2, 8),
   roundTrips: 0,
   statements: 0,
   totalMs: 0,
   startedAt: null,
-}));
+});
+
+/** Server actions (outside React's render scope) get theirs from `withRequestStats`. */
+const actionStats = new AsyncLocalStorage<RequestDbStats>();
+/** One stats object per server render (React `cache` is request-scoped there). */
+const renderStats = cache(newStats);
+const requestStats = () => actionStats.getStore() ?? renderStats();
+
+/** Runs `fn` with its own stats, so all of an action's round trips add up in one place. */
+export function withRequestStats<T>(fn: () => Promise<T>): Promise<T> {
+  return actionStats.run(newStats(), fn);
+}
 
 const batchBody = z.object({ queries: z.array(z.unknown()) });
 

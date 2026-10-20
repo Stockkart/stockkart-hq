@@ -1,10 +1,12 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
 import { neon, neonConfig } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import { cache } from "react";
 
 import { env } from "@/env";
 
-import { createTimedFetch } from "./query-log";
+import { createTimedFetch, withRequestStats } from "./query-log";
 import { createBatchedRead, type Read } from "./read-batch";
 import * as schema from "./schema";
 import { type RunAtomic } from "./types";
@@ -29,12 +31,22 @@ export const runAtomic: RunAtomic = async ([first, ...rest]) => {
   return db.batch(queries);
 };
 
+const newBatcher = () => createBatchedRead((queries) => db.batch(queries));
+
 /**
- * One read batcher per server request (React `cache` is request-scoped), so the reads of
- * one page render go out as one `db.batch()` round trip, and requests never share a batch.
- * Outside a request scope each call gets a fresh batcher: correct, just unbatched.
+ * One read batcher per server render (React `cache` is request-scoped there), so the reads
+ * of a layout and its page go out as one `db.batch()` round trip, and requests never share
+ * a batch. React `cache` is only guaranteed to be request-scoped inside a render, so server
+ * actions run inside `batchReads`, which gives each call its own batcher explicitly. Anywhere else each
+ * call gets a fresh one: correct, just unbatched.
  */
-const requestRead = cache(() => createBatchedRead((queries) => db.batch(queries)));
+const renderRead = cache(newBatcher);
+const actionRead = new AsyncLocalStorage<Read>();
 
 /** `Read` on Neon HTTP: reads started in the same tick share one round trip. */
-export const read: Read = (query) => requestRead()(query);
+export const read: Read = (query) => (actionRead.getStore() ?? renderRead())(query);
+
+/** Runs a server action's work with its own read batcher (and query-log totals). */
+export function batchReads<T>(fn: () => Promise<T>): Promise<T> {
+  return withRequestStats(() => actionRead.run(newBatcher(), fn));
+}

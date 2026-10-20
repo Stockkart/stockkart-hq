@@ -1,6 +1,7 @@
 import { type z } from "zod";
 
 import { type ActionResult } from "@/lib/action-result";
+import { batchReads } from "@/server/db/client";
 import { FOREIGN_KEY_VIOLATION, pgErrorInfo, ServiceError } from "@/server/services/errors";
 
 /**
@@ -21,7 +22,8 @@ export async function runAction<S extends z.ZodType, T>(
     return { ok: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
   try {
-    const data = await action(parsed.data);
+    // The service's validation reads share one round trip (see `read-batch.ts`).
+    const data = await batchReads(() => action(parsed.data));
     refresh();
     return { ok: true, data };
   } catch (error) {
