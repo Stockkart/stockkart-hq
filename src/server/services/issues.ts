@@ -338,13 +338,12 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
           `);
           const [row] = rowsOf(result, z.object({ id: z.string(), number: z.number() }));
           if (!row) {
+            // The sprint was closed or deleted since the check: report it as the check does.
+            if (sprintId) await checkSprint(project.id, sprintId);
             // Promote: the todo is not the actor's, does not exist or was already promoted.
-            // With a sprint: it was closed or deleted since the check.
             throw todoId
               ? notFound("Todo (or it was already promoted)")
-              : sprintId
-                ? notFound(`Project ${input.projectKey} or open sprint`)
-                : notFound(`Project ${input.projectKey}`);
+              : notFound(`Project ${input.projectKey}`);
           }
           return { id: row.id, number: row.number, key: formatIssueKey(project.key, row.number) };
         } catch (error) {

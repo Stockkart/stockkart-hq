@@ -168,8 +168,9 @@ export function createSprintService(db: AppDatabase, options: SprintServiceOptio
       sprintId: string,
     ): Promise<{ committedPoints: number; issueIds: string[] }> {
       // Two statements in one transaction: the first takes the sprint's row lock (moves into
-      // or out of the sprint hold a share lock on it, see `planning.moveIssueToSprint`), so
-      // the second reads the members AFTER every racing move committed.
+      // the sprint hold a share lock on it, see `planning.moveIssueToSprint`), so the second
+      // reads the members AFTER every racing move in committed. A move out is not ordered
+      // against it; the burndown replays sprint changes, so it still lands right.
       const start = sql`
         UPDATE sprints SET state = 'active', updated_at = now()
         WHERE id = ${sprintId}::uuid AND state = 'planned'
