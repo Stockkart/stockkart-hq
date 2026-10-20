@@ -39,7 +39,10 @@ vi.mock("@/features/editor/lazy-rich-text-editor", () => ({
 
 const { QuickCreate } = await import("./quick-create");
 
-const bugTemplate = { type: "doc", content: [{ type: "heading" }, { type: "orderedList" }] };
+const bugTemplate = {
+  type: "doc" as const,
+  content: [{ type: "heading" }, { type: "orderedList" }],
+};
 
 describe("QuickCreate (ISS-4)", () => {
   beforeEach(() => {
@@ -173,6 +176,16 @@ describe("QuickCreate (ISS-4)", () => {
         expect.objectContaining({ title: "Keyboard only", type: "bug", priority: 0 }),
       ),
     );
+  });
+
+  it("uses templates loaded with the page, without a request", async () => {
+    const user = userEvent.setup();
+    render(<QuickCreate defaultProjectKey="STK" initialTemplates={{ bug: bugTemplate }} />);
+    await user.click(screen.getByRole("button", { name: /create/i }));
+    await user.click(await screen.findByRole("combobox", { name: "Type" }));
+    await user.click(screen.getByRole("option", { name: "Bug" }));
+    expect(screen.getByTestId("editor")).toHaveTextContent("heading,orderedList");
+    expect(actions.loadIssueTemplatesAction).not.toHaveBeenCalled();
   });
 
   it("opens with a requested type, e.g. Create bug from ⌘K", async () => {

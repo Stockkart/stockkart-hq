@@ -3,6 +3,7 @@
 import * as PopoverPrimitive from "@radix-ui/react-popover";
 import { Check, Search } from "lucide-react";
 import * as React from "react";
+import { flushSync } from "react-dom";
 
 import { cn } from "@/lib/utils";
 
@@ -130,11 +131,13 @@ export function ListboxPopover({
   const active = activeIndex >= 0 && activeIndex < items.length ? activeIndex : -1;
   const activeId = open && active >= 0 ? optionId(active) : undefined;
 
-  function setOpen(next: boolean, initial: "selected" | "first" | "last" = "selected") {
-    if (next === open) return;
+  /** Opens or closes; when opening, returns the option that starts out active. */
+  function setOpen(next: boolean, initial: "selected" | "first" | "last" = "selected"): number {
+    if (next === open) return active;
+    let start = -1;
     if (next) {
       const selected = items.findIndex((item) => item.selected && !item.disabled);
-      const start =
+      start =
         initial === "last"
           ? firstEnabled(items, items.length - 1, -1)
           : initial === "selected" && selected >= 0
@@ -147,6 +150,7 @@ export function ListboxPopover({
     }
     setOpenState(next);
     onOpenChange?.(next);
+    return start;
   }
 
   function close(focusTrigger: boolean) {
@@ -170,15 +174,18 @@ export function ListboxPopover({
     setActiveIndex(next >= 0 ? next : firstEnabled(items, target, step === 1 ? -1 : 1));
   }
 
-  /** Type-ahead (no search input): jump to the next option starting with what was typed. */
-  function typeTo(char: string) {
+  /**
+   * Type-ahead (no search input): jump to the next option starting with what was typed.
+   * `from` is the active option (passed in when typing opened the list this very event).
+   */
+  function typeTo(char: string, from = active) {
     const state = typeahead.current;
     window.clearTimeout(state.timer);
     state.text += char.toLowerCase();
     state.timer = window.setTimeout(() => (state.text = ""), TYPEAHEAD_RESET_MS);
     const repeated = state.text.split("").every((c) => c === state.text[0]);
     const search = repeated ? (state.text[0] ?? "") : state.text;
-    const start = repeated ? active + 1 : Math.max(active, 0);
+    const start = repeated ? from + 1 : Math.max(from, 0);
     for (let offset = 0; offset < items.length; offset += 1) {
       const index = (start + offset) % items.length;
       const item = items[index];
@@ -246,12 +253,16 @@ export function ListboxPopover({
       case " ":
         if (searchable) return;
         event.preventDefault();
-        if (active >= 0) pick(active);
+        // Mid type-ahead ("in p…") a space is part of the text, not a pick (APG).
+        if (typeahead.current.text) typeTo(" ");
+        else if (active >= 0) pick(active);
         return;
       case "Tab":
-        // Close and let Tab move on from the trigger.
+        // Close and let Tab move on from the trigger. Synchronously: while the popup is
+        // mounted its focus scope pauses an enclosing dialog's focus trap, and this Tab must
+        // see the trap again (or it could leave the modal).
         if (searchable) triggerRef.current?.focus();
-        close(false);
+        flushSync(() => close(false));
         return;
       default:
         if (!searchable && isPrintable(event)) {
@@ -286,8 +297,7 @@ export function ListboxPopover({
           setOpen(true, "first");
           onQueryChange?.(event.key);
         } else {
-          setOpen(true);
-          typeTo(event.key);
+          typeTo(event.key, setOpen(true));
         }
     }
   }

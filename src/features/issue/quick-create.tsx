@@ -47,6 +47,8 @@ const PRIORITY_OPTIONS = priorityOptions();
 interface QuickCreateProps {
   /** Project used when the current page is not inside one. */
   defaultProjectKey: string;
+  /** Templates loaded with the page; without them they are fetched once, on idle. */
+  initialTemplates?: Partial<Record<IssueType, RichTextDoc>>;
 }
 
 /**
@@ -57,18 +59,23 @@ interface QuickCreateProps {
  * Other client code opens it pre-filled with `openQuickCreate()` (⌘K "Create bug", MY-3
  * "Promote to issue"); a promote request creates through `promoteTodoAction` instead.
  */
-export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
+export function QuickCreate({ defaultProjectKey, initialTemplates }: QuickCreateProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [type, setType] = useState<IssueType>("task");
   const [priority, setPriority] = useState<Priority>(DEFAULT_PRIORITY);
-  const [description, setDescription] = useState<RichTextDoc | null>(null);
+  // Starts from the default type's template when the templates came with the page.
+  const [description, setDescription] = useState<RichTextDoc | null>(
+    initialTemplates?.task ?? null,
+  );
   const [descriptionEdited, setDescriptionEdited] = useState(false);
   // Bumped to remount the editor with new initial content (template switch, reset).
   const [editorKey, setEditorKey] = useState(0);
-  const [templates, setTemplates] = useState<Partial<Record<IssueType, RichTextDoc>> | null>(null);
+  const [templates, setTemplates] = useState<Partial<Record<IssueType, RichTextDoc>> | null>(
+    initialTemplates ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const titleRef = useRef<HTMLInputElement>(null);
@@ -82,7 +89,11 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
   const projectKey = PROJECT_KEY_PATTERN.test(pathKey) ? pathKey : defaultProjectKey;
 
   // Latest values for the async template load below.
-  const current = useRef({ type, descriptionEdited, templatesRequested: false });
+  const current = useRef({
+    type,
+    descriptionEdited,
+    templatesRequested: initialTemplates !== undefined,
+  });
   useEffect(() => {
     current.current.type = type;
     current.current.descriptionEdited = descriptionEdited;

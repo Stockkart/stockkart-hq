@@ -338,3 +338,34 @@ describe("Combobox (async)", () => {
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("No issues found"));
   });
 });
+
+describe("Select type-ahead and Tab details", () => {
+  it("treats Space as part of a multi-character type-ahead", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<StatusField onChange={onChange} />);
+    trigger().focus();
+    await user.keyboard("{Enter}");
+    await user.keyboard("in r");
+    expect(onChange).not.toHaveBeenCalled();
+    expect(activeOption()).toHaveTextContent("In Review");
+  });
+
+  it("closes on Tab inside a dialog and keeps focus in the dialog", async () => {
+    const user = userEvent.setup();
+    render(
+      <Dialog open onOpenChange={() => {}}>
+        <DialogContent>
+          <DialogTitle>Edit</DialogTitle>
+          <DialogDescription>Form</DialogDescription>
+          <StatusField />
+        </DialogContent>
+      </Dialog>,
+    );
+    trigger().focus();
+    await user.keyboard("{Enter}");
+    await user.tab();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog").contains(document.activeElement)).toBe(true);
+  });
+});

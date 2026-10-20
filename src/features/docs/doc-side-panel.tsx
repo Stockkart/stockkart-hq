@@ -101,9 +101,9 @@ function LinkedIssues({
   }
   const visible = [...byIssue.values()];
 
-  function add() {
-    if (!target || pending) return;
-    const key = target.key;
+  /** Links the issue; a pick in the issue picker calls this at once (no extra Enter). */
+  function add(key = target?.key) {
+    if (!key || pending) return;
     startTransition(async () => {
       const result = await callAction(() => linkDocIssueAction({ docId, issueKey: key }));
       if (result === null) return;
@@ -164,9 +164,10 @@ function LinkedIssues({
               loadOptions={(query) =>
                 searchIssueOptions(query, { exclude: visible.map((link) => link.issue.key) })
               }
-              onChange={(key, option) =>
-                setTarget(key && option ? { key, label: option.label } : null)
-              }
+              onChange={(key, option) => {
+                setTarget(key && option ? { key, label: option.label } : null);
+                if (key) add(key);
+              }}
             />
           </div>
           <Button type="submit" size="sm" disabled={pending || !target}>

@@ -163,9 +163,9 @@ export function Links({ issueId, projectKey, links, mentions, docs = [] }: Links
     .filter((link) => !hidden.has(link.linkId))
     .sort((a, b) => LINK_RELATION_ORDER[a.relation] - LINK_RELATION_ORDER[b.relation]);
 
-  function add() {
-    if (!target || pending) return;
-    const key = target.key;
+  /** Adds the link; a pick in the issue picker calls this at once (no extra Enter). */
+  function add(key = target?.key) {
+    if (!key || pending) return;
     startTransition(async () => {
       const result = await callAction(() => addLinkAction({ issueId, relation, targetKey: key }));
       if (result === null) return;
@@ -240,9 +240,10 @@ export function Links({ issueId, projectKey, links, mentions, docs = [] }: Links
               emptyText="No matching issue"
               promptText="Type a key or words to search"
               loadOptions={(query) => searchIssueOptions(query)}
-              onChange={(key, option) =>
-                setTarget(key && option ? { key, label: option.label } : null)
-              }
+              onChange={(key, option) => {
+                setTarget(key && option ? { key, label: option.label } : null);
+                if (key) add(key);
+              }}
             />
           </div>
           <Button type="submit" size="sm" disabled={pending || !target}>
