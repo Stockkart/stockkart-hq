@@ -32,9 +32,20 @@ const repository = z
 
 export type GithubRepository = z.infer<typeof repository>;
 
-/** `url` is a page of this repository (`https://github.com/<full_name>/…`). */
+/** `url` is a page of this repository (`https://github.com/<full_name>/…`), compared on the
+ * parsed path so `…/x/../../evil/p` (which a browser resolves elsewhere) does not pass. */
 function inRepository(url: string, repo: GithubRepository): boolean {
-  return url.toLowerCase().startsWith(`https://github.com/${repo.full_name}/`.toLowerCase());
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  return (
+    parsed.href === url &&
+    parsed.hostname === "github.com" &&
+    parsed.pathname.toLowerCase().startsWith(`/${repo.full_name}/`.toLowerCase())
+  );
 }
 
 export const pullRequestPayload = z

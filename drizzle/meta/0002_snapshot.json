@@ -1,5 +1,5 @@
 {
-  "id": "ee9d2c64-f961-47c4-9ac6-3bbc089c280e",
+  "id": "55cf8a51-ef21-421d-a9cc-78cfce4606b6",
   "prevId": "8b80c859-b3a3-4e68-af06-cf00bcd9685b",
   "version": "7",
   "dialect": "postgresql",
@@ -981,6 +981,46 @@
       },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.github_pr_merges": {
+      "name": "github_pr_merges",
+      "schema": "",
+      "columns": {
+        "repo": {
+          "name": "repo",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "number": {
+          "name": "number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "github_pr_merges_repo_number_pk": {
+          "name": "github_pr_merges_repo_number_pk",
+          "columns": [
+            "repo",
+            "number"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},

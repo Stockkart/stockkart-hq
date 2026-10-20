@@ -45,9 +45,10 @@ const resultRow = z.object({
  *                    ignore events older than the stored `github_updated_at`, and a merged
  *                    PR stays merged
  *   pr_updated       the PR's new state and title on rows linked by earlier events
- *   locked → moved   GH-3, once per merge: row-lock (in id order) the issues the merged PR
- *                    closes, move each one not yet in a done-category status to the project's
- *                    done status, and log it
+ *   merge_once       GH-3 once per merged PR: records (repo, number); empty when recorded
+ *   locked → moved   only when merge_once inserted: row-lock (in id order) the issues the
+ *                    merged PR closes, move each one not yet in a done-category status to
+ *                    the project's done status, and log it
  *
  * The lock is taken by `locked` (SELECT … FOR NO KEY UPDATE) as in `updateIssueField`: a
  * concurrent status change commits first and `locked` sees its result, so "already done" is
@@ -162,20 +163,22 @@ export function createGithubService(db: AppDatabase) {
               OR ${prUpdatedAt}::timestamptz >= github_updated_at)
           RETURNING id
         ),
+        merge_once AS (
+          -- GH-3 runs once per merge, not once per delivery: a replayed or late redelivered
+          -- merge (new delivery id, same signed body) must not re-close an issue someone
+          -- reopened. A concurrent duplicate waits on the primary key, then inserts nothing.
+          INSERT INTO github_pr_merges (repo, number)
+          SELECT ${plan.repo}, ${plan.closes?.pr ?? null}::int
+          WHERE ${plan.closes !== null}::boolean AND ${fresh}
+          ON CONFLICT (repo, number) DO NOTHING
+          RETURNING 1
+        ),
         closing AS (
           SELECT DISTINCT i.id
           FROM jsonb_to_recordset(${closes}::jsonb) AS r(project_key text, num int)
           JOIN projects p ON p.key = r.project_key AND p.archived_at IS NULL
           JOIN issues i ON i.project_id = p.id AND i.number = r.num AND i.deleted_at IS NULL
-          WHERE ${fresh}
-            -- GH-3 runs once per merge, not once per delivery: a replayed or late redelivered
-            -- merge (new delivery id, same signed body) must not re-close an issue someone
-            -- reopened. This reads the snapshot from before this statement's own upserts.
-            AND NOT EXISTS (
-              SELECT 1 FROM github_refs
-              WHERE kind = 'pr' AND repo = ${plan.repo} AND number = ${plan.closes?.pr ?? null}::int
-                AND state = 'merged'
-            )
+          WHERE EXISTS (SELECT 1 FROM merge_once)
         ),
         locked AS (
           -- In id order, so two merges closing the same issues cannot deadlock. NO KEY: the

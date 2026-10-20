@@ -302,6 +302,21 @@ describeDb("GitHub webhook (Postgres)", () => {
     expect((await statusActivity(issue.id)).filter((row) => row.actorId === null)).toHaveLength(1);
   });
 
+  it("still closes when another event of the merged PR arrived before 'closed'", async () => {
+    const issue = await newIssue();
+    const merged = {
+      number: 209,
+      state: "closed" as const,
+      merged: true,
+      body: `Fixes ${issue.key}`,
+    };
+    await send("pull_request", pullRequestPayload({ ...merged, action: "labeled" }));
+    expect((await statusName(issue.id))?.name).toBe("Backlog");
+    expect(
+      await send("pull_request", pullRequestPayload({ ...merged, action: "closed" })),
+    ).toMatchObject({ moved: 1 });
+  });
+
   it("ignores repositories outside Stockkart", async () => {
     const issue = await newIssue();
     await send(

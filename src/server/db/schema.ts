@@ -643,6 +643,23 @@ export const githubDeliveries = pgTable(
   (table) => [index("github_deliveries_received_idx").on(table.receivedAt)],
 );
 
+/**
+ * GH-3 runs once per merged PR: the webhook inserts (repo, number) here in the statement
+ * that closes the PR's issues, and closes nothing when the row already exists. So a replayed
+ * or redelivered merge (the delivery id is not signed) never re-closes an issue someone
+ * reopened, whatever order the PR's other events arrived in. Not in SPEC §8's list; one row
+ * per merged PR with closing keywords, so no `id`/`updated_at`.
+ */
+export const githubPrMerges = pgTable(
+  "github_pr_merges",
+  {
+    repo: text("repo").notNull(),
+    number: integer("number").notNull(),
+    createdAt,
+  },
+  (table) => [primaryKey({ columns: [table.repo, table.number] })],
+);
+
 export type UserRow = typeof users.$inferSelect;
 export type ProjectRow = typeof projects.$inferSelect;
 export type StatusRow = typeof statuses.$inferSelect;

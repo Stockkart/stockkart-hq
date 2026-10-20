@@ -6,6 +6,13 @@ CREATE TABLE "github_deliveries" (
 	"received_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
+CREATE TABLE "github_pr_merges" (
+	"repo" text NOT NULL,
+	"number" integer NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "github_pr_merges_repo_number_pk" PRIMARY KEY("repo","number")
+);
+--> statement-breakpoint
 CREATE TABLE "github_refs" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"issue_id" uuid NOT NULL,

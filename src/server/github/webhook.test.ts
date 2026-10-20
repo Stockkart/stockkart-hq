@@ -176,6 +176,9 @@ describe("GitHub webhook (GH-1, S-4)", () => {
     const push = pushPayload({ commits: [commit("STK-1")] });
     push.repository.html_url = "https://github.com/evil/phish";
     expect((await ctx.handler(webhookRequest("push", push))).status).toBe(400);
+    const dotted = pullRequestPayload({ title: "STK-1" });
+    dotted.pull_request.html_url = "https://github.com/Stockkart/inventory-api/../../evil/p";
+    expect((await ctx.handler(webhookRequest("pull_request", dotted))).status).toBe(400);
     expect(ctx.apply).not.toHaveBeenCalled();
   });
 

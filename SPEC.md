@@ -640,6 +640,7 @@ All tables: `id uuid pk`, `created_at`, `updated_at` unless noted. Soft-deletabl
 | `attachments` | entity_type, entity_id, r2_key, filename, mime, size_bytes, uploaded_by |
 | `github_refs` | issue_id, repo, kind (`branch`/`pr`/`commit`), number, sha, ref_name, title, url, state (PRs: `open`/`draft`/`closed`/`merged`), author_login, merged_at; partial unique per kind |
 | `github_deliveries` | delivery_id (pk, `X-GitHub-Delivery`), event, received_at — webhook dedupe, pruned after 30 days (no `id`/`updated_at`) |
+| `github_pr_merges` | repo, number (pk both), created_at — GH-3 closes a merged PR's issues once, whatever the delivery order or replays |
 | `incidents` | project_id, title, severity, status, started_at, resolved_at, commander_id, postmortem_doc_id, timeline (jsonb) |
 | `services` | project_id, name, repo, runtime, environments (jsonb), links (jsonb), owner_id, notes |
 | `todos` | user_id, text, done, position, promoted_issue_id |
