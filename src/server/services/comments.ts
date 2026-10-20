@@ -2,6 +2,7 @@ import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { extractIssueRefs } from "@/lib/issues/keys";
+import { type CommentView } from "@/lib/issues/views";
 import { extractPlainText, type RichTextDoc } from "@/lib/rich-text";
 import { comments, projects, users } from "@/server/db/schema";
 import { type AppDatabase } from "@/server/db/types";
@@ -14,15 +15,6 @@ import { mentionSyncCtes, rowsOf } from "./sql";
  * (soft delete) their own comment. `STK-123` references in the body become `mention` entity
  * links from the comment to the issue, kept in sync on edit and removed on delete.
  */
-
-export interface CommentView {
-  id: string;
-  authorId: string | null;
-  authorName: string | null;
-  body: RichTextDoc;
-  createdAt: Date;
-  editedAt: Date | null;
-}
 
 export function createCommentService(db: AppDatabase) {
   async function projectKeys(): Promise<string[]> {

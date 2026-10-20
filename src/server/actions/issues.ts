@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { type z } from "zod";
 
 import { type ActionResult } from "@/lib/action-result";
+import { type IssueType } from "@/lib/issues/constants";
 import {
   addLabelInput,
   addLinkInput,
@@ -16,8 +17,9 @@ import {
   removeLinkInput,
   updateIssueFieldInput,
 } from "@/lib/issues/schemas";
+import { type RichTextDoc } from "@/lib/rich-text";
 import { requireSession } from "@/server/auth/require-session";
-import { commentService, issueService } from "@/server/services";
+import { commentService, issueQueries, issueService } from "@/server/services";
 import { ServiceError } from "@/server/services/errors";
 import { type CreatedIssue, type FieldChange } from "@/server/services/issues";
 
@@ -118,4 +120,12 @@ export async function deleteCommentAction(input: unknown): Promise<ActionResult>
     await commentService.deleteComment(session.user.id, data.commentId);
     return undefined;
   });
+}
+
+/** ISS-10: built-in body per issue type, loaded when the quick-create dialog first opens. */
+export async function loadIssueTemplatesAction(): Promise<
+  ActionResult<Partial<Record<IssueType, RichTextDoc>>>
+> {
+  await requireSession();
+  return { ok: true, data: await issueQueries.issueTemplates() };
 }

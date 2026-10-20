@@ -96,3 +96,12 @@ export interface ProjectMeta {
   users: UserOption[];
   epics: IssueSummary[];
 }
+
+export interface CommentView {
+  id: string;
+  authorId: string | null;
+  authorName: string | null;
+  body: RichTextDoc;
+  createdAt: Date;
+  editedAt: Date | null;
+}

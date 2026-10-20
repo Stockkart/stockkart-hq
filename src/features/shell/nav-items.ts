@@ -28,7 +28,15 @@ export interface NavSection {
   items: NavItem[];
 }
 
-/** SPEC §5.1 app shell. Phase 0 has only My Work; the rest are placeholders for Phase 1+. */
+/** The only project today (SPEC §3); the shell links to it and quick create defaults to it. */
+export const DEFAULT_PROJECT_KEY = "STK";
+
+const projectHref = (section: string) => `/${DEFAULT_PROJECT_KEY}/${section}`;
+
+/**
+ * SPEC §5.1 app shell. Issues works in Phase 1 slice 1; the other project pages show a
+ * "coming soon" placeholder until their slice lands. Todos and Settings have no page yet.
+ */
 export const NAV_SECTIONS: NavSection[] = [
   {
     items: [
@@ -37,18 +45,18 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    heading: "STK",
+    heading: DEFAULT_PROJECT_KEY,
     items: [
-      { label: "Backlog", icon: LayoutList },
-      { label: "Board", icon: SquareKanban },
-      { label: "Issues", icon: ListChecks },
-      { label: "Sprints", icon: Timer },
-      { label: "Roadmap", icon: Flag },
-      { label: "Docs", icon: BookOpen },
-      { label: "ADRs", icon: FileCheck2 },
-      { label: "Diagrams", icon: Network },
-      { label: "Incidents", icon: Siren },
-      { label: "Services", icon: Server },
+      { label: "Backlog", icon: LayoutList, href: projectHref("backlog") },
+      { label: "Board", icon: SquareKanban, href: projectHref("board") },
+      { label: "Issues", icon: ListChecks, href: projectHref("issues") },
+      { label: "Sprints", icon: Timer, href: projectHref("sprints") },
+      { label: "Roadmap", icon: Flag, href: projectHref("roadmap") },
+      { label: "Docs", icon: BookOpen, href: projectHref("docs") },
+      { label: "ADRs", icon: FileCheck2, href: projectHref("adrs") },
+      { label: "Diagrams", icon: Network, href: projectHref("diagrams") },
+      { label: "Incidents", icon: Siren, href: projectHref("incidents") },
+      { label: "Services", icon: Server, href: projectHref("services") },
     ],
   },
   {

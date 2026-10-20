@@ -16,6 +16,17 @@ export function formatIssueKey(projectKey: string, number: number): string {
   return `${projectKey}-${number}`;
 }
 
+/** URL of an issue's detail page, e.g. `/STK/issues/STK-12`. */
+export function issuePath(projectKey: string, number: number): string {
+  return `/${projectKey}/issues/${formatIssueKey(projectKey, number)}`;
+}
+
+/** Same, from a key such as `STK-12` (each key carries its project). */
+export function issuePathForKey(issueKey: string): string {
+  const ref = parseIssueKey(issueKey);
+  return ref ? issuePath(ref.projectKey, ref.number) : "/";
+}
+
 /** Parses `STK-12` (case-insensitive); returns the canonical upper-case parts or null. */
 export function parseIssueKey(value: string): IssueRef | null {
   const match = /^([A-Za-z]{2,5})-(\d{1,10})$/.exec(value.trim());

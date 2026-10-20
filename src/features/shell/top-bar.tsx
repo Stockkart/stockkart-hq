@@ -1,7 +1,10 @@
-import { Bell, LogOut, Plus, Search } from "lucide-react";
+import { Bell, LogOut, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { QuickCreate } from "@/features/issue/quick-create";
 import { signOutAction } from "@/server/actions/auth";
+
+import { DEFAULT_PROJECT_KEY } from "./nav-items";
 
 interface TopBarProps {
   userName: string;
@@ -17,7 +20,7 @@ function initials(name: string): string {
 export function TopBar({ userName }: TopBarProps) {
   return (
     <header className="flex h-14 items-center gap-3 border-b px-4">
-      {/* Placeholders for ⌘K search (SRCH-1), quick create (ISS-4) and notifications (NTF-1). */}
+      {/* Placeholders for ⌘K search (SRCH-1) and notifications (NTF-1). */}
       <div className="flex flex-1 items-center">
         <div
           aria-disabled="true"
@@ -27,10 +30,7 @@ export function TopBar({ userName }: TopBarProps) {
           <span>Search or jump to… (coming soon)</span>
         </div>
       </div>
-      <Button variant="outline" size="sm" disabled>
-        <Plus aria-hidden="true" />
-        Create
-      </Button>
+      <QuickCreate defaultProjectKey={DEFAULT_PROJECT_KEY} />
       <Button variant="ghost" size="icon" disabled aria-label="Notifications (coming soon)">
         <Bell aria-hidden="true" />
       </Button>
