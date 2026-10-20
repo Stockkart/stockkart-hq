@@ -43,7 +43,8 @@ export function mentionSyncCtes(input: {
   fromType: EntityType;
   fromId: string;
   refs: readonly IssueRef[];
-  actorId: string;
+  /** Null for system writes such as the handbook import (IMP-1). */
+  actorId: string | null;
   gate: SQL;
 }): SQL {
   const refs = JSON.stringify(input.refs.map((ref) => ({ key: ref.projectKey, num: ref.number })));
