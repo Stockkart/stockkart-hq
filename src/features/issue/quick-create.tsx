@@ -31,8 +31,14 @@ import { PROJECT_KEY_PATTERN } from "@/lib/issues/keys";
 import { TITLE_MAX } from "@/lib/issues/schemas";
 import { isEmptyDoc, type RichTextDoc } from "@/lib/rich-text";
 import { createIssueAction, loadIssueTemplatesAction } from "@/server/actions/issues";
+import { promoteTodoAction } from "@/server/actions/todos";
 
-import { isTypingTarget } from "./keyboard";
+import { shouldIgnoreShortcut } from "./keyboard";
+import {
+  isQuickCreateEvent,
+  QUICK_CREATE_EVENT,
+  type QuickCreateRequest,
+} from "./quick-create-events";
 
 /** Subtasks need a parent, so they are created from the parent issue instead. */
 const QUICK_CREATE_TYPES = ISSUE_TYPES.filter((type) => type !== "subtask");
@@ -46,6 +52,9 @@ interface QuickCreateProps {
  * ISS-4 quick create: the "+ Create" button and the global `C` shortcut (ignored while typing
  * in a field). Only the title is required; type and priority are inline, and picking a type
  * pre-fills the description from its template (ISS-10) unless the description was edited.
+ *
+ * Other client code opens it pre-filled with `openQuickCreate()` (⌘K "Create bug", MY-3
+ * "Promote to issue"); a promote request creates through `promoteTodoAction` instead.
  */
 export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
   const router = useRouter();
@@ -62,6 +71,9 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const titleRef = useRef<HTMLInputElement>(null);
+  // The pending `openQuickCreate()` request (promote target, callback); cleared on close.
+  const request = useRef<Omit<QuickCreateRequest, "title" | "type">>({});
+  const [promoting, setPromoting] = useState(false);
   const ids = { title: useId(), type: useId(), priority: useId(), description: useId() };
 
   // On /XYZ/... pages, create in project XYZ; elsewhere use the default project.
@@ -104,10 +116,7 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key.toLowerCase() !== "c" || event.metaKey || event.ctrlKey || event.altKey) {
-        return;
-      }
-      if (event.defaultPrevented || isTypingTarget(event.target)) return;
+      if (event.key.toLowerCase() !== "c" || shouldIgnoreShortcut(event)) return;
       event.preventDefault();
       openDialog();
     }
@@ -125,6 +134,36 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
     setError(null);
   }, []);
 
+  // `openQuickCreate()` requests: start from a clean form with the requested title and type.
+  useEffect(() => {
+    function onRequest(event: Event) {
+      if (!isQuickCreateEvent(event)) return;
+      const { title: requestedTitle = "", type: requestedType, ...rest } = event.detail;
+      const nextType = QUICK_CREATE_TYPES.find((t) => t === requestedType) ?? "task";
+      reset();
+      request.current = rest;
+      setPromoting(Boolean(rest.promoteTodoId));
+      setTitle(requestedTitle.replace(/\s+/g, " ").trim().slice(0, TITLE_MAX));
+      setType(nextType);
+      // `reset` cleared these in state; the refs catch up on the next render, prefill now.
+      current.current.type = nextType;
+      current.current.descriptionEdited = false;
+      prefill(nextType, templates);
+      openDialog();
+    }
+    window.addEventListener(QUICK_CREATE_EVENT, onRequest);
+    return () => window.removeEventListener(QUICK_CREATE_EVENT, onRequest);
+  }, [openDialog, prefill, reset, templates]);
+
+  function onOpenChange(next: boolean) {
+    setOpen(next);
+    if (!next) {
+      // A request is for one dialog session: a later plain `C` must not promote the todo.
+      request.current = {};
+      setPromoting(false);
+    }
+  }
+
   function submit() {
     if (pending) return;
     if (!title.trim()) {
@@ -133,14 +172,18 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
       return;
     }
     setError(null);
+    const { promoteTodoId, onCreated } = request.current;
     startTransition(async () => {
-      const result = await createIssueAction({
+      const fields = {
         projectKey,
         title,
         type,
         priority,
         description: description && !isEmptyDoc(description) ? description : null,
-      });
+      };
+      const result = promoteTodoId
+        ? await promoteTodoAction({ ...fields, todoId: promoteTodoId })
+        : await createIssueAction(fields);
       if (!result.ok) {
         setError(result.error);
         return;
@@ -151,8 +194,9 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
         description: title.trim(),
         action: { label: "Open", onClick: () => router.push(href) },
       });
+      onCreated?.(result.data);
       reset();
-      setOpen(false);
+      onOpenChange(false);
       router.refresh();
     });
   }
@@ -163,7 +207,7 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
         <Plus aria-hidden="true" />
         Create
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
           onOpenAutoFocus={(event) => {
             event.preventDefault();
@@ -184,7 +228,9 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
             }}
           >
             <DialogHeader>
-              <DialogTitle>Create issue in {projectKey}</DialogTitle>
+              <DialogTitle>
+                {promoting ? "Promote todo to an issue" : "Create issue"} in {projectKey}
+              </DialogTitle>
               <DialogDescription>
                 Only the title is required. Press <kbd className="font-mono">⌘/Ctrl+Enter</kbd> to
                 create.
@@ -276,7 +322,7 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
             </p>
 
             <DialogFooter>
-              <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+              <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
               <Button type="submit" disabled={pending}>
