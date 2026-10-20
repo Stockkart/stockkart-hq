@@ -146,7 +146,7 @@ Default statuses (one set per project):
 | Backlog | todo | Default for everything else |
 | Todo | todo | Committed / ready |
 | In Progress | in_progress | |
-| In Review | in_progress | PR open |
+| In Review | in_progress | Set by hand while a PR is open (GH-3 does not move it) |
 | Done | done | Sets `resolved_at` |
 | Won't Do | done | Sets `resolved_at`, excluded from velocity |
 
