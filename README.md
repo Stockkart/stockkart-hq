@@ -7,10 +7,12 @@ and technical spec.
 **The code is public; the data is private.** Every page and API route requires a session,
 and only Stockkart accounts with the `SUPER_USER` role can sign in.
 
-Status: **Phase 1, slice 1** (issues). Sign-in, sessions, default-deny routing, rate limiting,
-the app shell, and issues: list, quick create (`C`), issue detail with comments, activity,
-links and subtasks. The database schema already covers all of Phase 1; backlog, board, todos,
-search and docs arrive in the next slices.
+Status: **Phase 1, slice 3** (docs). Sign-in, sessions, default-deny routing, rate limiting,
+the app shell, issues (list, quick create (`C`), issue detail with comments, activity, links
+and subtasks) and docs: a page tree with drag and drop, docs from 13 built-in templates, an
+autosaving editor with optimistic locking, tables, callouts and Mermaid diagrams, ADRs with
+numbering and a log, and a one-time handbook import. The database schema already covers all
+of Phase 1; backlog, board, todos and search arrive in slice 2.
 
 ## Stack
 
@@ -21,6 +23,8 @@ search and docs arrive in the next slices.
 | DB        | Neon Postgres, Drizzle ORM, `@neondatabase/serverless` (HTTP driver)                    |
 | UI        | Tailwind CSS 4, shadcn/ui components, lucide-react                                      |
 | Editor    | Tiptap 3 (MIT packages only), loaded client-only                                        |
+| Diagrams  | Mermaid (MIT, strict mode, client-only) with DOMPurify (Apache-2.0 option) on its SVG   |
+| Import    | markdown-it (MIT) for the handbook import                                               |
 | Tests     | Vitest + Testing Library (unit), Playwright (smoke)                                     |
 | Tooling   | pnpm (via corepack), ESLint, Prettier, Husky + lint-staged                              |
 | Hosting   | Vercel (Hobby), GitHub Actions CI                                                       |
@@ -101,6 +105,7 @@ openssl rand -base64 32
 | `pnpm db:generate`                                 | Generate a SQL migration from `src/server/db/schema.ts` into `drizzle/`                                                                              |
 | `pnpm db:migrate`                                  | Apply migrations to `DATABASE_URL`                                                                                                                   |
 | `pnpm db:seed`                                     | Create the STK project, its components, the default workflow and built-in templates in `DATABASE_URL` (idempotent)                                   |
+| `pnpm import:handbook -- --dir <path>`             | Import an engineering-handbook checkout into `DATABASE_URL` as docs and ADRs (idempotent; `--dry-run` writes nothing). See "Importing the handbook"  |
 
 ## Database (Neon)
 
@@ -143,6 +148,30 @@ docker stop hq-test-pg && docker rm hq-test-pg
 
 The global setup migrates a template database once and every test file runs in its own copy,
 so files run in parallel. Never point these variables at a Neon branch.
+
+## Importing the handbook
+
+HQ is the source of truth for docs and ADRs after a one-time import of `engineering-handbook`
+(IMP-1…3). Run it locally, after the seed, against the database you want to fill:
+
+```bash
+DATABASE_URL='postgres://…' pnpm import:handbook -- --dir ../engineering-handbook --dry-run
+DATABASE_URL='postgres://…' pnpm import:handbook -- --dir ../engineering-handbook
+# or, reading DATABASE_URL from a local .env file (not shell-sourced):
+node --env-file=.env node_modules/tsx/dist/cli.mjs scripts/import-handbook.ts --dir ../engineering-handbook
+```
+
+Top-level `*.md` files become docs under a "Handbook" page (README → page, ARCHITECTURE →
+design, API_CONTRACT → api_contract, RUNBOOK → runbook, REVIEW_RUBRIC → page,
+IN_MEMORY_STATE → design) and `decisions/NNNN-*.md` become ADRs under "Decisions", with the
+number and title from the file and the status from its `## Status` section ("Superseded by
+NNNN" links the two ADRs). `0000-template.md` is skipped. Mermaid fences become Mermaid
+blocks. Re-running it updates changed files in place (new version and snapshot) and leaves
+the rest alone; docs moved or deleted in HQ stay where they are. "New ADR" continues after the
+highest imported number.
+
+**The imported content never goes into this repo** (S-7): the script writes only to the
+database, and the tests use small synthetic markdown.
 
 ## Deploying to Vercel
 
