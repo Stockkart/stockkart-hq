@@ -96,7 +96,9 @@ describe("DocTree", () => {
     await waitFor(() =>
       expect(actions.moveDocAction).toHaveBeenCalledWith({ docId: "d", parentId: "a", index: 1 }),
     );
-    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    // The action re-renders the tree in its own response; no second fetch.
+    await waitFor(() => expect(screen.getByText(/Moved “D” into “A”/)).toBeInTheDocument());
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("offers Move to… from the row menu (keyboard alternative)", async () => {

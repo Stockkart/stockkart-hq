@@ -2,7 +2,6 @@
 
 import { Plus, X } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useId, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -86,7 +85,6 @@ function LinkedIssues({
   projectKey: string;
   links: LinkedIssueView[];
 }) {
-  const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [issueKey, setIssueKey] = useState("");
   const [hidden, setHidden] = useState<Set<string>>(new Set());
@@ -110,7 +108,7 @@ function LinkedIssues({
       if (result === null) return;
       setIssueKey("");
       setAdding(false);
-      router.refresh();
+      // No router.refresh(): the action already re-rendered this page in its response.
     });
   }
 
@@ -124,9 +122,8 @@ function LinkedIssues({
         next.delete(link.linkId);
         return next;
       });
-    } else {
-      router.refresh();
     }
+    // On success the action has already re-rendered this page.
   }
 
   return (

@@ -1,13 +1,12 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
-
 import { type ActionResult } from "@/lib/action-result";
 import { moveIssueInput, recordViewInput } from "@/lib/planning/schemas";
 import { requireSession } from "@/server/auth/require-session";
 import { planningService } from "@/server/services";
 
 import { runAction } from "./action-runner";
+import { BACKLOG, BOARD, MY_WORK, refreshPages } from "./refresh";
 
 /**
  * Backlog ordering and My Work view tracking. Like every action: session first (S-2), then
@@ -21,10 +20,8 @@ export async function moveIssueAction(input: unknown): Promise<ActionResult<{ ra
     moveIssueInput,
     input,
     (data) => planningService.moveIssue(data),
-    () => {
-      revalidatePath("/[projectKey]", "layout");
-      revalidatePath("/my-work"); // lists my issues in rank order
-    },
+    // Only the rank-ordered pages; My Work lists my issues in rank order too.
+    () => refreshPages(BACKLOG, BOARD, MY_WORK),
   );
 }
 

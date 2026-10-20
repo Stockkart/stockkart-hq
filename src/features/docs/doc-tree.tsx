@@ -94,7 +94,7 @@ export function DocTree({ projectKey, docs }: { projectKey: string; docs: DocTre
           return next;
         });
       }
-      router.refresh();
+      // No router.refresh(): the action already re-rendered the tree in its response.
     });
   }
 

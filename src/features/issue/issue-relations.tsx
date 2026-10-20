@@ -2,7 +2,6 @@
 
 import { FileText, Plus, X } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useId, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -56,7 +55,6 @@ interface SubtasksProps {
  * Subtasks cannot have subtasks, so the section is hidden for them.
  */
 export function Subtasks({ issueId, issueType, projectKey, items }: SubtasksProps) {
-  const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
   const [pending, startTransition] = useTransition();
@@ -79,7 +77,7 @@ export function Subtasks({ issueId, issueType, projectKey, items }: SubtasksProp
       );
       if (created === null) return;
       setTitle("");
-      router.refresh();
+      // No router.refresh(): the action already re-rendered this page in its response.
     });
   }
 
@@ -152,7 +150,6 @@ interface LinksProps {
 
 /** ISS-6 links, worded from this issue (inverse derived), plus where it is mentioned. */
 export function Links({ issueId, projectKey, links, mentions, docs = [] }: LinksProps) {
-  const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [relation, setRelation] = useState<LinkRelation>("blocks");
   const [targetKey, setTargetKey] = useState("");
@@ -172,7 +169,6 @@ export function Links({ issueId, projectKey, links, mentions, docs = [] }: Links
       if (result === null) return;
       setTargetKey("");
       setAdding(false);
-      router.refresh();
     });
   }
 

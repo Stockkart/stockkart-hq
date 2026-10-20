@@ -197,7 +197,7 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
       onCreated?.(result.data);
       reset();
       onOpenChange(false);
-      router.refresh();
+      // No router.refresh(): the action re-renders the open page in its own response.
     });
   }
 

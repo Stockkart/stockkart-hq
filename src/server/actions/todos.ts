@@ -1,6 +1,5 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
 import { type z } from "zod";
 
 import { type ActionResult } from "@/lib/action-result";
@@ -17,6 +16,7 @@ import { issueService, todoService } from "@/server/services";
 import { type CreatedIssue } from "@/server/services/issues";
 
 import { runAction } from "./action-runner";
+import { ISSUE_VIEWS, refreshPages, TODOS } from "./refresh";
 
 /**
  * Personal todos (MY-2, MY-3). The owner is ALWAYS the session user: no action accepts a
@@ -25,7 +25,7 @@ import { runAction } from "./action-runner";
  */
 
 function refreshTodos() {
-  revalidatePath("/todos");
+  refreshPages(TODOS);
 }
 
 function run<S extends z.ZodType, T>(
@@ -81,10 +81,6 @@ export async function promoteTodoAction(input: unknown): Promise<ActionResult<Cr
     input,
     ({ todoId, ...issue }) =>
       issueService.createIssue(session.user.id, issue, { promoteTodoId: todoId }),
-    () => {
-      refreshTodos();
-      revalidatePath("/[projectKey]", "layout");
-      revalidatePath("/my-work");
-    },
+    () => refreshPages(TODOS, ...ISSUE_VIEWS),
   );
 }

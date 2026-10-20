@@ -88,7 +88,8 @@ describe("QuickCreate (ISS-4)", () => {
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith("STK-7 created", expect.anything()),
     );
-    expect(router.refresh).toHaveBeenCalled();
+    // The action re-renders the open page in its own response; a second fetch is waste.
+    expect(router.refresh).not.toHaveBeenCalled();
   });
 
   it("pre-fills the description from the chosen type's template", async () => {

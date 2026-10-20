@@ -334,7 +334,6 @@ export function RenameDocDialog({
   onOpenChange,
   doc,
 }: DialogProps & { doc: { id: string; title: string } }) {
-  const router = useRouter();
   const [title, setTitle] = useState(doc.title);
   const [pending, startTransition] = useTransition();
   const titleId = useId();
@@ -344,7 +343,7 @@ export function RenameDocDialog({
       const result = await callAction(() => renameDocAction({ docId: doc.id, title }));
       if (!result) return;
       onOpenChange(false);
-      router.refresh();
+      // No router.refresh(): the action already re-rendered this page in its response.
     });
   }
 
@@ -391,7 +390,6 @@ export function MoveDocDialog({
   doc,
   docs,
 }: DialogProps & { doc: DocTreeItem; docs: DocTreeItem[] }) {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const ids = { parent: useId(), position: useId() };
   const known = new Set(docs.map((item) => item.id));
@@ -414,7 +412,7 @@ export function MoveDocDialog({
       const result = await callAction(() => moveDocAction({ docId: doc.id, parentId, index }));
       if (result === null) return;
       onOpenChange(false);
-      router.refresh();
+      // No router.refresh(): the action already re-rendered this page in its response.
     });
   }
 
@@ -499,7 +497,6 @@ export function DeleteDocDialog({
   /** Where to go afterwards, e.g. the docs list when the open doc was deleted. */
   afterDelete?: () => void;
 }) {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -527,8 +524,8 @@ export function DeleteDocDialog({
                 if (result === null) return;
                 onOpenChange(false);
                 toast.success(`Deleted “${doc.title}”`);
-                if (afterDelete) afterDelete();
-                else router.refresh();
+                // Otherwise the action has already re-rendered this page.
+                afterDelete?.();
               })
             }
           >
