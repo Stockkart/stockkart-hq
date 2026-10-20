@@ -9,7 +9,7 @@ import { IssueTabs } from "@/features/issue/issue-tabs";
 import { loadProjectFromRoute } from "@/features/issue/project-route";
 import { formatIssueKey, parseIssueKey } from "@/lib/issues/keys";
 import { requirePageSession } from "@/server/auth/require-session";
-import { commentService, issueQueries } from "@/server/services";
+import { commentService, docQueries, issueQueries } from "@/server/services";
 
 interface Props {
   params: Promise<{ projectKey: string; key: string }>;
@@ -37,7 +37,7 @@ export default async function IssuePage({ params }: Props) {
   const issue = await issueQueries.getIssue(project.id, ref.number);
   if (!issue) notFound();
 
-  const [meta, children, links, mentions, comments, activity, projectKeys, subtaskParents] =
+  const [meta, children, links, mentions, comments, activity, projectKeys, subtaskParents, docs] =
     await Promise.all([
       issueQueries.getProjectMeta(project.id),
       issueQueries.listChildren(issue.id),
@@ -49,6 +49,7 @@ export default async function IssuePage({ params }: Props) {
       issue.type === "subtask"
         ? issueQueries.listSubtaskParents(project.id, issue.id)
         : Promise.resolve([]),
+      docQueries.docsLinkingTo(issue.id),
     ]);
   const parentOptions = issue.type === "subtask" ? subtaskParents : meta.epics;
 
@@ -74,7 +75,13 @@ export default async function IssuePage({ params }: Props) {
             projectKey={project.key}
             items={children}
           />
-          <Links issueId={issue.id} projectKey={project.key} links={links} mentions={mentions} />
+          <Links
+            issueId={issue.id}
+            projectKey={project.key}
+            links={links}
+            mentions={mentions}
+            docs={docs}
+          />
           <IssueTabs
             issueId={issue.id}
             comments={comments}

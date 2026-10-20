@@ -194,7 +194,12 @@ export function createDocQueries(db: AppDatabase) {
           ),
         )
         .orderBy(asc(docs.title));
-      return rows;
+      // One row per doc; a manual link wins over a mention of the same doc.
+      const byDoc = new Map<string, LinkedDocView>();
+      for (const row of rows) {
+        if (!byDoc.has(row.id) || row.origin === "manual") byDoc.set(row.id, row);
+      }
+      return [...byDoc.values()];
     },
 
     /** ADR-4 log: one row per live ADR, with the keys of the issues it links to. */
