@@ -1,6 +1,7 @@
 import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
+import { markdownToRichText } from "@/lib/markdown/to-rich-text";
 import { docs, docVersions, entityLinks } from "@/server/db/schema";
 import { seed } from "@/server/db/seed";
 import { type AppDatabase, transactionRunner } from "@/server/db/types";
@@ -143,6 +144,57 @@ describeDb("handbook import (Postgres)", () => {
       reason: "deleted in HQ",
     });
     expect((await imported()).find((row) => row.sourcePath === "RUNBOOK.md")?.parentId).toBeNull();
+  });
+
+  it("does not overwrite docs edited in HQ unless forced, nor HQ supersede links", async () => {
+    const service = createDocService(db, { runAtomic: transactionRunner(db) });
+    const rows = await imported();
+    const readme = rows.find((row) => row.sourcePath === "README.md");
+    const first = rows.find((row) => row.sourcePath === "decisions/0001-first-choice.md");
+    const third = rows.find((row) => row.sourcePath === "decisions/0003-third-choice.md");
+    await service.saveDoc(actor, {
+      docId: readme?.id ?? "",
+      baseVersion: readme?.version ?? 0,
+      content: markdownToRichText("Edited in HQ."),
+      snapshot: false,
+    });
+    await service.updateMeta(actor, {
+      docId: first?.id ?? "",
+      field: "adrStatus",
+      value: "superseded",
+      supersededBy: third?.id,
+    });
+    const changed = syntheticHandbook().map((file) =>
+      file.path === "README.md" ? { ...file, markdown: "# Demo handbook\n\nNew text.\n" } : file,
+    );
+
+    const kept = await run(changed);
+    expect(kept.results.find((result) => result.sourcePath === "README.md")).toMatchObject({
+      action: "skip",
+      reason: expect.stringContaining("edited in HQ"),
+    });
+    const afterKept = await imported();
+    expect(afterKept.find((row) => row.sourcePath === "README.md")?.contentText).toBe(
+      "Edited in HQ.",
+    );
+    // 0001 was edited in HQ (status), so it is skipped too and keeps its HQ supersede link.
+    expect(afterKept.find((row) => row.id === first?.id)?.adrSupersededBy).toBe(third?.id);
+
+    const forced = await importHandbook(db, planHandbookImport(changed), {
+      projectKey: "STK",
+      dryRun: false,
+      force: true,
+      runAtomic: transactionRunner(db),
+    });
+    expect(forced.results.find((result) => result.sourcePath === "README.md")?.action).toBe(
+      "update",
+    );
+    const afterForce = await imported();
+    expect(afterForce.find((row) => row.sourcePath === "README.md")?.contentText).toBe("New text.");
+    expect(afterForce.find((row) => row.id === first?.id)).toMatchObject({
+      adrStatus: "accepted_retrospective",
+      adrSupersededBy: null,
+    });
   });
 
   it('"New ADR" after the import continues the numbering', async () => {

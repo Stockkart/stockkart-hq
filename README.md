@@ -167,8 +167,9 @@ IN_MEMORY_STATE → design) and `decisions/NNNN-*.md` become ADRs under "Decisio
 number and title from the file and the status from its `## Status` section ("Superseded by
 NNNN" links the two ADRs). `0000-template.md` is skipped. Mermaid fences become Mermaid
 blocks. Re-running it updates changed files in place (new version and snapshot) and leaves
-the rest alone; docs moved or deleted in HQ stay where they are. "New ADR" continues after the
-highest imported number.
+the rest alone; docs moved or deleted in HQ stay where they are, and docs edited in HQ since
+the import are skipped (HQ is the source of truth) unless you pass `--force`. "New ADR"
+continues after the highest imported number.
 
 **The imported content never goes into this repo** (S-7): the script writes only to the
 database, and the tests use small synthetic markdown.

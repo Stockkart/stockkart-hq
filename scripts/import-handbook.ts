@@ -1,6 +1,7 @@
 /**
- * `pnpm import:handbook -- --dir <path> [--dry-run] [--project STK]`: imports an
+ * `pnpm import:handbook -- --dir <path> [--dry-run] [--force] [--project STK]`: imports an
  * engineering-handbook checkout into HQ (IMP-1/2/3). See src/server/import/handbook.ts.
+ * `--force` also overwrites docs edited in HQ since the import (skipped by default).
  *
  * Runs locally against DATABASE_URL, read from the environment like `pnpm db:seed`:
  *
@@ -32,26 +33,30 @@ import {
 interface Args {
   dir: string;
   dryRun: boolean;
+  force: boolean;
   projectKey: string;
 }
 
-const USAGE = "usage: pnpm import:handbook -- --dir <handbook dir> [--dry-run] [--project STK]";
+const USAGE =
+  "usage: pnpm import:handbook -- --dir <handbook dir> [--dry-run] [--force] [--project STK]";
 
 function parseArgs(argv: readonly string[]): Args {
   let dir: string | null = null;
   let dryRun = false;
+  let force = false;
   let projectKey = "STK";
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--") continue; // pnpm may pass the separator through
     if (arg === "--dry-run") dryRun = true;
+    else if (arg === "--force") force = true;
     else if (arg === "--dir") dir = argv[++i] ?? null;
     else if (arg === "--project") projectKey = (argv[++i] ?? "").toUpperCase();
     else throw new Error(`unknown argument ${arg}\n${USAGE}`);
   }
   if (!dir) throw new Error(USAGE);
   if (!/^[A-Z]{2,5}$/.test(projectKey)) throw new Error("--project must be a project key");
-  return { dir: path.resolve(dir), dryRun, projectKey };
+  return { dir: path.resolve(dir), dryRun, force, projectKey };
 }
 
 function printPlanOnly(plan: ImportPlan) {
@@ -104,6 +109,7 @@ async function main(): Promise<void> {
     const summary = await importHandbook(db, plan, {
       projectKey: args.projectKey,
       dryRun: args.dryRun,
+      force: args.force,
       runAtomic: transactionRunner(db),
     });
     // Paths, titles and counts only; never the connection string.
