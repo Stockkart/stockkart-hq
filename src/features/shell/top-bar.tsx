@@ -23,7 +23,7 @@ export function TopBar({ userName }: TopBarProps) {
     <header className="flex h-14 items-center gap-3 border-b px-4">
       {/* ⌘K search (SRCH-1); notifications (NTF-1) are still a placeholder. */}
       <div className="flex flex-1 items-center">
-        <CommandPalette projectKey={DEFAULT_PROJECT_KEY} />
+        <CommandPalette defaultProjectKey={DEFAULT_PROJECT_KEY} />
       </div>
       <QuickCreate defaultProjectKey={DEFAULT_PROJECT_KEY} />
       <Button variant="ghost" size="icon" disabled aria-label="Notifications (coming soon)">

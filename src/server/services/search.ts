@@ -44,6 +44,12 @@ const headline = (column: string) => sql`ts_headline('english',
 
 const snippetOf = (value: string | null) => (value ? parseHighlighted(value) : null);
 
+/**
+ * A query of only negations (`-foo`) matches nearly every row and cannot use the GIN index,
+ * so it would scan whole tables per keystroke; `querytree` is `T` for such queries.
+ */
+const indexable = sql`querytree(q.query) <> 'T'`;
+
 const adrTitle = (adrNumber: number | null, title: string) =>
   adrNumber === null ? title : `ADR-${String(adrNumber).padStart(4, "0")} ${title}`;
 
@@ -77,7 +83,7 @@ export function createSearchService(db: AppDatabase) {
       SELECT i.id::text AS id, i.number, i.title, p.key AS project_key,
         CASE WHEN i.description_text <> '' THEN ${headline("i.description_text")} END AS snippet
       FROM q, issues i JOIN projects p ON p.id = i.project_id
-      WHERE i.deleted_at IS NULL AND i.search @@ q.query
+      WHERE i.deleted_at IS NULL AND i.search @@ q.query AND ${indexable}
       ORDER BY ts_rank(i.search, q.query) DESC, i.number DESC
       LIMIT ${SEARCH_GROUP_LIMIT}
     `);
@@ -107,7 +113,7 @@ export function createSearchService(db: AppDatabase) {
       SELECT d.id::text AS id, d.title, d.adr_number, p.key AS project_key,
         CASE WHEN d.content_text <> '' THEN ${headline("d.content_text")} END AS snippet
       FROM q, docs d JOIN projects p ON p.id = d.project_id
-      WHERE d.deleted_at IS NULL AND d.search @@ q.query
+      WHERE d.deleted_at IS NULL AND d.search @@ q.query AND ${indexable}
       ORDER BY ts_rank(d.search, q.query) DESC, d.updated_at DESC
       LIMIT ${SEARCH_GROUP_LIMIT}
     `);
@@ -144,7 +150,7 @@ export function createSearchService(db: AppDatabase) {
       LEFT JOIN projects ip ON ip.id = i.project_id
       LEFT JOIN docs d ON c.entity_type = 'doc' AND d.id = c.entity_id AND d.deleted_at IS NULL
       LEFT JOIN projects dp ON dp.id = d.project_id
-      WHERE c.deleted_at IS NULL AND c.search @@ q.query
+      WHERE c.deleted_at IS NULL AND c.search @@ q.query AND ${indexable}
         AND (i.id IS NOT NULL OR d.id IS NOT NULL)
       ORDER BY ts_rank(c.search, q.query) DESC, c.created_at DESC
       LIMIT ${SEARCH_GROUP_LIMIT}

@@ -9,7 +9,7 @@ const searchAction = vi.hoisted(() => vi.fn());
 vi.mock("@/server/actions/search", () => ({ searchAction }));
 
 const router = vi.hoisted(() => ({ push: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => router }));
+vi.mock("next/navigation", () => ({ useRouter: () => router, usePathname: () => "/my-work" }));
 
 const quickCreate = vi.hoisted(() => ({ openQuickCreate: vi.fn() }));
 vi.mock("@/features/issue/quick-create-events", () => quickCreate);
@@ -46,7 +46,7 @@ const results: SearchResults = {
 
 async function openPalette() {
   const user = userEvent.setup();
-  render(<CommandPalette projectKey="STK" />);
+  render(<CommandPalette defaultProjectKey="STK" />);
   await user.keyboard("{Control>}k{/Control}");
   const input = await screen.findByRole("combobox", { name: "Search or jump to" });
   await waitFor(() => expect(input).toHaveFocus());
@@ -69,7 +69,7 @@ describe("CommandPalette (SRCH-1/2, §5.7)", () => {
     render(
       <>
         <input aria-label="Elsewhere" />
-        <CommandPalette projectKey="STK" />
+        <CommandPalette defaultProjectKey="STK" />
       </>,
     );
     await user.click(screen.getByLabelText("Elsewhere"));
@@ -78,6 +78,15 @@ describe("CommandPalette (SRCH-1/2, §5.7)", () => {
     await waitFor(() => expect(input).toHaveFocus());
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("combobox")).not.toBeInTheDocument());
+  });
+
+  it("closes with Ctrl/Cmd+K too and reopens with an empty query", async () => {
+    const { user, input } = await openPalette();
+    await user.type(input, "outbox");
+    await user.keyboard("{Control>}k{/Control}");
+    await waitFor(() => expect(screen.queryByRole("combobox")).not.toBeInTheDocument());
+    await user.keyboard("{Control>}k{/Control}");
+    expect(await screen.findByRole("combobox")).toHaveValue("");
   });
 
   it("lists static actions grouped, moves with the arrow keys and runs with Enter", async () => {

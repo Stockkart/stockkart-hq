@@ -10,13 +10,13 @@ import {
   Plus,
   Search,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { openQuickCreate } from "@/features/issue/quick-create-events";
 import { type IssueType } from "@/lib/issues/constants";
-import { issuePathForKey, parseIssueKey } from "@/lib/issues/keys";
+import { issuePathForKey, parseIssueKey, PROJECT_KEY_PATTERN } from "@/lib/issues/keys";
 import {
   EMPTY_RESULTS,
   SEARCH_DEBOUNCE_MS,
@@ -70,6 +70,12 @@ function optionLabel(option: Option): string {
   return option.kind === "hit" ? option.hit.title : option.label;
 }
 
+/** On `/XYZ/…` pages the "Go to" actions target project XYZ (like quick create). */
+function projectKeyFromPath(pathname: string, fallback: string): string {
+  const segment = pathname.split("/")[1] ?? "";
+  return PROJECT_KEY_PATTERN.test(segment) ? segment : fallback;
+}
+
 /**
  * SRCH-1/2 ⌘K command palette (SPEC §5.7). Cmd/Ctrl+K toggles it from anywhere in the app,
  * even while typing (it is a chord, not a single key). WAI-ARIA combobox: focus stays in
@@ -77,8 +83,9 @@ function optionLabel(option: Option): string {
  * closes. `STK-123` offers a direct jump at once; other text is searched after a short
  * pause (debounced), and responses to older queries are dropped.
  */
-export function CommandPalette({ projectKey }: { projectKey: string }) {
+export function CommandPalette({ defaultProjectKey }: { defaultProjectKey: string }) {
   const router = useRouter();
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<{ query: string; data: SearchResults } | null>(null);
@@ -87,13 +94,20 @@ export function CommandPalette({ projectKey }: { projectKey: string }) {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sequence = useRef(0);
   const ids = { input: useId(), listbox: useId(), status: useId() };
+  // For the window listener: the latest open state and the close/reset logic.
+  const openRef = useRef(open);
+  const toggleRef = useRef(() => {});
+  useEffect(() => {
+    openRef.current = open;
+    toggleRef.current = () => onOpenChange(!openRef.current);
+  });
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey)) return;
       if (event.altKey || event.shiftKey) return;
       event.preventDefault();
-      setOpen((value) => !value);
+      toggleRef.current();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -140,8 +154,11 @@ export function CommandPalette({ projectKey }: { projectKey: string }) {
   }
 
   const trimmed = query.replace(/\s+/g, " ").trim();
+  // Only results for exactly this text: while a newer query is pending, older hits are
+  // hidden, so Enter can never open a result of a previous query.
   const current = results && results.query === trimmed ? results.data : null;
-  const data = trimmed ? (current ?? results?.data ?? EMPTY_RESULTS) : EMPTY_RESULTS;
+  const data = trimmed ? (current ?? EMPTY_RESULTS) : EMPTY_RESULTS;
+  const projectKey = projectKeyFromPath(pathname, defaultProjectKey);
 
   const groups: Group[] = [];
   // `STK-123` jumps directly: offered before the server answers, dropped if it says no.
@@ -191,6 +208,16 @@ export function CommandPalette({ projectKey }: { projectKey: string }) {
   const active = Math.min(activeIndex, Math.max(0, options.length - 1));
   const optionId = (index: number) => `${ids.listbox}-option-${index}`;
   const searching = Boolean(trimmed) && !current && !error && !ref;
+  const activeId = options.length > 0 ? optionId(active) : null;
+
+  // aria-activedescendant moves no real focus, so keep the active option in view.
+  useEffect(() => {
+    if (!activeId) return;
+    const element = document.getElementById(activeId);
+    if (element && typeof element.scrollIntoView === "function") {
+      element.scrollIntoView({ block: "nearest" });
+    }
+  }, [activeId]);
 
   function run(option: Option | undefined) {
     if (!option) return;
@@ -204,7 +231,8 @@ export function CommandPalette({ projectKey }: { projectKey: string }) {
   }
 
   function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (options.length === 0) return;
+    // Enter during IME composition confirms the composition, not an option.
+    if (options.length === 0 || event.nativeEvent.isComposing) return;
     switch (event.key) {
       case "ArrowDown":
         event.preventDefault();

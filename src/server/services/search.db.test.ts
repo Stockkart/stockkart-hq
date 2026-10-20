@@ -158,5 +158,7 @@ describeDb("search (Postgres)", () => {
     await expect(search('"unclosed -not or')).resolves.toBeDefined();
     await expect(search("the")).resolves.toMatchObject({ issues: [] });
     await expect(search("")).resolves.toMatchObject({ jump: null, issues: [] });
+    // Negation only: no full scan returning arbitrary rows.
+    await expect(search("-outbox")).resolves.toMatchObject({ issues: [], docs: [], comments: [] });
   });
 });
