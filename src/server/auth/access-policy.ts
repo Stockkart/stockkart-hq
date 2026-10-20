@@ -13,7 +13,8 @@ import { NextResponse, type NextRequest } from "next/server";
 /** Exact public paths. */
 const PUBLIC_PATHS = new Set<string>([
   "/login",
-  // Signature-verified GitHub webhook (GH-1). Placeholder returning 501 in Phase 0.
+  // Signature-verified GitHub webhook (GH-1): the route authenticates every delivery itself
+  // (HMAC-SHA256, fails closed without GITHUB_WEBHOOK_SECRET).
   "/api/webhooks/github",
   // Static files from /public and framework metadata.
   "/favicon.ico",
