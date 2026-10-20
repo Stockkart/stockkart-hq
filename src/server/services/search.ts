@@ -1,6 +1,7 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { docPath } from "@/lib/docs/views";
 import { formatIssueKey, issuePath, parseIssueKey } from "@/lib/issues/keys";
 import {
   EMPTY_RESULTS,
@@ -130,7 +131,8 @@ export function createSearchService(db: AppDatabase) {
     return rows.map((row) => ({
       kind: "doc",
       id: row.id,
-      href: `/${row.project_key}/docs/${row.id}`,
+      // The slice 3 doc route (`[projectKey]/docs/[id]`); ADRs open there too.
+      href: docPath(row.project_key, row.id),
       title: adrTitle(row.adr_number, row.title),
       context: null,
       snippet: snippetOf(row.snippet),
@@ -189,7 +191,7 @@ export function createSearchService(db: AppDatabase) {
           {
             kind: "comment",
             id: row.id,
-            href: `/${row.doc_project_key}/docs/${row.doc_id}`,
+            href: docPath(row.doc_project_key, row.doc_id),
             title: `Comment on ${title}`,
             context: title,
             snippet: snippetOf(row.snippet),

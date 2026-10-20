@@ -14,6 +14,17 @@ vi.mock("next/navigation", () => ({ useRouter: () => router, usePathname: () => 
 const quickCreate = vi.hoisted(() => ({ openQuickCreate: vi.fn() }));
 vi.mock("@/features/issue/quick-create-events", () => quickCreate);
 
+// The "New doc" / "New ADR" actions open the slice 3 dialogs, which call these actions.
+const docActions = vi.hoisted(() => ({
+  createDocAction: vi.fn(),
+  createAdrAction: vi.fn(),
+  deleteDocAction: vi.fn(),
+  loadDocTemplatesAction: vi.fn(),
+  moveDocAction: vi.fn(),
+  renameDocAction: vi.fn(),
+}));
+vi.mock("@/server/actions/docs", () => docActions);
+
 const { CommandPalette } = await import("./command-palette");
 
 const results: SearchResults = {
@@ -96,12 +107,12 @@ describe("CommandPalette (SRCH-1/2, §5.7)", () => {
     expect(activeOption(input)).toHaveTextContent("Create issue");
     expect(activeOption(input)).toHaveAttribute("aria-selected", "true");
 
-    await user.keyboard("{ArrowDown}{ArrowDown}");
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}");
     expect(activeOption(input)).toHaveTextContent("Go to Backlog");
-    await user.keyboard("{ArrowUp}{ArrowUp}{ArrowUp}");
+    await user.keyboard("{ArrowUp}{ArrowUp}{ArrowUp}{ArrowUp}{ArrowUp}");
     // Wraps around to the last option.
     expect(activeOption(input)).toHaveTextContent("Go to Todos");
-    await user.keyboard("{Home}{ArrowDown}{ArrowDown}{Enter}");
+    await user.keyboard("{Home}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{Enter}");
     expect(router.push).toHaveBeenCalledWith("/STK/backlog");
     await waitFor(() => expect(screen.queryByRole("combobox")).not.toBeInTheDocument());
     expect(searchAction).not.toHaveBeenCalled();
@@ -149,6 +160,46 @@ describe("CommandPalette (SRCH-1/2, §5.7)", () => {
     const { user } = await openPalette();
     await user.keyboard("stk-12{Enter}");
     expect(router.push).toHaveBeenCalledWith("/STK/issues/STK-12");
+  });
+
+  it("opens a doc result on its /STK/docs/<id> page", async () => {
+    searchAction.mockResolvedValue({ ok: true, data: { ...results, issues: [] } });
+    const { user } = await openPalette();
+    await user.keyboard("outbox");
+    await screen.findByRole("group", { name: "Docs" });
+    await user.keyboard("{Enter}");
+    expect(router.push).toHaveBeenCalledWith("/STK/docs/d1");
+  });
+
+  it("opens the New ADR dialog and creates the ADR in the current project", async () => {
+    searchAction.mockResolvedValue({
+      ok: true,
+      data: { jump: null, issues: [], docs: [], comments: [] },
+    });
+    docActions.createAdrAction.mockResolvedValue({
+      ok: true,
+      data: { id: "a1", title: "ADR-0009 Use Postgres" },
+    });
+    const { user } = await openPalette();
+    await user.keyboard("new adr{Enter}");
+    const dialog = await screen.findByRole("dialog", { name: "New ADR" });
+    await user.type(within(dialog).getByLabelText("Decision title"), "Use Postgres");
+    await user.click(within(dialog).getByRole("button", { name: "Create ADR" }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/STK/docs/a1"));
+    expect(docActions.createAdrAction).toHaveBeenCalledWith({
+      projectKey: "STK",
+      title: "Use Postgres",
+    });
+  });
+
+  it("opens the New doc dialog from the New doc action", async () => {
+    searchAction.mockResolvedValue({
+      ok: true,
+      data: { jump: null, issues: [], docs: [], comments: [] },
+    });
+    const { user } = await openPalette();
+    await user.keyboard("new doc{Enter}");
+    expect(await screen.findByRole("dialog", { name: "New page" })).toBeInTheDocument();
   });
 
   it("opens quick create as a bug from the Create bug action", async () => {

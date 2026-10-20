@@ -4,6 +4,8 @@ import {
   ArrowRight,
   Bug,
   CircleDot,
+  FileCheck2,
+  FilePlus2,
   FileText,
   type LucideIcon,
   MessageSquare,
@@ -14,6 +16,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { NewAdrDialog, NewDocDialog } from "@/features/docs/doc-dialogs";
 import { openQuickCreate } from "@/features/issue/quick-create-events";
 import { type IssueType } from "@/lib/issues/constants";
 import { issuePathForKey, parseIssueKey, PROJECT_KEY_PATTERN } from "@/lib/issues/keys";
@@ -31,7 +34,11 @@ import { searchAction } from "@/server/actions/search";
 type Option =
   | { id: string; kind: "go"; label: string; detail: string | null; href: string; icon: LucideIcon }
   | { id: string; kind: "hit"; hit: SearchHit; icon: LucideIcon }
-  | { id: string; kind: "create"; label: string; type: IssueType; icon: LucideIcon };
+  | { id: string; kind: "create"; label: string; type: IssueType; icon: LucideIcon }
+  | { id: string; kind: "newDoc"; label: string; dialog: DocDialog; icon: LucideIcon };
+
+/** The slice 3 docs dialogs the palette can open: "New page" (DOC-2) and "New ADR" (ADR-1). */
+type DocDialog = "doc" | "adr";
 
 interface Group {
   id: string;
@@ -58,9 +65,13 @@ function staticActions(projectKey: string): Option[] {
   return [
     { id: "create:task", kind: "create", label: "Create issue", type: "task", icon: Plus },
     { id: "create:bug", kind: "create", label: "Create bug", type: "bug", icon: Bug },
+    { id: "new:doc", kind: "newDoc", label: "New doc", dialog: "doc", icon: FilePlus2 },
+    { id: "new:adr", kind: "newDoc", label: "New ADR", dialog: "adr", icon: FileCheck2 },
     go("Go to Backlog", `/${projectKey}/backlog`),
     go("Go to Board", `/${projectKey}/board`),
     go("Go to Issues", `/${projectKey}/issues`),
+    go("Go to Docs", `/${projectKey}/docs`),
+    go("Go to ADRs", `/${projectKey}/adrs`),
     go("Go to My Work", "/my-work"),
     go("Go to Todos", "/todos"),
   ];
@@ -91,6 +102,7 @@ export function CommandPalette({ defaultProjectKey }: { defaultProjectKey: strin
   const [results, setResults] = useState<{ query: string; data: SearchResults } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [docDialog, setDocDialog] = useState<DocDialog | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sequence = useRef(0);
   const ids = { input: useId(), listbox: useId(), status: useId() };
@@ -225,6 +237,12 @@ export function CommandPalette({ defaultProjectKey }: { defaultProjectKey: strin
     if (option.kind === "create") {
       // Let this dialog close (and return focus) before the quick-create dialog opens.
       setTimeout(() => openQuickCreate({ type: option.type }), 0);
+      return;
+    }
+    if (option.kind === "newDoc") {
+      // Same here: the docs dialog opens once this one has closed.
+      const dialog = option.dialog;
+      setTimeout(() => setDocDialog(dialog), 0);
       return;
     }
     router.push(option.kind === "hit" ? option.hit.href : option.href);
@@ -363,6 +381,17 @@ export function CommandPalette({ defaultProjectKey }: { defaultProjectKey: strin
           </div>
         </DialogContent>
       </Dialog>
+      {/* The docs dialogs create the doc in the current project and open it. */}
+      <NewDocDialog
+        open={docDialog === "doc"}
+        onOpenChange={(isOpen) => setDocDialog(isOpen ? "doc" : null)}
+        projectKey={projectKey}
+      />
+      <NewAdrDialog
+        open={docDialog === "adr"}
+        onOpenChange={(isOpen) => setDocDialog(isOpen ? "adr" : null)}
+        projectKey={projectKey}
+      />
     </>
   );
 }
