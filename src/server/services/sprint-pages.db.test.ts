@@ -8,6 +8,7 @@ import { createTestDatabase, createTestUser, describeDb, type TestDatabase } fro
 
 import { createCommentService } from "./comments";
 import { createDocQueries } from "./doc-queries";
+import { createGithubQueries } from "./github-queries";
 import { createIssueQueries } from "./issue-queries";
 import { createIssueService } from "./issues";
 import { createPlanningQueries } from "./planning-queries";
@@ -49,6 +50,7 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
       sprintQueries: createSprintQueries(db, { read }),
       commentService: createCommentService(db, { runAtomic: transactionRunner(db), read }),
       docQueries: createDocQueries(db, { read }),
+      githubQueries: createGithubQueries(db, { read }),
     };
   }
 
@@ -147,7 +149,7 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
     expect(issues).toHaveLength(1);
   });
 
-  it("issue page (with the Sprint field): one round trip", async () => {
+  it("issue page (Sprint field and Development panel): one round trip", async () => {
     const { read, trips } = counted();
     const s = services(read);
     const issueId = issueIdByNumber(projectId(), issueNumber);
@@ -164,6 +166,7 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
       s.issueQueries.listProjectKeys(),
       s.issueQueries.listSubtaskParents(projectId(), issueId),
       s.docQueries.docsLinkingTo(issueId),
+      s.githubQueries.listDevelopment(issueId),
     ]);
     expect(trips()).toBe(1);
     expect(issue?.sprintId).toBe(sprintId);

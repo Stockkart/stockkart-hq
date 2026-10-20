@@ -315,7 +315,10 @@ describeDb("issue service (Postgres)", () => {
       ["relates", blocker.key],
     ]);
 
-    const [link] = await queries().listLinks(blocked.id);
+    // listLinks has no defined order; remove the blocker ↔ blocked link specifically.
+    const link = (await queries().listLinks(blocked.id)).find(
+      (candidate) => candidate.issue.key === blocker.key,
+    );
     if (!link) throw new Error("no link");
     await service().removeLink(actor, { issueId: blocked.id, linkId: link.linkId });
     const blockerActivity = (await activityFor(blocker.id)).filter((row) => row.field === "links");
