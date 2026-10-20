@@ -13,6 +13,14 @@ test("an anonymous visit to /my-work ends at /login", async ({ page }) => {
   await expect(page).toHaveURL(/\/login\?callbackUrl=%2Fmy-work$/);
 });
 
+test("anonymous visits to issue pages are redirected without data (S-10)", async ({ request }) => {
+  for (const path of ["/STK/issues", "/STK/issues/STK-1", "/STK/backlog"]) {
+    const response = await request.get(path, { maxRedirects: 0 });
+    expect(response.status(), path).toBe(307);
+    expect(response.headers()["location"], path).toContain("/login");
+  }
+});
+
 test("anonymous API requests get 401, and security headers are set", async ({ request }) => {
   const api = await request.get("/api/files/x", { maxRedirects: 0 });
   expect(api.status()).toBe(401);

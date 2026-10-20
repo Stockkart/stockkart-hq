@@ -8,6 +8,13 @@
       "when": 1792433687330,
       "tag": "0000_init_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792502500588,
+      "tag": "0001_phase1_issues_docs",
+      "breakpoints": true
     }
   ]
 }

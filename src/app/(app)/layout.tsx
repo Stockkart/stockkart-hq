@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { Toaster } from "@/components/ui/sonner";
 import { Sidebar } from "@/features/shell/sidebar";
 import { TopBar } from "@/features/shell/top-bar";
 import { requirePageSession } from "@/server/auth/require-session";
@@ -23,6 +24,7 @@ export default async function AppLayout({ children }: Readonly<{ children: React
           {children}
         </main>
       </div>
+      <Toaster />
     </div>
   );
 }

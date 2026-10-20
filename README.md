@@ -7,8 +7,15 @@ and technical spec.
 **The code is public; the data is private.** Every page and API route requires a session,
 and only Stockkart accounts with the `SUPER_USER` role can sign in.
 
-Status: **Phase 0** (scaffold). Sign-in, sessions, default-deny routing, rate limiting and
-an empty app shell. Issues, boards and docs arrive in Phase 1.
+Status: **Phase 1 MVP** (slices 1–3: issues, planning, docs). Sign-in, sessions, default-deny
+routing, rate limiting and the app shell; issues (list with filters, quick create (`C`),
+issue detail with comments, activity, links, linked docs and subtasks); planning (a ranked
+backlog with drag and drop, a board, My Work with recently viewed issues, personal todos that
+can be promoted to issues, and a ⌘K palette that searches issues, docs and comments); and
+docs: a page tree with drag and drop, docs from 13 built-in templates, an autosaving editor
+with optimistic locking, tables, callouts and Mermaid diagrams, ADRs with numbering and a
+log, and a one-time handbook import. The database schema covers all of Phase 1; sprints,
+roadmap, diagrams, incidents and services are still "coming soon".
 
 ## Stack
 
@@ -18,6 +25,10 @@ an empty app shell. Issues, boards and docs arrive in Phase 1.
 | Auth      | Auth.js (`next-auth` 5 beta) Credentials provider → Stockkart backend (`inventory-api`) |
 | DB        | Neon Postgres, Drizzle ORM, `@neondatabase/serverless` (HTTP driver)                    |
 | UI        | Tailwind CSS 4, shadcn/ui components, lucide-react                                      |
+| Editor    | Tiptap 3 (MIT packages only), loaded client-only                                        |
+| Planning  | dnd-kit (MIT) for backlog and board drag and drop                                       |
+| Diagrams  | Mermaid (MIT, strict mode, client-only) with DOMPurify (Apache-2.0 option) on its SVG   |
+| Import    | markdown-it (MIT) for the handbook import                                               |
 | Tests     | Vitest + Testing Library (unit), Playwright (smoke)                                     |
 | Tooling   | pnpm (via corepack), ESLint, Prettier, Husky + lint-staged                              |
 | Hosting   | Vercel (Hobby), GitHub Actions CI                                                       |
@@ -57,6 +68,7 @@ pnpm install
 cp .env.example .env.local
 # fill in .env.local (see below)
 pnpm db:migrate          # needs DATABASE_URL in your shell, see "Database"
+pnpm db:seed             # STK project, components, workflow, templates (re-runnable)
 pnpm dev                 # http://127.0.0.1:3000 (bound to localhost only)
 ```
 
@@ -87,15 +99,17 @@ openssl rand -base64 32
 
 ### Scripts
 
-| Command                                            | What it does                                                                                                               |
-| -------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm dev`                                         | Dev server on 127.0.0.1:3000                                                                                               |
-| `pnpm build` / `pnpm start`                        | Production build / serve on 127.0.0.1                                                                                      |
-| `pnpm lint`, `pnpm typecheck`, `pnpm format:check` | Static checks                                                                                                              |
-| `pnpm test`                                        | Unit tests (Vitest). Never touch the network: fetch and the DB are faked                                                   |
-| `pnpm test:e2e`                                    | Playwright smoke tests against a production build (run `pnpm build` first; first time: `pnpm playwright install chromium`) |
-| `pnpm db:generate`                                 | Generate a SQL migration from `src/server/db/schema.ts` into `drizzle/`                                                    |
-| `pnpm db:migrate`                                  | Apply migrations to `DATABASE_URL`                                                                                         |
+| Command                                            | What it does                                                                                                                                         |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm dev`                                         | Dev server on 127.0.0.1:3000                                                                                                                         |
+| `pnpm build` / `pnpm start`                        | Production build / serve on 127.0.0.1                                                                                                                |
+| `pnpm lint`, `pnpm typecheck`, `pnpm format:check` | Static checks                                                                                                                                        |
+| `pnpm test`                                        | Unit tests (Vitest). Never touch the network: fetch and the DB are faked. DB-backed suites are skipped unless `HQ_DB_TESTS=1` (see "Database tests") |
+| `pnpm test:e2e`                                    | Playwright smoke tests against a production build (run `pnpm build` first; first time: `pnpm playwright install chromium`)                           |
+| `pnpm db:generate`                                 | Generate a SQL migration from `src/server/db/schema.ts` into `drizzle/`                                                                              |
+| `pnpm db:migrate`                                  | Apply migrations to `DATABASE_URL`                                                                                                                   |
+| `pnpm db:seed`                                     | Create the STK project, its components, the default workflow and built-in templates in `DATABASE_URL` (idempotent)                                   |
+| `pnpm import:handbook -- --dir <path>`             | Import an engineering-handbook checkout into `DATABASE_URL` as docs and ADRs (idempotent; `--dry-run` writes nothing). See "Importing the handbook"  |
 
 ## Database (Neon)
 
@@ -103,14 +117,66 @@ openssl rand -base64 32
 2. Create two branches: `main` (production) and `dev` (local development and previews,
    no real data).
 3. Copy each branch's **pooled** connection string. Use the `dev` one in `.env.local`.
-4. Apply migrations. The URL is read from your shell, so it never lands in a file:
+4. Apply migrations, then seed. The URL is read from your shell, so it never lands in a file:
 
    ```bash
    DATABASE_URL='postgres://…' pnpm db:migrate
+   DATABASE_URL='postgres://…' pnpm db:seed
    ```
+
+   The seed creates project **STK** ("Stockkart"), the components `inventory-api`,
+   `inventory-platform`, `infra`, `loadtest` and `hq` (mapped to their `Stockkart/…` repos),
+   the §4.4 statuses (Triage is the default for bugs, Backlog for everything else) and the
+   §6.2 issue templates. It holds no user data and is safe to re-run: existing rows are kept,
+   and only the built-in templates are refreshed. It uses a plain Postgres connection
+   (`pg`), which Neon accepts with `sslmode=require`; any non-loopback URL without TLS is
+   refused.
 
 Schema changes: edit `src/server/db/schema.ts`, run `pnpm db:generate --name <change>`,
 review and commit the SQL in `drizzle/`, then migrate `dev` before `main`.
+
+### Database tests
+
+Some tests (issue number allocation under concurrency, activity rows, `resolved_at`, parent
+rules, links, comments, the seed) need a real Postgres because the guarantees live in SQL.
+They run only when `HQ_DB_TESTS=1` and `HQ_TEST_DATABASE_URL` points at a **loopback**,
+throwaway server (anything else is refused). CI runs them in the `db-tests` job against a
+`services: postgres` container. Locally:
+
+```bash
+docker run -d --name hq-test-pg -e POSTGRES_USER=hq -e POSTGRES_PASSWORD=hq-local-only \
+  -p 127.0.0.1:55432:5432 postgres:17
+HQ_DB_TESTS=1 HQ_TEST_DATABASE_URL='postgres://hq:hq-local-only@127.0.0.1:55432/hq' pnpm test
+docker stop hq-test-pg && docker rm hq-test-pg
+```
+
+The global setup migrates a template database once and every test file runs in its own copy,
+so files run in parallel. Never point these variables at a Neon branch.
+
+## Importing the handbook
+
+HQ is the source of truth for docs and ADRs after a one-time import of `engineering-handbook`
+(IMP-1…3). Run it locally, after the seed, against the database you want to fill:
+
+```bash
+DATABASE_URL='postgres://…' pnpm import:handbook -- --dir ../engineering-handbook --dry-run
+DATABASE_URL='postgres://…' pnpm import:handbook -- --dir ../engineering-handbook
+# or, reading DATABASE_URL from a local .env file (not shell-sourced):
+node --env-file=.env node_modules/tsx/dist/cli.mjs scripts/import-handbook.ts --dir ../engineering-handbook
+```
+
+Top-level `*.md` files become docs under a "Handbook" page (README → page, ARCHITECTURE →
+design, API_CONTRACT → api_contract, RUNBOOK → runbook, REVIEW_RUBRIC → page,
+IN_MEMORY_STATE → design) and `decisions/NNNN-*.md` become ADRs under "Decisions", with the
+number and title from the file and the status from its `## Status` section ("Superseded by
+NNNN" links the two ADRs). `0000-template.md` is skipped. Mermaid fences become Mermaid
+blocks. Re-running it updates changed files in place (new version and snapshot) and leaves
+the rest alone; docs moved or deleted in HQ stay where they are, and docs edited in HQ since
+the import are skipped (HQ is the source of truth) unless you pass `--force`. "New ADR"
+continues after the highest imported number.
+
+**The imported content never goes into this repo** (S-7): the script writes only to the
+database, and the tests use small synthetic markdown.
 
 ## Deploying to Vercel
 
@@ -152,7 +218,8 @@ gunzip -c stockkart-hq-<timestamp>.sql.gz | psql "$RESTORE_DATABASE_URL"
 - [ ] Create the GitHub repo `Stockkart/stockkart-hq` (public), add it as `origin`, push `main`.
 - [ ] GitHub → Settings → Code security: enable **secret scanning** and **push protection** (S-6).
 - [ ] Protect `main`: require the CI workflow to pass before merging.
-- [ ] Create the Neon project with `main` and `dev` branches, then run `pnpm db:migrate` on both.
+- [ ] Create the Neon project with `main` and `dev` branches, then run `pnpm db:migrate` and
+      `pnpm db:seed` on both.
 - [ ] Generate a production `AUTH_SECRET` (`openssl rand -base64 32`) and a separate preview one.
 - [ ] Create the Vercel project and set `DATABASE_URL`, `STOCKKART_API_URL` and `AUTH_SECRET`
       for Production and Preview (Preview → Neon `dev`).
