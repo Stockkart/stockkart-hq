@@ -53,6 +53,52 @@ jobs:
       - name: Build
         run: pnpm build
 
+  db-tests:
+    name: DB-backed tests and migrations (Postgres 17)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # A throwaway Postgres that exists only for this job. Its password is a fixed, non-secret
+    # value: the database holds nothing but test rows and is published on loopback only.
+    services:
+      postgres:
+        # Pinned by digest (multi-arch index of postgres:17); bump it deliberately.
+        image: postgres:17@sha256:2d2b8998d31037bf721cfdf764d76ba74171b4fab3431b7f72c27c56ddbdf9e3
+        env:
+          POSTGRES_USER: hq
+          POSTGRES_PASSWORD: hq-ci-only
+          POSTGRES_DB: hq
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U hq"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      HQ_DB_TESTS: "1"
+      HQ_TEST_DATABASE_URL: postgres://hq:hq-ci-only@127.0.0.1:5432/hq
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      # Every test, including the ones that need Postgres (number allocation under
+      # concurrency, activity, resolved_at, parent rules, links, comments, seed).
+      - name: Tests (with Postgres)
+        run: pnpm test
+      # The committed migrations apply to an empty database, and the seed is re-runnable.
+      - name: Migrate and seed twice
+        env:
+          DATABASE_URL: postgres://hq:hq-ci-only@127.0.0.1:5432/hq
+        run: |
+          pnpm db:migrate
+          pnpm db:seed
+          pnpm db:seed
+
   e2e:
     name: Playwright smoke (anonymous access)
     runs-on: ubuntu-24.04
