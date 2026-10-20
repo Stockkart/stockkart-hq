@@ -1,7 +1,7 @@
 "use client";
 
 import { Pencil } from "lucide-react";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { LazyRichTextEditor } from "@/features/editor/lazy-rich-text-editor";
@@ -23,6 +23,21 @@ export function IssueDescription({ issueId, description, projectKeys }: IssueDes
   const [shown, setShown] = useState(description);
   const [draft, setDraft] = useState<RichTextDoc | null>(description);
   const [pending, startTransition] = useTransition();
+  const editButton = useRef<HTMLButtonElement>(null);
+
+  // Follow the server copy after a refresh (e.g. someone else edited it), unless editing.
+  const serverKey = JSON.stringify(description);
+  const [seenKey, setSeenKey] = useState(serverKey);
+  if (seenKey !== serverKey && !editing) {
+    setSeenKey(serverKey);
+    setShown(description);
+  }
+
+  /** Leaves edit mode and puts focus back on "Edit" (the editor is about to unmount). */
+  function close() {
+    setEditing(false);
+    requestAnimationFrame(() => editButton.current?.focus());
+  }
 
   function save() {
     const next = draft && !isEmptyDoc(draft) ? draft : null;
@@ -32,7 +47,7 @@ export function IssueDescription({ issueId, description, projectKeys }: IssueDes
       );
       if (result === null) return;
       setShown(next);
-      setEditing(false);
+      close();
     });
   }
 
@@ -44,6 +59,7 @@ export function IssueDescription({ issueId, description, projectKeys }: IssueDes
         </h2>
         {!editing ? (
           <Button
+            ref={editButton}
             variant="ghost"
             size="sm"
             onClick={() => {
@@ -66,10 +82,10 @@ export function IssueDescription({ issueId, description, projectKeys }: IssueDes
             autoFocus
             onChange={setDraft}
             onSubmit={save}
-            onCancel={() => setEditing(false)}
+            onCancel={close}
           />
           <div className="flex justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
+            <Button variant="ghost" size="sm" onClick={close}>
               Cancel
             </Button>
             <Button size="sm" onClick={save} disabled={pending}>

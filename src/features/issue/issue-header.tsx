@@ -81,6 +81,12 @@ function InlineTitle({
   const [draft, setDraft] = useState(title);
   const inputId = useId();
   const editButton = useRef<HTMLButtonElement>(null);
+  // Follow the server title after a refresh (e.g. someone else renamed the issue).
+  const [seenTitle, setSeenTitle] = useState(title);
+  if (seenTitle !== title) {
+    setSeenTitle(title);
+    setShown(title);
+  }
 
   async function save() {
     const next = draft.replace(/\s+/g, " ").trim();

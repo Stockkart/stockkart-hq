@@ -18,7 +18,7 @@ import {
   SquareCode,
   Strikethrough,
 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { richTextDocSchema, type RichTextDoc } from "@/lib/rich-text";
 import { cn } from "@/lib/utils";
@@ -126,6 +126,15 @@ const TOOLBAR: ToolbarButton[][] = [
   ],
 ];
 
+const TOOLBAR_SIZE = TOOLBAR.flat().length;
+/** Position of each button in Tab/arrow order, by [group][index]. */
+const TOOLBAR_POSITIONS = TOOLBAR.map((group, groupIndex) =>
+  group.map(
+    (_, index) =>
+      TOOLBAR.slice(0, groupIndex).reduce((sum, previous) => sum + previous.length, 0) + index,
+  ),
+);
+
 function Toolbar({ editor }: { editor: Editor }) {
   const active = useEditorState({
     editor,
@@ -134,29 +143,56 @@ function Toolbar({ editor }: { editor: Editor }) {
         TOOLBAR.flat().map((button) => [button.label, current ? button.isActive(current) : false]),
       ),
   });
+  // ARIA toolbar pattern: one Tab stop; arrow keys, Home and End move between buttons.
+  const [focusIndex, setFocusIndex] = useState(0);
+  const buttons = useRef<(HTMLButtonElement | null)[]>([]);
+  const count = TOOLBAR_SIZE;
+  const moveFocus = (index: number) => {
+    const next = (index + count) % count;
+    setFocusIndex(next);
+    buttons.current[next]?.focus();
+  };
   return (
     <div
       role="toolbar"
       aria-label="Formatting"
       className="flex flex-wrap items-center gap-0.5 border-b px-1 py-1"
+      onKeyDown={(event) => {
+        const keys: Record<string, number> = {
+          ArrowRight: focusIndex + 1,
+          ArrowLeft: focusIndex - 1,
+          Home: 0,
+          End: count - 1,
+        };
+        const target = keys[event.key];
+        if (target === undefined) return;
+        event.preventDefault();
+        moveFocus(target);
+      }}
     >
       {TOOLBAR.map((group, groupIndex) => (
         <div
           key={groupIndex}
           className={cn("flex items-center gap-0.5", groupIndex > 0 && "border-l pl-1")}
         >
-          {group.map((button) => {
+          {group.map((button, buttonIndex) => {
+            const position = TOOLBAR_POSITIONS[groupIndex]?.[buttonIndex] ?? 0;
             const pressed = active?.[button.label] ?? false;
             const Icon = button.icon;
             return (
               <button
                 key={button.label}
+                ref={(element) => {
+                  buttons.current[position] = element;
+                }}
                 type="button"
+                tabIndex={position === focusIndex ? 0 : -1}
                 aria-label={button.label}
                 aria-pressed={pressed}
                 title={button.label}
                 // Keep the selection: a mousedown on the button would otherwise blur the editor.
                 onMouseDown={(event) => event.preventDefault()}
+                onFocus={() => setFocusIndex(position)}
                 onClick={() => button.run(editor)}
                 className={cn(
                   "inline-flex size-7 items-center justify-center rounded text-muted-foreground outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50",

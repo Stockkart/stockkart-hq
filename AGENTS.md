@@ -74,8 +74,10 @@ e2e/                      Playwright smoke tests
 - Edit `src/server/db/schema.ts`, then `pnpm db:generate --name <change>` and commit the SQL
   in `drizzle/`. Never edit an applied migration; add a new one.
 - Every table has `id uuid`, `created_at` and `updated_at` unless SPEC §8 says otherwise.
-- The schema already holds every Phase 1 table (issues, docs, sprints, todos, templates …).
-  Phase 1 slices must not need a migration; later phases add their own tables.
+- The schema already holds every Phase 1 table (issues, docs, sprints, todos, templates,
+  `recent_views` for MY-1 …), plus `entity_type = 'user'` for @mentions and
+  `docs.source_path` for re-runnable imports. Phase 1 slices must not need a migration;
+  later phases add their own tables.
 - Shared vocabularies (issue types, statuses, doc types …) live in `src/lib/**/constants.ts`
   and feed both the `pgEnum`s and the Zod schemas. Adding an enum value needs a migration.
 - Soft delete: tables with `deleted_at` are never hard-deleted by the app; every read
@@ -87,8 +89,10 @@ e2e/                      Playwright smoke tests
 - `search` columns are `GENERATED` tsvectors with GIN indexes; write the `*_text` column
   (derived on the server from the rich-text JSON with `extractPlainText`), never `search`.
 - Neon's HTTP driver has no interactive transactions. A write that must be atomic is ONE
-  SQL statement (data-modifying CTEs, see `services/issues.ts`), or a `db.batch()` when no
-  step depends on another's result. Parse raw results with `rowsOf(result, zodRow)`.
+  SQL statement (data-modifying CTEs, see `services/issues.ts`). When a later step must see
+  the database after an earlier step's row lock (all CTEs share one snapshot taken before
+  the lock wait), use `RunAtomic` (`db.batch()` on Neon, a transaction on node-postgres) with
+  separate statements, as the mention sync does. Parse raw results with `rowsOf(result, zodRow)`.
 - `activity` is append-only: record `from_value` → `to_value` as raw text (ids, numbers,
   ISO dates) in the same statement as the change; the UI resolves names.
 - Rich text is stored as editor JSON (`RichTextDoc`, validated by `richTextDocSchema`) plus

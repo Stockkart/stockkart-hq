@@ -1,12 +1,12 @@
 "use client";
 
 import { X } from "lucide-react";
-import { type ReactNode, useId, useState } from "react";
+import { type ChangeEvent, type ReactNode, useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { type Priority, PRIORITIES, PRIORITY_LABELS } from "@/lib/issues/constants";
+import { PRIORITIES, PRIORITY_LABELS } from "@/lib/issues/constants";
 import { type IssueField, LABEL_MAX } from "@/lib/issues/schemas";
 import {
   type IssueDetail,
@@ -17,6 +17,7 @@ import {
 import { addLabelAction, removeLabelAction, updateIssueFieldAction } from "@/server/actions/issues";
 
 import { callAction, RelativeTime } from "./client-utils";
+import { type FieldValue, useFieldSaver } from "./use-field-saver";
 
 interface IssueFieldsProps {
   issue: IssueDetail;
@@ -26,17 +27,15 @@ interface IssueFieldsProps {
   currentUserId: string;
 }
 
-type FieldValue = string | number | null;
+type PanelField = Exclude<IssueField, "title" | "description">;
 
 /**
  * §5.4 side panel (ISS-5). Each control saves its own field (§9.4: last write wins per
- * field). Updates are optimistic: the control shows the new value at once and reverts if
- * the server refuses it. The server then refreshes the page, so activity stays current.
+ * field). Updates are optimistic and ordered (see `useFieldSaver`); the server then refreshes
+ * the page, so activity stays current and edits by others show up.
  */
 export function IssueFields({ issue, meta, parentOptions, currentUserId }: IssueFieldsProps) {
-  const [values, setValues] = useState<Record<IssueField, FieldValue>>({
-    title: issue.title,
-    description: null,
+  const serverValues: Record<PanelField, FieldValue> = {
     status: issue.statusId,
     priority: issue.priority,
     assignee: issue.assigneeId,
@@ -44,7 +43,13 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
     storyPoints: issue.storyPoints,
     dueDate: issue.dueDate,
     parent: issue.parent?.id ?? null,
-  });
+  };
+  const { valueOf, change, flush } = useFieldSaver<PanelField>(
+    serverValues,
+    async (field, value) =>
+      (await callAction(() => updateIssueFieldAction({ issueId: issue.id, field, value }))) !==
+      null,
+  );
   const ids = {
     status: useId(),
     priority: useId(),
@@ -55,27 +60,26 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
     parent: useId(),
   };
 
-  async function save(field: IssueField, value: FieldValue) {
-    const previous = values[field];
-    if (previous === value) return;
-    setValues((current) => ({ ...current, [field]: value }));
-    const result = await callAction(() =>
-      updateIssueFieldAction({ issueId: issue.id, field, value }),
-    );
-    if (result === null) setValues((current) => ({ ...current, [field]: previous }));
-  }
+  /** Props for a native select bound to a field: change (debounced) and flush on blur. */
+  const bind = (field: PanelField, parse: (raw: string) => FieldValue | undefined) => ({
+    value: String(valueOf(field) ?? ""),
+    onChange: (event: ChangeEvent<HTMLSelectElement | HTMLInputElement>) => {
+      const next = parse(event.target.value);
+      if (next !== undefined) change(field, next);
+    },
+    onBlur: () => flush(field),
+  });
+  const idOrNull = (raw: string) => raw || null;
 
   const parentLabel = issue.type === "subtask" ? "Parent" : "Epic";
+  const assignee = valueOf("assignee");
+  const storyPoints = valueOf("storyPoints");
 
   return (
     <aside aria-label="Issue details" className="flex flex-col gap-4 text-sm">
       <dl className="grid grid-cols-[6.5rem_1fr] items-center gap-x-3 gap-y-2.5">
         <Field label="Status" htmlFor={ids.status}>
-          <NativeSelect
-            id={ids.status}
-            value={String(values.status ?? "")}
-            onChange={(event) => void save("status", event.target.value)}
-          >
+          <NativeSelect id={ids.status} {...bind("status", (raw) => raw || undefined)}>
             {meta.statuses.map((status) => (
               <option key={status.id} value={status.id}>
                 {status.name}
@@ -87,13 +91,7 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
         <Field label="Priority" htmlFor={ids.priority}>
           <NativeSelect
             id={ids.priority}
-            value={String(values.priority)}
-            onChange={(event) => {
-              const next: Priority | undefined = PRIORITIES.find(
-                (p) => String(p) === event.target.value,
-              );
-              if (next !== undefined) void save("priority", next);
-            }}
+            {...bind("priority", (raw) => PRIORITIES.find((p) => String(p) === raw))}
           >
             {PRIORITIES.map((priority) => (
               <option key={priority} value={priority}>
@@ -105,12 +103,7 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
 
         <Field label="Assignee" htmlFor={ids.assignee}>
           <div className="flex items-center gap-1">
-            <NativeSelect
-              id={ids.assignee}
-              className="flex-1"
-              value={String(values.assignee ?? "")}
-              onChange={(event) => void save("assignee", event.target.value || null)}
-            >
+            <NativeSelect id={ids.assignee} className="flex-1" {...bind("assignee", idOrNull)}>
               <option value="">Unassigned</option>
               {meta.users.map((user) => (
                 <option key={user.id} value={user.id}>
@@ -118,12 +111,12 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
                 </option>
               ))}
             </NativeSelect>
-            {values.assignee !== currentUserId ? (
+            {assignee !== currentUserId ? (
               <Button
                 variant="ghost"
                 size="sm"
                 className="h-8 px-2 text-xs"
-                onClick={() => void save("assignee", currentUserId)}
+                onClick={() => change("assignee", currentUserId, { immediate: true })}
               >
                 Me<span className="sr-only">: assign to me</span>
               </Button>
@@ -132,11 +125,7 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
         </Field>
 
         <Field label="Component" htmlFor={ids.component}>
-          <NativeSelect
-            id={ids.component}
-            value={String(values.component ?? "")}
-            onChange={(event) => void save("component", event.target.value || null)}
-          >
+          <NativeSelect id={ids.component} {...bind("component", idOrNull)}>
             <option value="">None</option>
             {meta.components.map((component) => (
               <option key={component.id} value={component.id}>
@@ -153,8 +142,8 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
         <Field label="Points" htmlFor={ids.points}>
           <NumberField
             id={ids.points}
-            value={typeof values.storyPoints === "number" ? values.storyPoints : null}
-            onSave={(value) => void save("storyPoints", value)}
+            value={typeof storyPoints === "number" ? storyPoints : null}
+            onSave={(value) => change("storyPoints", value, { immediate: true })}
           />
         </Field>
 
@@ -163,18 +152,16 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
             id={ids.due}
             type="date"
             className="h-8"
-            value={typeof values.dueDate === "string" ? values.dueDate : ""}
-            onChange={(event) => void save("dueDate", event.target.value || null)}
+            {...bind("dueDate", idOrNull)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") flush("dueDate");
+            }}
           />
         </Field>
 
         {issue.type !== "epic" ? (
           <Field label={parentLabel} htmlFor={ids.parent}>
-            <NativeSelect
-              id={ids.parent}
-              value={String(values.parent ?? "")}
-              onChange={(event) => void save("parent", event.target.value || null)}
-            >
+            <NativeSelect id={ids.parent} {...bind("parent", idOrNull)}>
               {/* ISS-3: a subtask always has a parent, so it cannot be cleared. */}
               {issue.type !== "subtask" ? <option value="">None</option> : null}
               {parentOptions.map((option) => (
@@ -236,11 +223,17 @@ function NumberField({
 }) {
   const [draft, setDraft] = useState(value === null ? "" : String(value));
   const [error, setError] = useState<string | null>(null);
+  // Follow the saved value (e.g. after a refresh) without remounting, which would drop focus.
+  const [seen, setSeen] = useState(value);
+  if (seen !== value) {
+    setSeen(value);
+    setDraft(value === null ? "" : String(value));
+  }
   const commit = () => {
     const trimmed = draft.trim();
     if (trimmed === "") {
       setError(null);
-      onSave(null);
+      if (value !== null) onSave(null);
       return;
     }
     const parsed = Number(trimmed);
@@ -249,7 +242,7 @@ function NumberField({
       return;
     }
     setError(null);
-    onSave(parsed);
+    if (parsed !== value) onSave(parsed);
   };
   return (
     <div>
@@ -290,6 +283,13 @@ function LabelsField({
   const [draft, setDraft] = useState("");
   const inputId = useId();
   const listId = useId();
+  // Follow server data after a refresh (e.g. someone else changed the labels).
+  const labelsKey = labels.map((label) => label.id).join(",");
+  const [seenKey, setSeenKey] = useState(labelsKey);
+  if (seenKey !== labelsKey) {
+    setSeenKey(labelsKey);
+    setShown(labels);
+  }
 
   async function add() {
     const name = draft.trim();

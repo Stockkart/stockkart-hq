@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -54,6 +54,7 @@ function Comments({ issueId, comments, projectKeys, currentUserId }: IssueTabsPr
   const [draft, setDraft] = useState<RichTextDoc | null>(null);
   const [composerKey, setComposerKey] = useState(0);
   const [pending, startTransition] = useTransition();
+  const region = useRef<HTMLDivElement>(null);
 
   function submit() {
     if (!draft || isEmptyDoc(draft) || pending) return;
@@ -69,17 +70,24 @@ function Comments({ issueId, comments, projectKeys, currentUserId }: IssueTabsPr
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div
+      ref={region}
+      tabIndex={-1}
+      aria-label="Comments"
+      role="region"
+      className="flex flex-col gap-4 outline-none"
+    >
       {comments.length === 0 ? (
         <p className="text-sm text-muted-foreground">No comments yet.</p>
       ) : (
-        <ol className="flex flex-col gap-4" aria-label="Comments">
+        <ol className="flex flex-col gap-4">
           {comments.map((comment) => (
             <CommentItem
               key={comment.id}
               comment={comment}
               projectKeys={projectKeys}
               own={comment.authorId === currentUserId}
+              onDeleted={() => region.current?.focus()}
             />
           ))}
         </ol>
@@ -114,17 +122,34 @@ function CommentItem({
   comment,
   projectKeys,
   own,
+  onDeleted,
 }: {
   comment: CommentView;
   projectKeys: string[];
   own: boolean;
+  /** Moves focus somewhere sensible once this item disappears. */
+  onDeleted: () => void;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(comment.body);
   const [draft, setDraft] = useState<RichTextDoc>(comment.body);
   const [pending, startTransition] = useTransition();
+  const editButton = useRef<HTMLButtonElement>(null);
   const author = comment.authorName ?? "Former user";
+  // Follow the server copy after a refresh, unless this comment is being edited.
+  const serverKey = JSON.stringify(comment.body);
+  const [seenKey, setSeenKey] = useState(serverKey);
+  if (seenKey !== serverKey && !editing) {
+    setSeenKey(serverKey);
+    setBody(comment.body);
+  }
+
+  /** Leaves edit mode and puts focus back on "Edit" (the editor is about to unmount). */
+  function close() {
+    setEditing(false);
+    requestAnimationFrame(() => editButton.current?.focus());
+  }
 
   function save() {
     if (isEmptyDoc(draft)) return;
@@ -135,7 +160,7 @@ function CommentItem({
       );
       if (result === null) return;
       setBody(next);
-      setEditing(false);
+      close();
       router.refresh();
     });
   }
@@ -144,7 +169,9 @@ function CommentItem({
     if (!window.confirm("Delete this comment?")) return;
     startTransition(async () => {
       const result = await callAction(() => deleteCommentAction({ commentId: comment.id }));
-      if (result !== null) router.refresh();
+      if (result === null) return;
+      onDeleted();
+      router.refresh();
     });
   }
 
@@ -161,6 +188,7 @@ function CommentItem({
           {own && !editing ? (
             <span className="ml-auto flex gap-1">
               <Button
+                ref={editButton}
                 variant="ghost"
                 size="sm"
                 className="h-7 px-2 text-xs"
@@ -192,10 +220,10 @@ function CommentItem({
               autoFocus
               onChange={setDraft}
               onSubmit={save}
-              onCancel={() => setEditing(false)}
+              onCancel={close}
             />
             <div className="flex justify-end gap-2">
-              <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>
+              <Button variant="ghost" size="sm" onClick={close}>
                 Cancel
               </Button>
               <Button size="sm" onClick={save} disabled={pending}>
