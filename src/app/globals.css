@@ -182,4 +182,28 @@
     content: attr(data-placeholder);
     @apply pointer-events-none float-left h-0 text-muted-foreground;
   }
+  /* Doc blocks (DOC-1): tables and callouts. */
+  .rich-text table {
+    @apply w-full border-collapse text-left;
+  }
+  .rich-text th,
+  .rich-text td {
+    @apply border px-2 py-1 align-top;
+  }
+  .rich-text th {
+    @apply bg-muted font-semibold;
+  }
+  .rich-text th > p,
+  .rich-text td > p {
+    @apply my-0;
+  }
+  .ProseMirror .selectedCell {
+    @apply bg-accent;
+  }
+  .rich-text aside[data-type="callout"] {
+    @apply rounded-md border-l-4 border-sky-500 bg-sky-500/10 px-3 py-2;
+  }
+  .rich-text aside[data-type="callout"][data-tone="warning"] {
+    @apply border-amber-500 bg-amber-500/10;
+  }
 }

@@ -1,6 +1,8 @@
 import { db, runAtomic } from "@/server/db/client";
 
 import { createCommentService } from "./comments";
+import { createDocQueries } from "./doc-queries";
+import { createDocService } from "./docs";
 import { createIssueQueries } from "./issue-queries";
 import { createIssueService } from "./issues";
 import { createPlanningService } from "./planning";
@@ -17,3 +19,5 @@ export const planningService = createPlanningService(db);
 export const planningQueries = createPlanningQueries(db);
 export const todoService = createTodoService(db);
 export const searchService = createSearchService(db);
+export const docService = createDocService(db, { runAtomic });
+export const docQueries = createDocQueries(db);

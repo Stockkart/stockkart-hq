@@ -91,4 +91,38 @@ describe("RichTextView (S-8, ISS-7)", () => {
     );
     expect(screen.getByText("No description.")).toBeInTheDocument();
   });
+
+  it("renders doc blocks: tables, callouts and mermaid source as text (DOC-1, DOC-7)", () => {
+    const { container } = render(
+      <RichTextView
+        projectKeys={["STK"]}
+        doc={doc(
+          {
+            type: "table",
+            content: [
+              {
+                type: "tableRow",
+                content: [
+                  {
+                    type: "tableHeader",
+                    content: [{ type: "paragraph", content: [{ type: "text", text: "H" }] }],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            type: "callout",
+            attrs: { tone: "warning" },
+            content: [{ type: "paragraph", content: [{ type: "text", text: "Careful" }] }],
+          },
+          { type: "mermaid", attrs: { source: "graph TD; A-->B<script>" } },
+        )}
+      />,
+    );
+    expect(container.querySelector("th")).toHaveTextContent("H");
+    expect(screen.getByRole("note")).toHaveAttribute("data-tone", "warning");
+    expect(container.querySelector("figure code")).toHaveTextContent("graph TD; A-->B<script>");
+    expect(container.querySelector("script")).toBeNull();
+  });
 });

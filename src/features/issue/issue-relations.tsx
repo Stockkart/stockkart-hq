@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, X } from "lucide-react";
+import { FileText, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useId, useState, useTransition } from "react";
@@ -8,6 +8,7 @@ import { useId, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { docPath, type LinkedDocView } from "@/lib/docs/views";
 import {
   type IssueType,
   LINK_RELATION_LABELS,
@@ -145,10 +146,12 @@ interface LinksProps {
   projectKey: string;
   links: LinkView[];
   mentions: MentionView[];
+  /** Docs that mention or link this issue (DOC-9). */
+  docs?: LinkedDocView[];
 }
 
 /** ISS-6 links, worded from this issue (inverse derived), plus where it is mentioned. */
-export function Links({ issueId, projectKey, links, mentions }: LinksProps) {
+export function Links({ issueId, projectKey, links, mentions, docs = [] }: LinksProps) {
   const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [relation, setRelation] = useState<LinkRelation>("blocks");
@@ -247,7 +250,7 @@ export function Links({ issueId, projectKey, links, mentions }: LinksProps) {
         </form>
       ) : null}
 
-      {visible.length === 0 && mentions.length === 0 ? (
+      {visible.length === 0 && mentions.length === 0 && docs.length === 0 ? (
         <p className="text-sm text-muted-foreground">No links.</p>
       ) : (
         <ul className="flex flex-col divide-y rounded-md border">
@@ -285,6 +288,22 @@ export function Links({ issueId, projectKey, links, mentions }: LinksProps) {
                     {mention.issue.key}
                   </span>
                   <span className="truncate">{mention.issue.title}</span>
+                </Link>
+              </span>
+            </li>
+          ))}
+          {docs.map((doc) => (
+            <li key={`doc-${doc.id}`} className="flex items-center gap-3 px-3 py-1.5 text-sm">
+              <span className="w-28 shrink-0 text-xs text-muted-foreground">
+                {doc.origin === "mention" ? "mentioned in doc" : "linked from doc"}
+              </span>
+              <span className="flex min-w-0 flex-1 items-center gap-2">
+                <FileText aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+                <Link
+                  href={docPath(projectKey, doc.id)}
+                  className="truncate rounded-sm outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                >
+                  {doc.title}
                 </Link>
               </span>
             </li>

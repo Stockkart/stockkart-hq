@@ -26,6 +26,8 @@ comments and commit bodies.
   Check the license of every new package (MIT, Apache-2.0, BSD or ISC; no GPL or paid add-ons).
   The editor is Tiptap rather than BlockNote because BlockNote is MPL-2.0;
   `fractional-indexing` is CC0-1.0 (public domain dedication), accepted explicitly.
+  DOMPurify is dual-licensed MPL-2.0 OR Apache-2.0; we use it under Apache-2.0. mermaid stays
+  on 11.x while CI runs Node 20 (12.x needs Node 22).
 
 ## Layout
 
@@ -33,8 +35,9 @@ comments and commit bodies.
 src/
   app/(auth)/login/       login page + client form
   app/(app)/              signed-in app shell (layout calls requirePageSession)
-  app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, and a "coming soon"
-                          [section] placeholder that real routes (backlog/, docs/ …) override
+  app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, docs/ (tree layout, list,
+                          docs/[id] editor), adrs/, and a "coming soon" [section]
+                          placeholder that real routes (backlog/ …) override
   app/api/auth/           Auth.js route handlers
   app/api/webhooks/github placeholder (501) until GH-1
   proxy.ts                default-deny gate (Next.js 16 name for middleware.ts)
@@ -43,13 +46,16 @@ src/
   server/actions/         server actions ("use server"), each starting with requireSession()
   server/services/        DB logic as factories (createIssueService(db) …); index.ts wires db
   server/db/              Drizzle schema, client, seed, AppDatabase type
-  lib/                    isomorphic code: constants, Zod input schemas, keys, rich text
-  features/               feature UI (shell/, issue/, editor/, later backlog/, board/, …)
-  features/editor/        shared Tiptap editor (client-only) and the safe JSON renderer
+  server/import/          handbook import (IMP-1…3), driven by scripts/import-handbook.ts
+  lib/                    isomorphic code: constants, Zod input schemas, keys, rich text,
+                          markdown → editor JSON (lib/markdown)
+  features/               feature UI (shell/, issue/, docs/, editor/, later backlog/, board/, …)
+  features/editor/        shared Tiptap editor (client-only; `variant="doc"` adds tables,
+                          callouts and Mermaid blocks) and the safe JSON renderer
   components/ui/          shadcn/ui components (owned code, edit freely)
   test/                   test fakes and the DB-test helpers
 drizzle/                  generated SQL migrations (committed)
-scripts/                  seed.ts (later import-handbook.ts)
+scripts/                  seed.ts, import-handbook.ts
 e2e/                      Playwright smoke tests
 ```
 
@@ -97,6 +103,10 @@ e2e/                      Playwright smoke tests
   ISO dates) in the same statement as the change; the UI resolves names.
 - Rich text is stored as editor JSON (`RichTextDoc`, validated by `richTextDocSchema`) plus
   plain text. Render it with `RichTextView`; never render stored HTML.
+- Docs use optimistic locking (§7.4): a content save is `UPDATE … WHERE version = base`
+  (`saveDoc` in `services/docs.ts`); losing returns the winner's copy, never overwrites.
+  Tree moves and deletes take a per-project advisory lock in the same transaction, so the
+  cycle check sees the tree as it is. Mermaid SVG is inserted only after DOMPurify (S-8).
 
 ## Adding a server action
 

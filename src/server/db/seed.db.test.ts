@@ -24,7 +24,7 @@ describeDb("seed (Postgres)", () => {
       projectCreated: true,
       componentsCreated: 5,
       statusesCreated: 7,
-      templatesUpserted: 4,
+      templatesUpserted: 17,
     });
 
     const second = await seed(db);
@@ -66,7 +66,21 @@ describeDb("seed (Postgres)", () => {
     const templateRows = await db
       .select({ subtype: templates.subtype })
       .from(templates)
+      .where(eq(templates.kind, "issue"))
       .orderBy(asc(templates.subtype));
     expect(templateRows.map((row) => row.subtype)).toEqual(["bug", "spike", "story", "tech_debt"]);
+
+    // DOC-5 / §6.1: all 13 doc templates, once each even after the second run.
+    const docTemplates = await db
+      .select({ subtype: templates.subtype, content: templates.content })
+      .from(templates)
+      .where(eq(templates.kind, "doc"));
+    expect(docTemplates).toHaveLength(13);
+    const adr = docTemplates.find((row) => row.subtype === "adr");
+    const headings = (adr?.content.content ?? [])
+      .filter((node) => node.type === "heading")
+      .map((node) => node.content?.[0]?.text);
+    // Mirrors engineering-handbook/decisions/0000-template.md.
+    expect(headings).toEqual(["Status", "Context", "Decision", "Consequences", "Evidence (paths)"]);
   });
 });
