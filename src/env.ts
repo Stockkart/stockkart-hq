@@ -60,6 +60,12 @@ export const envSchema = z.object({
   R2_SECRET_ACCESS_KEY: optionalString,
   R2_BUCKET: optionalString,
   GITHUB_WEBHOOK_SECRET: optionalString,
+  // Development aid: `1` logs database round trips per request (counts and timings only,
+  // never SQL text or parameters). Off unless set to exactly "1".
+  HQ_LOG_QUERIES: z
+    .string()
+    .optional()
+    .transform((value) => value === "1"),
 });
 
 export type Env = z.infer<typeof envSchema>;

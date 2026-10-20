@@ -15,13 +15,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import { RichTextView } from "@/features/editor/rich-text-view";
 import { callAction } from "@/features/issue/client-utils";
 import { DOC_TYPE_LABELS, type DocType, PICKABLE_DOC_TYPES } from "@/lib/docs/constants";
 import { DOC_TITLE_MAX } from "@/lib/docs/schemas";
 import { buildTree, descendantIds, flattenTree, siblingsOf } from "@/lib/docs/tree";
 import { docPath, type DocTemplateView, type DocTreeItem } from "@/lib/docs/views";
+import { preloader } from "@/lib/idle";
 import { cn } from "@/lib/utils";
 import {
   createAdrAction,
@@ -110,20 +111,18 @@ export function NewDocDialog({
             <label htmlFor={ids.type} className="text-sm font-medium">
               Type
             </label>
-            <NativeSelect
+            <Select
               id={ids.type}
+              label="Type"
               value={type}
-              onChange={(event) => {
-                const next = PICKABLE_DOC_TYPES.find((value) => value === event.target.value);
+              options={PICKABLE_DOC_TYPES.map((value) => ({
+                value,
+                label: DOC_TYPE_LABELS[value],
+              }))}
+              onChange={(next) => {
                 if (next) setType(next);
               }}
-            >
-              {PICKABLE_DOC_TYPES.map((value) => (
-                <option key={value} value={value}>
-                  {DOC_TYPE_LABELS[value]}
-                </option>
-              ))}
-            </NativeSelect>
+            />
           </div>
           <DialogFooter>
             <DialogClose asChild>
@@ -202,6 +201,22 @@ export function NewAdrDialog({
   );
 }
 
+/**
+ * DOC-5 templates, fetched once per page load and shared: the toolbar starts it when the
+ * browser is idle (or the pointer reaches the button), so the picker opens with its list.
+ * Templates are seed data that change with deploys, not while a page is open.
+ */
+const loadDocTemplates = preloader(async () => {
+  const result = await loadDocTemplatesAction();
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+});
+
+/** Warms the template list (errors are reported when the picker opens, not here). */
+export function preloadDocTemplates() {
+  loadDocTemplates().catch(() => {});
+}
+
 /** DOC-5 "New from template": pick a template, preview it, name the doc. */
 export function TemplatePickerDialog({
   open,
@@ -219,11 +234,13 @@ export function TemplatePickerDialog({
   useEffect(() => {
     if (!open || templates !== null) return;
     let cancelled = false;
-    void callAction(() => loadDocTemplatesAction()).then((loaded) => {
+    const show = (loaded: DocTemplateView[] | null) => {
       if (cancelled || !loaded) return;
       setTemplates(loaded);
       setSelectedId((current) => current ?? loaded[0]?.id ?? null);
-    });
+    };
+    // Normally already loaded; if the preload failed, ask again and report the error.
+    loadDocTemplates().then(show, () => void callAction(() => loadDocTemplatesAction()).then(show));
     return () => {
       cancelled = true;
     };
@@ -334,7 +351,6 @@ export function RenameDocDialog({
   onOpenChange,
   doc,
 }: DialogProps & { doc: { id: string; title: string } }) {
-  const router = useRouter();
   const [title, setTitle] = useState(doc.title);
   const [pending, startTransition] = useTransition();
   const titleId = useId();
@@ -344,7 +360,7 @@ export function RenameDocDialog({
       const result = await callAction(() => renameDocAction({ docId: doc.id, title }));
       if (!result) return;
       onOpenChange(false);
-      router.refresh();
+      // No router.refresh(): the action already re-rendered this page in its response.
     });
   }
 
@@ -391,7 +407,6 @@ export function MoveDocDialog({
   doc,
   docs,
 }: DialogProps & { doc: DocTreeItem; docs: DocTreeItem[] }) {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const ids = { parent: useId(), position: useId() };
   const known = new Set(docs.map((item) => item.id));
@@ -414,7 +429,7 @@ export function MoveDocDialog({
       const result = await callAction(() => moveDocAction({ docId: doc.id, parentId, index }));
       if (result === null) return;
       onOpenChange(false);
-      router.refresh();
+      // No router.refresh(): the action already re-rendered this page in its response.
     });
   }
 
@@ -436,38 +451,44 @@ export function MoveDocDialog({
             <label htmlFor={ids.parent} className="text-sm font-medium">
               Parent
             </label>
-            <NativeSelect
+            <Select
               id={ids.parent}
+              label="Parent"
               value={parentId ?? ROOT}
-              onChange={(event) => {
-                setParentId(event.target.value === ROOT ? null : event.target.value);
+              options={[
+                { value: ROOT, label: "Top level" },
+                ...parents.map(({ node, depth }) => ({
+                  value: node.id,
+                  label: node.title,
+                  // Indented by depth, like the tree.
+                  icon: <span className="inline-block" style={{ width: `${depth}rem` }} />,
+                })),
+              ]}
+              onChange={(next) => {
+                setParentId(next === ROOT || next === null ? null : next);
                 setIndex(0);
               }}
-            >
-              <option value={ROOT}>Top level</option>
-              {parents.map(({ node, depth }) => (
-                <option key={node.id} value={node.id}>
-                  {`${"\u00a0\u00a0".repeat(depth + 1)}${node.title}`}
-                </option>
-              ))}
-            </NativeSelect>
+            />
           </div>
           <div className="flex flex-col gap-1">
             <label htmlFor={ids.position} className="text-sm font-medium">
               Position
             </label>
-            <NativeSelect
+            <Select
               id={ids.position}
-              value={String(Math.min(index, siblings.length))}
-              onChange={(event) => setIndex(Number(event.target.value))}
-            >
-              <option value="0">First</option>
-              {siblings.map((sibling, i) => (
-                <option key={sibling.id} value={String(i + 1)}>
-                  After “{sibling.title}”
-                </option>
-              ))}
-            </NativeSelect>
+              label="Position"
+              value={Math.min(index, siblings.length)}
+              options={[
+                { value: 0, label: "First" },
+                ...siblings.map((sibling, i) => ({
+                  value: i + 1,
+                  label: `After “${sibling.title}”`,
+                })),
+              ]}
+              onChange={(next) => {
+                if (next !== null) setIndex(next);
+              }}
+            />
           </div>
           <DialogFooter>
             <DialogClose asChild>
@@ -499,7 +520,6 @@ export function DeleteDocDialog({
   /** Where to go afterwards, e.g. the docs list when the open doc was deleted. */
   afterDelete?: () => void;
 }) {
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -527,8 +547,8 @@ export function DeleteDocDialog({
                 if (result === null) return;
                 onOpenChange(false);
                 toast.success(`Deleted “${doc.title}”`);
-                if (afterDelete) afterDelete();
-                else router.refresh();
+                // Otherwise the action has already re-rendered this page.
+                afterDelete?.();
               })
             }
           >

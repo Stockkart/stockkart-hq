@@ -96,7 +96,9 @@ describe("DocTree", () => {
     await waitFor(() =>
       expect(actions.moveDocAction).toHaveBeenCalledWith({ docId: "d", parentId: "a", index: 1 }),
     );
-    await waitFor(() => expect(refresh).toHaveBeenCalled());
+    // The action re-renders the tree in its own response; no second fetch.
+    await waitFor(() => expect(screen.getByText(/Moved “D” into “A”/)).toBeInTheDocument());
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it("offers Move to… from the row menu (keyboard alternative)", async () => {
@@ -105,7 +107,8 @@ describe("DocTree", () => {
     await userEvent.click(screen.getByRole("menuitem", { name: "Move to…" }));
     const parent = await screen.findByRole("combobox", { name: "Parent" });
     expect(parent).toHaveTextContent("Top level");
-    await userEvent.selectOptions(parent, "b");
+    await userEvent.click(parent);
+    await userEvent.click(screen.getByRole("option", { name: "B" }));
     await userEvent.click(screen.getByRole("button", { name: "Move" }));
     await waitFor(() =>
       expect(actions.moveDocAction).toHaveBeenCalledWith({ docId: "d", parentId: "b", index: 0 }),
@@ -117,8 +120,9 @@ describe("DocTree", () => {
     await userEvent.click(screen.getByRole("button", { name: "Actions for A" }));
     await userEvent.click(screen.getByRole("menuitem", { name: "Move to…" }));
     const parent = await screen.findByRole("combobox", { name: "Parent" });
-    const options = [...parent.querySelectorAll("option")].map((option) => option.value);
-    expect(options).toEqual(["__root__", "d"]);
+    await userEvent.click(parent);
+    const options = screen.getAllByRole("option").map((option) => option.textContent);
+    expect(options).toEqual(["Top level", "D"]);
   });
 });
 

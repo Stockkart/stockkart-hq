@@ -15,9 +15,11 @@ import { compareSiblings, siblingsOf } from "@/lib/docs/tree";
 import { formatIssueKey, parseIssueKey } from "@/lib/issues/keys";
 import { emptyDoc, extractPlainText, type RichTextDoc } from "@/lib/rich-text";
 import { docs, issues, projects, templates, users } from "@/server/db/schema";
+import { directRead, type Read } from "@/server/db/read-batch";
 import { type AppDatabase, type RunAtomic } from "@/server/db/types";
 
 import { conflict, invalid, notFound, pgErrorInfo, UNIQUE_VIOLATION } from "./errors";
+import { allInOrder } from "./parallel";
 import {
   docRefs,
   jsonbOrNull,
@@ -62,6 +64,8 @@ export type SaveDocResult =
 export interface DocServiceOptions {
   /** Transactions of several statements (see `RunAtomic`). */
   runAtomic: RunAtomic;
+  /** How the validation reads run; on Neon, reads started together share a round trip. */
+  read?: Read;
   /** Test hook: runs between reading the next ADR number and the insert. */
   beforeAdrInsert?: () => Promise<void>;
 }
@@ -76,35 +80,41 @@ export interface DocServiceOptions {
  * other is about to change (A under B while B goes under A).
  */
 export function createDocService(db: AppDatabase, options: DocServiceOptions) {
+  const read = options.read ?? directRead;
+
   async function projectByKey(key: string) {
-    const [project] = await db
-      .select({ id: projects.id, key: projects.key })
-      .from(projects)
-      .where(and(eq(projects.key, key), isNull(projects.archivedAt)))
-      .limit(1);
+    const [project] = await read(
+      db
+        .select({ id: projects.id, key: projects.key })
+        .from(projects)
+        .where(and(eq(projects.key, key), isNull(projects.archivedAt)))
+        .limit(1),
+    );
     if (!project) throw notFound(`Project ${key}`);
     return project;
   }
 
   async function liveDoc(docId: string) {
-    const [doc] = await db
-      .select({
-        id: docs.id,
-        projectId: docs.projectId,
-        parentId: docs.parentId,
-        type: docs.type,
-        position: docs.position,
-        adrNumber: docs.adrNumber,
-      })
-      .from(docs)
-      .where(and(eq(docs.id, docId), isNull(docs.deletedAt)))
-      .limit(1);
+    const [doc] = await read(
+      db
+        .select({
+          id: docs.id,
+          projectId: docs.projectId,
+          parentId: docs.parentId,
+          type: docs.type,
+          position: docs.position,
+          adrNumber: docs.adrNumber,
+        })
+        .from(docs)
+        .where(and(eq(docs.id, docId), isNull(docs.deletedAt)))
+        .limit(1),
+    );
     if (!doc) throw notFound("Doc");
     return doc;
   }
 
   async function allProjectKeys(): Promise<string[]> {
-    const rows = await db.select({ key: projects.key }).from(projects);
+    const rows = await read(db.select({ key: projects.key }).from(projects));
     return rows.map((row) => row.key);
   }
 
@@ -128,11 +138,9 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
 
   async function checkUser(userId: string | null) {
     if (!userId) return;
-    const [row] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
+    const [row] = await read(
+      db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1),
+    );
     if (!row) throw notFound("User");
   }
 
@@ -343,9 +351,10 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
      * row lock taken by the update keeps other savers out until the sync commits.
      */
     async saveDoc(actorId: string, input: SaveDocData): Promise<SaveDocResult> {
-      const doc = await liveDoc(input.docId);
+      // Both reads in one round trip (autosave runs every few seconds while typing).
+      const [doc, projectKeys] = await allInOrder([liveDoc(input.docId), allProjectKeys()]);
       const text = extractPlainText(input.content);
-      const refs = docRefs(input.content, await allProjectKeys());
+      const refs = docRefs(input.content, projectKeys);
       // ADR titles always keep their own "NNNN. " prefix (ADR-1), whatever the client sent.
       const title =
         input.title !== undefined && doc.type === "adr" && doc.adrNumber !== null
@@ -434,7 +443,11 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
 
     /** DOC-3/DOC-4 and ADR-2 fields. */
     async updateMeta(actorId: string, input: UpdateDocMetaData): Promise<void> {
-      const doc = await liveDoc(input.docId);
+      // The doc and the new owner are read together; a missing doc is reported first.
+      const [doc] = await allInOrder([
+        liveDoc(input.docId),
+        input.field === "owner" ? checkUser(input.value) : Promise.resolve(),
+      ]);
       let set: SQL;
       let where: SQL = sql``;
       switch (input.field) {
@@ -447,7 +460,6 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
           set = sql`status = ${input.value}::doc_status`;
           break;
         case "owner":
-          await checkUser(input.value);
           set = sql`owner_id = ${uuidOrNull(input.value)}`;
           break;
         case "adrStatus": {

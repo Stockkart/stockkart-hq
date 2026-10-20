@@ -1,10 +1,11 @@
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 
+import { docTree } from "@/features/docs/doc-route";
 import { DocTree } from "@/features/docs/doc-tree";
+import { requireProject } from "@/features/issue/project-route";
 import { PROJECT_KEY_PATTERN } from "@/lib/issues/keys";
 import { requirePageSession } from "@/server/auth/require-session";
-import { docQueries, issueQueries } from "@/server/services";
 
 interface Props {
   children: ReactNode;
@@ -20,9 +21,8 @@ export default async function DocsLayout({ children, params }: Props) {
   // page does it (`loadProjectFromRoute`); the layout only needs the project.
   const key = decodeURIComponent(projectKey).toUpperCase();
   if (!PROJECT_KEY_PATTERN.test(key)) notFound();
-  const project = await issueQueries.getProject(key);
-  if (!project) notFound();
-  const tree = await docQueries.listTree(project.id);
+  // Both in the page's round trip: the page asks for the same two (cached per request).
+  const [project, tree] = await Promise.all([requireProject(key), docTree(key)]);
 
   return (
     <div className="mx-auto flex max-w-7xl gap-6">

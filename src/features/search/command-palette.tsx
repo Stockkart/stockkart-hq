@@ -231,6 +231,19 @@ export function CommandPalette({ defaultProjectKey }: { defaultProjectKey: strin
     }
   }, [activeId]);
 
+  // Prefetch where Enter would go, so the page shell is there the moment it is chosen
+  // (palette choices navigate with router.push: they are options, not links).
+  const activeOption = options[active];
+  const activeHref =
+    activeOption?.kind === "hit"
+      ? activeOption.hit.href
+      : activeOption?.kind === "go"
+        ? activeOption.href
+        : null;
+  useEffect(() => {
+    if (activeHref) router.prefetch(activeHref);
+  }, [activeHref, router]);
+
   function run(option: Option | undefined) {
     if (!option) return;
     onOpenChange(false);

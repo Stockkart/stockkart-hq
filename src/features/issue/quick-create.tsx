@@ -16,23 +16,22 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { NativeSelect } from "@/components/ui/native-select";
-import { LazyRichTextEditor } from "@/features/editor/lazy-rich-text-editor";
+import { Select } from "@/components/ui/select";
+import { LazyRichTextEditor, preloadRichTextEditor } from "@/features/editor/lazy-rich-text-editor";
 import {
   DEFAULT_PRIORITY,
-  ISSUE_TYPE_LABELS,
   ISSUE_TYPES,
   type IssueType,
   type Priority,
-  PRIORITIES,
-  PRIORITY_LABELS,
 } from "@/lib/issues/constants";
+import { whenIdle } from "@/lib/idle";
 import { PROJECT_KEY_PATTERN } from "@/lib/issues/keys";
 import { TITLE_MAX } from "@/lib/issues/schemas";
 import { isEmptyDoc, type RichTextDoc } from "@/lib/rich-text";
 import { createIssueAction, loadIssueTemplatesAction } from "@/server/actions/issues";
 import { promoteTodoAction } from "@/server/actions/todos";
 
+import { priorityOptions, typeOptions } from "./field-options";
 import { shouldIgnoreShortcut } from "./keyboard";
 import {
   isQuickCreateEvent,
@@ -42,10 +41,14 @@ import {
 
 /** Subtasks need a parent, so they are created from the parent issue instead. */
 const QUICK_CREATE_TYPES = ISSUE_TYPES.filter((type) => type !== "subtask");
+const TYPE_OPTIONS = typeOptions(QUICK_CREATE_TYPES);
+const PRIORITY_OPTIONS = priorityOptions();
 
 interface QuickCreateProps {
   /** Project used when the current page is not inside one. */
   defaultProjectKey: string;
+  /** Templates loaded with the page; without them they are fetched once, on idle. */
+  initialTemplates?: Partial<Record<IssueType, RichTextDoc>>;
 }
 
 /**
@@ -56,18 +59,23 @@ interface QuickCreateProps {
  * Other client code opens it pre-filled with `openQuickCreate()` (⌘K "Create bug", MY-3
  * "Promote to issue"); a promote request creates through `promoteTodoAction` instead.
  */
-export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
+export function QuickCreate({ defaultProjectKey, initialTemplates }: QuickCreateProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [type, setType] = useState<IssueType>("task");
   const [priority, setPriority] = useState<Priority>(DEFAULT_PRIORITY);
-  const [description, setDescription] = useState<RichTextDoc | null>(null);
+  // Starts from the default type's template when the templates came with the page.
+  const [description, setDescription] = useState<RichTextDoc | null>(
+    initialTemplates?.task ?? null,
+  );
   const [descriptionEdited, setDescriptionEdited] = useState(false);
   // Bumped to remount the editor with new initial content (template switch, reset).
   const [editorKey, setEditorKey] = useState(0);
-  const [templates, setTemplates] = useState<Partial<Record<IssueType, RichTextDoc>> | null>(null);
+  const [templates, setTemplates] = useState<Partial<Record<IssueType, RichTextDoc>> | null>(
+    initialTemplates ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const titleRef = useRef<HTMLInputElement>(null);
@@ -81,7 +89,11 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
   const projectKey = PROJECT_KEY_PATTERN.test(pathKey) ? pathKey : defaultProjectKey;
 
   // Latest values for the async template load below.
-  const current = useRef({ type, descriptionEdited, templatesRequested: false });
+  const current = useRef({
+    type,
+    descriptionEdited,
+    templatesRequested: initialTemplates !== undefined,
+  });
   useEffect(() => {
     current.current.type = type;
     current.current.descriptionEdited = descriptionEdited;
@@ -97,9 +109,12 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
     [],
   );
 
-  /** Opens the dialog; templates are fetched once, the first time. */
-  const openDialog = useCallback(() => {
-    setOpen(true);
+  /**
+   * Fetches the templates once. Called when the browser is idle after the page loads and
+   * when the pointer or focus reaches "Create", so opening the dialog needs no network.
+   */
+  const preload = useCallback(() => {
+    void preloadRichTextEditor().catch(() => {});
     if (current.current.templatesRequested) return;
     current.current.templatesRequested = true;
     loadIssueTemplatesAction()
@@ -113,6 +128,14 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
         current.current.templatesRequested = false;
       });
   }, [prefill]);
+
+  useEffect(() => whenIdle(preload), [preload]);
+
+  /** Opens at once; the templates are normally there already (see `preload`). */
+  const openDialog = useCallback(() => {
+    setOpen(true);
+    preload();
+  }, [preload]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -197,13 +220,20 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
       onCreated?.(result.data);
       reset();
       onOpenChange(false);
-      router.refresh();
+      // No router.refresh(): the action re-renders the open page in its own response.
     });
   }
 
   return (
     <>
-      <Button variant="outline" size="sm" onClick={openDialog} aria-keyshortcuts="C">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={openDialog}
+        onPointerEnter={preload}
+        onFocus={preload}
+        aria-keyshortcuts="C"
+      >
         <Plus aria-hidden="true" />
         Create
       </Button>
@@ -256,39 +286,29 @@ export function QuickCreate({ defaultProjectKey }: QuickCreateProps) {
             <div className="flex flex-wrap gap-3">
               <div className="flex min-w-36 flex-col gap-1.5">
                 <Label htmlFor={ids.type}>Type</Label>
-                <NativeSelect
+                <Select
                   id={ids.type}
+                  label="Type"
                   value={type}
-                  onChange={(event) => {
-                    const next = QUICK_CREATE_TYPES.find((t) => t === event.target.value);
+                  options={TYPE_OPTIONS}
+                  onChange={(next) => {
                     if (!next) return;
                     setType(next);
                     prefill(next, templates);
                   }}
-                >
-                  {QUICK_CREATE_TYPES.map((value) => (
-                    <option key={value} value={value}>
-                      {ISSUE_TYPE_LABELS[value]}
-                    </option>
-                  ))}
-                </NativeSelect>
+                />
               </div>
               <div className="flex min-w-36 flex-col gap-1.5">
                 <Label htmlFor={ids.priority}>Priority</Label>
-                <NativeSelect
+                <Select
                   id={ids.priority}
+                  label="Priority"
                   value={priority}
-                  onChange={(event) => {
-                    const next = PRIORITIES.find((p) => String(p) === event.target.value);
-                    if (next !== undefined) setPriority(next);
+                  options={PRIORITY_OPTIONS}
+                  onChange={(next) => {
+                    if (next !== null) setPriority(next);
                   }}
-                >
-                  {PRIORITIES.map((value) => (
-                    <option key={value} value={value}>
-                      {PRIORITY_LABELS[value]}
-                    </option>
-                  ))}
-                </NativeSelect>
+                />
               </div>
             </div>
 

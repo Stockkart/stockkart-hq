@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { loadProjectFromRoute } from "@/features/issue/project-route";
+import { requireProject, resolveProjectKey } from "@/features/issue/project-route";
 import { Backlog } from "@/features/planning/backlog";
 import { FilterBar } from "@/features/planning/filter-bar";
 import { GroupPicker } from "@/features/planning/group-picker";
@@ -15,6 +15,7 @@ import { sumPoints } from "@/lib/planning/groups";
 import { requirePageSession } from "@/server/auth/require-session";
 import { issueQueries, planningQueries } from "@/server/services";
 import { ISSUE_LIST_LIMIT } from "@/server/services/planning-queries";
+import { projectIdByKey } from "@/server/services/sql";
 
 interface Props {
   params: Promise<{ projectKey: string }>;
@@ -36,14 +37,17 @@ export default async function BacklogPage({ params, searchParams }: Props) {
   const group = parseBacklogGroup(raw);
   const preserved = { group: group === "none" ? undefined : group };
   const query = filtersToSearchParams(filters, preserved).toString();
-  const project = await loadProjectFromRoute(projectKey, `/backlog${query ? `?${query}` : ""}`);
-  const [issues, meta] = await Promise.all([
-    planningQueries.listIssues(project.id, {
+  const key = resolveProjectKey(projectKey, `/backlog${query ? `?${query}` : ""}`);
+  // One round trip: the queries find the project by key themselves.
+  const projectId = projectIdByKey(key);
+  const [project, issues, meta] = await Promise.all([
+    requireProject(key),
+    planningQueries.listIssues(projectId, {
       scope: "backlog",
       filters,
       currentUserId: session.user.id,
     }),
-    issueQueries.getProjectMeta(project.id),
+    issueQueries.getProjectMeta(projectId),
   ]);
   const openStatuses = meta.statuses.filter((status) => status.category !== "done");
 

@@ -23,6 +23,7 @@ vi.mock("sonner", () => ({ toast }));
 
 // The real editor is client-only and lazy; a textarea stands in for it here.
 vi.mock("@/features/editor/lazy-rich-text-editor", () => ({
+  preloadRichTextEditor: () => Promise.resolve(),
   LazyRichTextEditor: ({
     label,
     initialContent,
@@ -38,7 +39,10 @@ vi.mock("@/features/editor/lazy-rich-text-editor", () => ({
 
 const { QuickCreate } = await import("./quick-create");
 
-const bugTemplate = { type: "doc", content: [{ type: "heading" }, { type: "orderedList" }] };
+const bugTemplate = {
+  type: "doc" as const,
+  content: [{ type: "heading" }, { type: "orderedList" }],
+};
 
 describe("QuickCreate (ISS-4)", () => {
   beforeEach(() => {
@@ -88,14 +92,17 @@ describe("QuickCreate (ISS-4)", () => {
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith("STK-7 created", expect.anything()),
     );
-    expect(router.refresh).toHaveBeenCalled();
+    // The action re-renders the open page in its own response; a second fetch is waste.
+    expect(router.refresh).not.toHaveBeenCalled();
   });
 
   it("pre-fills the description from the chosen type's template", async () => {
     const user = userEvent.setup();
     render(<QuickCreate defaultProjectKey="STK" />);
     await user.click(screen.getByRole("button", { name: /create/i }));
-    await user.selectOptions(await screen.findByLabelText("Type"), "bug");
+    // Our own picker: open it and choose the option (keyboard and mouse both work).
+    await user.click(await screen.findByRole("combobox", { name: "Type" }));
+    await user.click(screen.getByRole("option", { name: "Bug" }));
     await waitFor(() =>
       expect(screen.getByTestId("editor")).toHaveTextContent("heading,orderedList"),
     );
@@ -151,11 +158,41 @@ describe("QuickCreate (ISS-4)", () => {
     expect(todoActions.promoteTodoAction).toHaveBeenCalledTimes(1);
   });
 
+  it("picks type and priority with the keyboard and creates with them", async () => {
+    const user = userEvent.setup();
+    render(<QuickCreate defaultProjectKey="STK" />);
+    await user.click(screen.getByRole("button", { name: /create/i }));
+    await user.type(await screen.findByLabelText("Title"), "Keyboard only");
+    screen.getByRole("combobox", { name: "Type" }).focus();
+    // Type-ahead to "Bug", Enter picks.
+    await user.keyboard("b{Enter}");
+    const priority = screen.getByRole("combobox", { name: "Priority" });
+    priority.focus();
+    await user.keyboard("{ArrowDown}{Home}{Enter}");
+    expect(priority).toHaveTextContent("P0 Critical");
+    await user.keyboard("{Control>}{Enter}{/Control}");
+    await waitFor(() =>
+      expect(actions.createIssueAction).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Keyboard only", type: "bug", priority: 0 }),
+      ),
+    );
+  });
+
+  it("uses templates loaded with the page, without a request", async () => {
+    const user = userEvent.setup();
+    render(<QuickCreate defaultProjectKey="STK" initialTemplates={{ bug: bugTemplate }} />);
+    await user.click(screen.getByRole("button", { name: /create/i }));
+    await user.click(await screen.findByRole("combobox", { name: "Type" }));
+    await user.click(screen.getByRole("option", { name: "Bug" }));
+    expect(screen.getByTestId("editor")).toHaveTextContent("heading,orderedList");
+    expect(actions.loadIssueTemplatesAction).not.toHaveBeenCalled();
+  });
+
   it("opens with a requested type, e.g. Create bug from ⌘K", async () => {
     const { openQuickCreate } = await import("./quick-create-events");
     render(<QuickCreate defaultProjectKey="STK" />);
     act(() => openQuickCreate({ type: "bug" }));
-    expect(await screen.findByLabelText("Type")).toHaveValue("bug");
+    expect(await screen.findByRole("combobox", { name: "Type" })).toHaveTextContent("Bug");
   });
 });
 

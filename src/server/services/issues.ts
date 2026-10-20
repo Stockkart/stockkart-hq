@@ -13,15 +13,19 @@ import {
 } from "@/lib/issues/schemas";
 import { extractPlainText, type RichTextDoc } from "@/lib/rich-text";
 import { components, issues, projects, statuses, users } from "@/server/db/schema";
+import { directRead, type Read } from "@/server/db/read-batch";
 import { type AppDatabase, type RunAtomic } from "@/server/db/types";
 
 import { conflict, invalid, notFound, pgErrorInfo, UNIQUE_VIOLATION } from "./errors";
+import { allInOrder } from "./parallel";
 import { parentProblem } from "./parent-rules";
 import {
   docRefs,
+  type IdRef,
   jsonbOrNull,
   mentionSyncCtes,
   mentionSyncStatement,
+  projectIdByKey,
   rowsOf,
   uuidOrNull,
 } from "./sql";
@@ -58,50 +62,56 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 export interface IssueServiceOptions {
   /** Transactions of several statements (see `RunAtomic`). */
   runAtomic: RunAtomic;
+  /** How the validation reads run; on Neon, reads started together share a round trip. */
+  read?: Read;
   /** Test hook: runs between reading the current top rank and the insert. */
   beforeInsert?: () => Promise<void>;
 }
 
 export function createIssueService(db: AppDatabase, options: IssueServiceOptions) {
+  const read = options.read ?? directRead;
+
   async function projectByKey(key: string) {
-    const [project] = await db
-      .select({ id: projects.id, key: projects.key })
-      .from(projects)
-      .where(and(eq(projects.key, key), isNull(projects.archivedAt)))
-      .limit(1);
+    const [project] = await read(
+      db
+        .select({ id: projects.id, key: projects.key })
+        .from(projects)
+        .where(and(eq(projects.key, key), isNull(projects.archivedAt)))
+        .limit(1),
+    );
     if (!project) throw notFound(`Project ${key}`);
     return project;
   }
 
   async function liveIssue(issueId: string) {
-    const [issue] = await db
-      .select({
-        id: issues.id,
-        projectId: issues.projectId,
-        number: issues.number,
-        type: issues.type,
-        projectKey: projects.key,
-      })
-      .from(issues)
-      .innerJoin(projects, eq(projects.id, issues.projectId))
-      .where(and(eq(issues.id, issueId), isNull(issues.deletedAt)))
-      .limit(1);
+    const [issue] = await read(
+      db
+        .select({
+          id: issues.id,
+          projectId: issues.projectId,
+          number: issues.number,
+          type: issues.type,
+          projectKey: projects.key,
+        })
+        .from(issues)
+        .innerJoin(projects, eq(projects.id, issues.projectId))
+        .where(and(eq(issues.id, issueId), isNull(issues.deletedAt)))
+        .limit(1),
+    );
     if (!issue) throw notFound("Issue");
     return issue;
   }
 
   async function allProjectKeys(): Promise<string[]> {
-    const rows = await db.select({ key: projects.key }).from(projects);
+    const rows = await read(db.select({ key: projects.key }).from(projects));
     return rows.map((row) => row.key);
   }
 
-  async function checkParentId(
-    child: { id?: string; projectId: string; type: IssueType },
-    parentId: string | null,
-  ) {
-    let parent = null;
-    if (parentId) {
-      const [row] = await db
+  /** The would-be parent (deleted ones included, for the message), or null for none. */
+  async function parentRow(parentId: string | null) {
+    if (!parentId) return null;
+    const [row] = await read(
+      db
         .select({
           id: issues.id,
           projectId: issues.projectId,
@@ -110,57 +120,82 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
         })
         .from(issues)
         .where(eq(issues.id, parentId))
-        .limit(1);
-      if (!row) throw notFound("Parent issue");
-      parent = row;
-    }
+        .limit(1),
+    );
+    if (!row) throw notFound("Parent issue");
+    return row;
+  }
+
+  function checkParent(
+    child: { id?: string; projectId: string; type: IssueType },
+    parent: Awaited<ReturnType<typeof parentRow>>,
+  ) {
     const problem = parentProblem(child, parent);
     if (problem) throw invalid(problem);
   }
 
   async function checkUser(userId: string | null) {
     if (!userId) return;
-    const [row] = await db
-      .select({ id: users.id })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
+    const [row] = await read(
+      db.select({ id: users.id }).from(users).where(eq(users.id, userId)).limit(1),
+    );
     if (!row) throw notFound("User");
   }
 
-  async function checkComponent(projectId: string, componentId: string | null) {
+  async function checkComponent(projectId: IdRef, componentId: string | null) {
     if (!componentId) return;
-    const [row] = await db
-      .select({ id: components.id })
-      .from(components)
-      .where(and(eq(components.id, componentId), eq(components.projectId, projectId)))
-      .limit(1);
+    const [row] = await read(
+      db
+        .select({ id: components.id })
+        .from(components)
+        .where(and(eq(components.id, componentId), eq(components.projectId, projectId)))
+        .limit(1),
+    );
     if (!row) throw notFound("Component");
   }
 
+  async function checkStatus(projectId: IdRef, statusId: string) {
+    const [status] = await read(
+      db
+        .select({ id: statuses.id })
+        .from(statuses)
+        .where(and(eq(statuses.id, statusId), eq(statuses.projectId, projectId)))
+        .limit(1),
+    );
+    if (!status) throw notFound("Status");
+  }
+
   /** §4.4: Triage for bugs, Backlog for everything else; else the first status. */
-  async function defaultStatusId(projectId: string, type: IssueType): Promise<string> {
+  async function defaultStatusId(projectId: IdRef, type: IssueType): Promise<string> {
     const wanted = type === "bug" ? "bug" : "other";
-    const rows = await db
-      .select({ id: statuses.id, isDefaultFor: statuses.isDefaultFor })
-      .from(statuses)
-      .where(eq(statuses.projectId, projectId))
-      .orderBy(asc(statuses.position));
+    const rows = await read(
+      db
+        .select({ id: statuses.id, isDefaultFor: statuses.isDefaultFor })
+        .from(statuses)
+        .where(eq(statuses.projectId, projectId))
+        .orderBy(asc(statuses.position)),
+    );
     const status = rows.find((row) => row.isDefaultFor === wanted) ?? rows[0];
     if (!status) throw invalid("The project has no statuses; run the seed first");
     return status.id;
   }
 
-  async function topRank(projectId: string): Promise<string | null> {
+  async function topRank(projectId: IdRef): Promise<string | null> {
     // Deleted issues keep their rank, and ranks are unique per project, so include them.
-    const [row] = await db
-      .select({ rank: issues.rank })
-      .from(issues)
-      .where(eq(issues.projectId, projectId))
-      .orderBy(asc(issues.rank))
-      .limit(1);
+    const [row] = await read(
+      db
+        .select({ rank: issues.rank })
+        .from(issues)
+        .where(eq(issues.projectId, projectId))
+        .orderBy(asc(issues.rank))
+        .limit(1),
+    );
     return row?.rank ?? null;
   }
+
+  /** The project of a (live or not) issue, as a subquery for checks that run with it. */
+  const projectOfIssue = (issueId: string) =>
+    sql`(SELECT project_id FROM issues WHERE id = ${issueId}::uuid)`;
 
   return {
     /**
@@ -189,19 +224,25 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
       input: CreateIssueData,
       extra: CreateIssueExtra = {},
     ): Promise<CreatedIssue> {
-      const project = await projectByKey(input.projectKey);
       const parentId = input.parentId ?? null;
       const assigneeId = input.assigneeId ?? null;
       const componentId = input.componentId ?? null;
-      await Promise.all([
-        checkParentId({ projectId: project.id, type: input.type }, parentId),
+      // Every check and lookup in one batched round trip; the project is referenced by key,
+      // so nothing waits for it. Errors keep the old order (project first).
+      const projectRef = projectIdByKey(input.projectKey);
+      const [project, parent, , , statusId, projectKeys, firstTopRank] = await allInOrder([
+        projectByKey(input.projectKey),
+        parentRow(parentId),
         checkUser(assigneeId),
-        checkComponent(project.id, componentId),
+        checkComponent(projectRef, componentId),
+        defaultStatusId(projectRef, input.type),
+        allProjectKeys(),
+        topRank(projectRef),
       ]);
-      const statusId = await defaultStatusId(project.id, input.type);
+      checkParent({ projectId: project.id, type: input.type }, parent);
       const description = input.description ?? null;
       const descriptionText = description ? extractPlainText(description) : "";
-      const refs = docRefs(description, await allProjectKeys());
+      const refs = docRefs(description, projectKeys);
       const todoId = extra.promoteTodoId ?? null;
       const todoLock = todoId
         ? sql`todo_lock AS (
@@ -221,7 +262,11 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
 
       for (let attempt = 1; ; attempt += 1) {
         const id = crypto.randomUUID();
-        const rank = generateKeyBetween(null, await topRank(project.id));
+        // The first attempt uses the top rank read with the checks above.
+        const rank = generateKeyBetween(
+          null,
+          attempt === 1 ? firstTopRank : await topRank(project.id),
+        );
         await options.beforeInsert?.();
         try {
           const result = await db.execute(sql`
@@ -288,7 +333,34 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
      * transaction (see `mentionSyncCtes` for why it cannot be part of the first).
      */
     async updateIssueField(actorId: string, input: UpdateIssueFieldData): Promise<FieldChange> {
-      const issue = await liveIssue(input.issueId);
+      // The issue and the field's own check are read together (one round trip); the check
+      // finds the issue's project with a subquery. A missing issue is reported first.
+      const projectRef = projectOfIssue(input.issueId);
+      const [issue, checked] = await allInOrder([
+        liveIssue(input.issueId),
+        (async (): Promise<{
+          projectKeys?: string[];
+          parent?: Awaited<ReturnType<typeof parentRow>>;
+        }> => {
+          switch (input.field) {
+            case "description":
+              return { projectKeys: await allProjectKeys() };
+            case "status":
+              await checkStatus(projectRef, input.value);
+              return {};
+            case "assignee":
+              await checkUser(input.value);
+              return {};
+            case "component":
+              await checkComponent(projectRef, input.value);
+              return {};
+            case "parent":
+              return { parent: await parentRow(input.value) };
+            default:
+              return {};
+          }
+        })(),
+      ]);
       let column: string;
       let value: SQL;
       let alsoSet: SQL = sql``;
@@ -311,19 +383,13 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
           mentionSync = mentionSyncStatement({
             fromType: "issue",
             fromId: issue.id,
-            refs: docRefs(doc, await allProjectKeys()),
+            refs: docRefs(doc, checked.projectKeys ?? []),
             actorId,
             gate: sql`EXISTS (SELECT 1 FROM issues WHERE id = ${issue.id}::uuid AND deleted_at IS NULL)`,
           });
           break;
         }
         case "status": {
-          const [status] = await db
-            .select({ id: statuses.id })
-            .from(statuses)
-            .where(and(eq(statuses.id, input.value), eq(statuses.projectId, issue.projectId)))
-            .limit(1);
-          if (!status) throw notFound("Status");
           column = "status_id";
           value = sql`${input.value}::uuid`;
           // §4.4: entering a done-category status sets resolved_at (kept when moving
@@ -340,12 +406,10 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
           value = sql`${input.value}::smallint`;
           break;
         case "assignee":
-          await checkUser(input.value);
           column = "assignee_id";
           value = uuidOrNull(input.value);
           break;
         case "component":
-          await checkComponent(issue.projectId, input.value);
           column = "component_id";
           value = uuidOrNull(input.value);
           break;
@@ -358,7 +422,7 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
           value = sql`${input.value}::date`;
           break;
         case "parent":
-          await checkParentId(issue, input.value);
+          checkParent(issue, checked.parent ?? null);
           column = "parent_id";
           value = uuidOrNull(input.value);
           // Re-checked at write time: the parent may have been deleted since the check.
@@ -467,21 +531,28 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
      * its own viewpoint ("blocks" on one, "is blocked by" on the other).
      */
     async addLink(actorId: string, input: AddLinkData): Promise<{ linkId: string }> {
-      const issue = await liveIssue(input.issueId);
       const ref = parseIssueKey(input.targetKey);
+      // Both lookups in one round trip; a missing source issue is reported first.
+      const [issue, [target]] = await allInOrder([
+        liveIssue(input.issueId),
+        ref
+          ? read(
+              db
+                .select({ id: issues.id })
+                .from(issues)
+                .innerJoin(projects, eq(projects.id, issues.projectId))
+                .where(
+                  and(
+                    eq(projects.key, ref.projectKey),
+                    eq(issues.number, ref.number),
+                    isNull(issues.deletedAt),
+                  ),
+                )
+                .limit(1),
+            )
+          : Promise.resolve([]),
+      ]);
       if (!ref) throw invalid("Enter an issue key such as STK-12");
-      const [target] = await db
-        .select({ id: issues.id })
-        .from(issues)
-        .innerJoin(projects, eq(projects.id, issues.projectId))
-        .where(
-          and(
-            eq(projects.key, ref.projectKey),
-            eq(issues.number, ref.number),
-            isNull(issues.deletedAt),
-          ),
-        )
-        .limit(1);
       if (!target) throw notFound(formatIssueKey(ref.projectKey, ref.number));
       if (target.id === issue.id) throw invalid("An issue cannot link to itself");
 

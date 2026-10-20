@@ -8,9 +8,9 @@ export type FieldValue = string | number | null;
  * Optimistic, ordered saving for a set of independent fields (the issue side panel).
  *
  * - A change shows at once (a local override) and is saved after `delayMs` of quiet, or
- *   right away on blur (`flush`) or when `immediate`. Stepping through a native <select>
- *   with the arrow keys (which fires `change` per step on Windows) or typing a date digit by
- *   digit therefore results in one save, not one per step.
+ *   right away on blur (`flush`) or when `immediate`. Typing a date digit by digit (or
+ *   stepping through values with the arrow keys) therefore results in one save, not one per
+ *   step. A pick in one of our pickers is a single deliberate choice and saves `immediate`.
  * - Saves of the same field run one after another, so an older response can never land
  *   after, or undo, a newer one.
  * - On failure the override is dropped and the server value shows again (the caller reports

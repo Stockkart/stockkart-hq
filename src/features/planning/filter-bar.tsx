@@ -5,21 +5,16 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useId, useOptimistic, useRef, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { MultiSelect, type OptionValue, type SelectOption } from "@/components/ui/select";
 import {
-  ISSUE_TYPE_LABELS,
-  ISSUE_TYPES,
-  PRIORITIES,
-  PRIORITY_LABELS,
-} from "@/lib/issues/constants";
+  labelOptions,
+  priorityOptions,
+  statusOptions,
+  typeOptions,
+  userOptions,
+} from "@/features/issue/field-options";
+import { ISSUE_TYPES } from "@/lib/issues/constants";
 import {
   ASSIGNEE_ME,
   ASSIGNEE_NONE,
@@ -127,10 +122,10 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
     );
   }
 
-  const assigneeOptions = [
+  const assigneeOptions: SelectOption<string>[] = [
     { value: ASSIGNEE_ME, label: "Me" },
     { value: ASSIGNEE_NONE, label: "Unassigned" },
-    ...options.users.map((user) => ({ value: user.id, label: user.name })),
+    ...userOptions(options.users),
   ];
 
   return (
@@ -163,7 +158,7 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
       </div>
       <MultiFilter
         label="Type"
-        options={ISSUE_TYPES.map((value) => ({ value, label: ISSUE_TYPE_LABELS[value] }))}
+        options={typeOptions(ISSUE_TYPES)}
         selected={shown.types}
         onToggle={(value, on) =>
           update((current) => ({ ...current, types: toggled(current.types, value, on) }))
@@ -171,7 +166,7 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
       />
       <MultiFilter
         label="Status"
-        options={options.statuses.map((status) => ({ value: status.id, label: status.name }))}
+        options={statusOptions(options.statuses)}
         selected={shown.statuses}
         onToggle={(value, on) =>
           update((current) => ({ ...current, statuses: toggled(current.statuses, value, on) }))
@@ -179,7 +174,7 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
       />
       <MultiFilter
         label="Priority"
-        options={PRIORITIES.map((value) => ({ value, label: PRIORITY_LABELS[value] }))}
+        options={priorityOptions()}
         selected={shown.priorities}
         onToggle={(value, on) =>
           update((current) => ({ ...current, priorities: toggled(current.priorities, value, on) }))
@@ -206,7 +201,7 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
       />
       <MultiFilter
         label="Label"
-        options={options.labels.map((label) => ({ value: label.id, label: label.name }))}
+        options={labelOptions(options.labels)}
         selected={shown.labels}
         onToggle={(value, on) =>
           update((current) => ({ ...current, labels: toggled(current.labels, value, on) }))
@@ -228,26 +223,31 @@ function toggled<T>(values: T[], value: T, on: boolean): T[] {
   return on ? [...without, value] : without;
 }
 
-function MultiFilter<T extends string | number>({
+/** One filter dimension: any of the picked values (OR), as a compact multi-select. */
+function MultiFilter<T extends OptionValue>({
   label,
   options,
   selected,
   onToggle,
 }: {
   label: string;
-  options: { value: T; label: string }[];
+  options: SelectOption<T>[];
   selected: T[];
   onToggle: (value: T, on: boolean) => void;
 }) {
   const names = options.filter((option) => selected.includes(option.value)).map((o) => o.label);
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant={selected.length > 0 ? "secondary" : "outline"}
-          size="sm"
-          aria-label={selected.length > 0 ? `${label}: ${names.join(", ")}` : `${label}: any`}
-        >
+    <MultiSelect
+      variant="chip"
+      label={label}
+      aria-label={selected.length > 0 ? `${label}: ${names.join(", ")}` : `${label}: any`}
+      className={selected.length > 0 ? "border-transparent bg-secondary" : undefined}
+      value={selected}
+      options={options}
+      onChange={(_next, change) => onToggle(change.value, change.selected)}
+    >
+      {() => (
+        <>
           {label}
           {selected.length > 0 ? (
             <span className="rounded bg-background px-1 text-xs tabular-nums">
@@ -255,27 +255,8 @@ function MultiFilter<T extends string | number>({
             </span>
           ) : null}
           <ChevronDown aria-hidden="true" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-48">
-        <DropdownMenuLabel>{label}</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {options.length === 0 ? (
-          <p className="px-2 py-1.5 text-sm text-muted-foreground">None yet</p>
-        ) : (
-          options.map((option) => (
-            <DropdownMenuCheckboxItem
-              key={String(option.value)}
-              checked={selected.includes(option.value)}
-              // Keep the menu open so several values can be picked in a row.
-              onSelect={(event) => event.preventDefault()}
-              onCheckedChange={(checked) => onToggle(option.value, checked)}
-            >
-              {option.label}
-            </DropdownMenuCheckboxItem>
-          ))
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+        </>
+      )}
+    </MultiSelect>
   );
 }

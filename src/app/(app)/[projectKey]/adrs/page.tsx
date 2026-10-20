@@ -2,9 +2,10 @@ import type { Metadata } from "next";
 
 import { AdrLog } from "@/features/docs/adr-log";
 import { DocsToolbar } from "@/features/docs/docs-toolbar";
-import { loadProjectFromRoute } from "@/features/issue/project-route";
+import { requireProject, resolveProjectKey } from "@/features/issue/project-route";
 import { requirePageSession } from "@/server/auth/require-session";
 import { docQueries, issueQueries } from "@/server/services";
+import { projectIdByKey } from "@/server/services/sql";
 
 interface Props {
   params: Promise<{ projectKey: string }>;
@@ -20,9 +21,11 @@ export default async function AdrsPage({ params }: Props) {
   // Layouts and pages render in parallel, so each page checks the session itself too.
   await requirePageSession();
   const { projectKey } = await params;
-  const project = await loadProjectFromRoute(projectKey, "/adrs");
-  const [rows, projectKeys] = await Promise.all([
-    docQueries.listAdrs(project.id),
+  const key = resolveProjectKey(projectKey, "/adrs");
+  // One round trip: the queries find the project by key themselves.
+  const [project, rows, projectKeys] = await Promise.all([
+    requireProject(key),
+    docQueries.listAdrs(projectIdByKey(key)),
     issueQueries.listProjectKeys(),
   ]);
 

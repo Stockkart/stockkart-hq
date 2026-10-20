@@ -1,12 +1,12 @@
 "use client";
 
 import { X } from "lucide-react";
-import { type ChangeEvent, type ReactNode, useId, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
-import { PRIORITIES, PRIORITY_LABELS } from "@/lib/issues/constants";
+import { MultiSelect, Select } from "@/components/ui/select";
+import { PRIORITIES } from "@/lib/issues/constants";
 import { type IssueField, LABEL_MAX } from "@/lib/issues/schemas";
 import {
   type IssueDetail,
@@ -17,6 +17,14 @@ import {
 import { addLabelAction, removeLabelAction, updateIssueFieldAction } from "@/server/actions/issues";
 
 import { callAction, RelativeTime } from "./client-utils";
+import {
+  issueOptions,
+  LabelDot,
+  labelOptions,
+  priorityOptions,
+  statusOptions,
+  userOptions,
+} from "./field-options";
 import { type FieldValue, useFieldSaver } from "./use-field-saver";
 
 interface IssueFieldsProps {
@@ -32,7 +40,8 @@ type PanelField = Exclude<IssueField, "title" | "description">;
 /**
  * §5.4 side panel (ISS-5). Each control saves its own field (§9.4: last write wins per
  * field). Updates are optimistic and ordered (see `useFieldSaver`); the server then refreshes
- * the page, so activity stays current and edits by others show up.
+ * the page, so activity stays current and edits by others show up. A pick in a picker is one
+ * deliberate choice, so it saves at once; the date input keeps the debounced save.
  */
 export function IssueFields({ issue, meta, parentOptions, currentUserId }: IssueFieldsProps) {
   const serverValues: Record<PanelField, FieldValue> = {
@@ -58,18 +67,16 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
     points: useId(),
     due: useId(),
     parent: useId(),
+    labels: useId(),
   };
 
-  /** Props for a native select bound to a field: change (debounced) and flush on blur. */
-  const bind = (field: PanelField, parse: (raw: string) => FieldValue | undefined) => ({
-    value: String(valueOf(field) ?? ""),
-    onChange: (event: ChangeEvent<HTMLSelectElement | HTMLInputElement>) => {
-      const next = parse(event.target.value);
-      if (next !== undefined) change(field, next);
-    },
-    onBlur: () => flush(field),
-  });
-  const idOrNull = (raw: string) => raw || null;
+  /** A picker's value for a field holding an id. */
+  const idOf = (field: PanelField) => {
+    const value = valueOf(field);
+    return typeof value === "string" ? value : null;
+  };
+  const pick = (field: PanelField, value: FieldValue) => change(field, value, { immediate: true });
+  const priority = PRIORITIES.find((p) => p === valueOf("priority")) ?? null;
 
   const parentLabel = issue.type === "subtask" ? "Parent" : "Epic";
   const assignee = valueOf("assignee");
@@ -79,38 +86,40 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
     <aside aria-label="Issue details" className="flex flex-col gap-4 text-sm">
       <dl className="grid grid-cols-[6.5rem_1fr] items-center gap-x-3 gap-y-2.5">
         <Field label="Status" htmlFor={ids.status}>
-          <NativeSelect id={ids.status} {...bind("status", (raw) => raw || undefined)}>
-            {meta.statuses.map((status) => (
-              <option key={status.id} value={status.id}>
-                {status.name}
-              </option>
-            ))}
-          </NativeSelect>
+          <Select
+            id={ids.status}
+            label="Status"
+            value={idOf("status")}
+            options={statusOptions(meta.statuses)}
+            onChange={(value) => {
+              if (value) pick("status", value);
+            }}
+          />
         </Field>
 
         <Field label="Priority" htmlFor={ids.priority}>
-          <NativeSelect
+          <Select
             id={ids.priority}
-            {...bind("priority", (raw) => PRIORITIES.find((p) => String(p) === raw))}
-          >
-            {PRIORITIES.map((priority) => (
-              <option key={priority} value={priority}>
-                {PRIORITY_LABELS[priority]}
-              </option>
-            ))}
-          </NativeSelect>
+            label="Priority"
+            value={priority}
+            options={priorityOptions()}
+            onChange={(value) => {
+              if (value !== null) pick("priority", value);
+            }}
+          />
         </Field>
 
         <Field label="Assignee" htmlFor={ids.assignee}>
           <div className="flex items-center gap-1">
-            <NativeSelect id={ids.assignee} className="flex-1" {...bind("assignee", idOrNull)}>
-              <option value="">Unassigned</option>
-              {meta.users.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.name}
-                </option>
-              ))}
-            </NativeSelect>
+            <Select
+              id={ids.assignee}
+              label="Assignee"
+              className="flex-1"
+              value={idOf("assignee")}
+              options={userOptions(meta.users)}
+              clearLabel="Unassigned"
+              onChange={(value) => pick("assignee", value)}
+            />
             {assignee !== currentUserId ? (
               <Button
                 variant="ghost"
@@ -125,18 +134,26 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
         </Field>
 
         <Field label="Component" htmlFor={ids.component}>
-          <NativeSelect id={ids.component} {...bind("component", idOrNull)}>
-            <option value="">None</option>
-            {meta.components.map((component) => (
-              <option key={component.id} value={component.id}>
-                {component.name}
-              </option>
-            ))}
-          </NativeSelect>
+          <Select
+            id={ids.component}
+            label="Component"
+            value={idOf("component")}
+            options={meta.components.map((component) => ({
+              value: component.id,
+              label: component.name,
+            }))}
+            clearLabel="None"
+            onChange={(value) => pick("component", value)}
+          />
         </Field>
 
-        <Field label="Labels">
-          <LabelsField issueId={issue.id} labels={issue.labels} projectLabels={meta.labels} />
+        <Field label="Labels" htmlFor={ids.labels}>
+          <LabelsField
+            id={ids.labels}
+            issueId={issue.id}
+            labels={issue.labels}
+            projectLabels={meta.labels}
+          />
         </Field>
 
         <Field label="Points" htmlFor={ids.points}>
@@ -152,7 +169,10 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
             id={ids.due}
             type="date"
             className="h-8"
-            {...bind("dueDate", idOrNull)}
+            // Typing a date digit by digit: debounced, saved at once on blur (useFieldSaver).
+            value={idOf("dueDate") ?? ""}
+            onChange={(event) => change("dueDate", event.target.value || null)}
+            onBlur={() => flush("dueDate")}
             onKeyDown={(event) => {
               if (event.key === "Enter") flush("dueDate");
             }}
@@ -161,15 +181,16 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
 
         {issue.type !== "epic" ? (
           <Field label={parentLabel} htmlFor={ids.parent}>
-            <NativeSelect id={ids.parent} {...bind("parent", idOrNull)}>
-              {/* ISS-3: a subtask always has a parent, so it cannot be cleared. */}
-              {issue.type !== "subtask" ? <option value="">None</option> : null}
-              {parentOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.key} {option.title}
-                </option>
-              ))}
-            </NativeSelect>
+            <Select
+              id={ids.parent}
+              label={parentLabel}
+              value={idOf("parent")}
+              options={issueOptions(parentOptions)}
+              // ISS-3: a subtask always has a parent, so it cannot be cleared.
+              clearLabel={issue.type !== "subtask" ? "None" : undefined}
+              placeholder="Choose a parent…"
+              onChange={(value) => pick("parent", value)}
+            />
           </Field>
         ) : null}
       </dl>
@@ -270,19 +291,25 @@ function NumberField({
   );
 }
 
+/** Lower case, spaces as dashes: how the server stores label names (ISS-5). */
+const labelName = (text: string) => text.trim().replace(/\s+/g, "-").toLowerCase();
+
+/**
+ * Labels: chips (each removable) and a multi-select to toggle or create labels. Every change
+ * is optimistic: it shows at once and is rolled back if the server refuses.
+ */
 function LabelsField({
+  id,
   issueId,
   labels,
   projectLabels,
 }: {
+  id: string;
   issueId: string;
   labels: LabelView[];
   projectLabels: LabelView[];
 }) {
   const [shown, setShown] = useState(labels);
-  const [draft, setDraft] = useState("");
-  const inputId = useId();
-  const listId = useId();
   // Follow server data after a refresh (e.g. someone else changed the labels).
   const labelsKey = labels.map((label) => label.id).join(",");
   const [seenKey, setSeenKey] = useState(labelsKey);
@@ -290,30 +317,31 @@ function LabelsField({
     setSeenKey(labelsKey);
     setShown(labels);
   }
+  // Labels created here are not in the project list until the page refreshes.
+  const known = [
+    ...projectLabels,
+    ...shown.filter((l) => !projectLabels.some((p) => p.id === l.id)),
+  ];
+  const sorted = (list: LabelView[]) => [...list].sort((a, b) => a.name.localeCompare(b.name));
 
-  async function add() {
-    const name = draft.trim();
-    if (!name) return;
-    setDraft("");
+  async function add(name: string, existing?: LabelView) {
+    const optimistic = existing ?? { id: `new:${name}`, name, color: null };
+    if (shown.some((label) => label.name === name)) return;
+    setShown((current) => sorted([...current, optimistic]));
     const result = await callAction(() => addLabelAction({ issueId, name }));
-    if (result === null) {
-      setDraft(name);
-      return;
-    }
-    const normalised = name.replace(/\s+/g, "-").toLowerCase();
-    setShown((current) =>
-      current.some((label) => label.id === result.labelId)
-        ? current
-        : [...current, { id: result.labelId, name: normalised, color: null }].sort((a, b) =>
-            a.name.localeCompare(b.name),
-          ),
-    );
+    setShown((current) => {
+      const without = current.filter((label) => label.id !== optimistic.id);
+      if (result === null) return without;
+      return without.some((label) => label.id === result.labelId)
+        ? without
+        : sorted([...without, { ...optimistic, id: result.labelId }]);
+    });
   }
 
   async function remove(label: LabelView) {
     setShown((current) => current.filter((item) => item.id !== label.id));
     const result = await callAction(() => removeLabelAction({ issueId, labelId: label.id }));
-    if (result === null) setShown((current) => [...current, label]);
+    if (result === null) setShown((current) => sorted([...current, label]));
   }
 
   return (
@@ -323,14 +351,16 @@ function LabelsField({
           {shown.map((label) => (
             <li
               key={label.id}
-              className="inline-flex items-center gap-0.5 rounded-full border bg-secondary py-0.5 pr-0.5 pl-2 text-xs"
+              className="inline-flex items-center gap-1 rounded-full border bg-secondary py-0.5 pr-0.5 pl-2 text-xs"
             >
+              <LabelDot color={label.color} />
               {label.name}
               <button
                 type="button"
                 aria-label={`Remove label ${label.name}`}
+                disabled={label.id.startsWith("new:")}
                 onClick={() => void remove(label)}
-                className="rounded-full p-0.5 outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                className="rounded-full p-0.5 outline-none hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-50"
               >
                 <X aria-hidden="true" className="size-3" />
               </button>
@@ -338,31 +368,30 @@ function LabelsField({
           ))}
         </ul>
       ) : null}
-      <label htmlFor={inputId} className="sr-only">
-        Add label
-      </label>
-      <Input
-        id={inputId}
-        list={listId}
-        className="h-8"
-        placeholder="Add label…"
-        maxLength={LABEL_MAX}
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            void add();
-          }
+      <MultiSelect
+        id={id}
+        label="Labels"
+        value={shown.map((label) => label.id)}
+        options={labelOptions(known)}
+        searchable
+        onCreate={(text) => void add(labelName(text))}
+        createMaxLength={LABEL_MAX}
+        createLabel={(text) => `Create label “${labelName(text)}”`}
+        onChange={(_next, { value, selected }) => {
+          const label = known.find((item) => item.id === value);
+          if (!label) return;
+          if (selected) void add(label.name, label);
+          else void remove(label);
         }}
-      />
-      <datalist id={listId}>
-        {projectLabels
-          .filter((label) => !shown.some((item) => item.id === label.id))
-          .map((label) => (
-            <option key={label.id} value={label.name} />
-          ))}
-      </datalist>
+      >
+        {() => (
+          <>
+            <span className="truncate text-muted-foreground">
+              {shown.length > 0 ? "Add or remove…" : "Add label…"}
+            </span>
+          </>
+        )}
+      </MultiSelect>
     </div>
   );
 }

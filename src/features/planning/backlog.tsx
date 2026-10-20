@@ -20,11 +20,12 @@ import { ChevronRight, GripVertical } from "lucide-react";
 import Link from "next/link";
 import { useId, useOptimistic, useRef, useState, useTransition } from "react";
 
-import { NativeSelect } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import { callAction } from "@/features/issue/client-utils";
+import { priorityOptions, userOptions } from "@/features/issue/field-options";
 import { IssueTypeIcon } from "@/features/issue/issue-badges";
 import { type FieldValue, useFieldSaver } from "@/features/issue/use-field-saver";
-import { PRIORITIES, PRIORITY_LABELS } from "@/lib/issues/constants";
+import { PRIORITIES } from "@/lib/issues/constants";
 import { type BacklogGroup } from "@/lib/issues/filters";
 import { type NamedOption, type PlanningIssue } from "@/lib/issues/views";
 import { groupIssues } from "@/lib/planning/groups";
@@ -248,6 +249,8 @@ function BacklogRow({
   const [pointsDraft, setPointsDraft] = useState<string | null>(null);
   const href = `/${projectKey}/issues/${issue.key}`;
   const points = saver.valueOf("storyPoints");
+  const assignee = saver.valueOf("assignee");
+  const assigneeId = typeof assignee === "string" ? assignee : null;
 
   function commitPoints() {
     if (pointsDraft === null) return;
@@ -291,36 +294,28 @@ function BacklogRow({
         <span className="sr-only">{issue.key}: </span>
         {issue.title}
       </Link>
-      <NativeSelect
+      {/* A pick is one deliberate choice, so it saves at once (no debounce needed). */}
+      <Select
         aria-label={`Priority of ${issue.key}`}
+        label={`Priority of ${issue.key}`}
         className="w-20"
-        value={String(saver.valueOf("priority"))}
-        onChange={(event) => {
-          const next = PRIORITIES.find((p) => String(p) === event.target.value);
-          if (next !== undefined) saver.change("priority", next);
+        align="end"
+        value={PRIORITIES.find((p) => p === saver.valueOf("priority")) ?? null}
+        options={priorityOptions({ short: true })}
+        onChange={(next) => {
+          if (next !== null) saver.change("priority", next, { immediate: true });
         }}
-        onBlur={() => saver.flush("priority")}
-      >
-        {PRIORITIES.map((value) => (
-          <option key={value} value={value} title={PRIORITY_LABELS[value]}>
-            P{value}
-          </option>
-        ))}
-      </NativeSelect>
-      <NativeSelect
+      />
+      <Select
         aria-label={`Assignee of ${issue.key}`}
+        label={`Assignee of ${issue.key}`}
         className="w-36"
-        value={String(saver.valueOf("assignee") ?? "")}
-        onChange={(event) => saver.change("assignee", event.target.value || null)}
-        onBlur={() => saver.flush("assignee")}
-      >
-        <option value="">Unassigned</option>
-        {users.map((user) => (
-          <option key={user.id} value={user.id}>
-            {user.name}
-          </option>
-        ))}
-      </NativeSelect>
+        align="end"
+        value={assigneeId}
+        options={userOptions(users)}
+        clearLabel="Unassigned"
+        onChange={(next) => saver.change("assignee", next, { immediate: true })}
+      />
       <input
         aria-label={`Story points of ${issue.key}`}
         inputMode="numeric"

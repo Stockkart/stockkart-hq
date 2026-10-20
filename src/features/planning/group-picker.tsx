@@ -3,7 +3,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useId } from "react";
 
-import { NativeSelect } from "@/components/ui/native-select";
+import { Select } from "@/components/ui/select";
 import {
   BACKLOG_GROUPS,
   type BacklogGroup,
@@ -28,24 +28,21 @@ export function GroupPicker({ group, filters }: { group: BacklogGroup; filters: 
       <label htmlFor={id} className="text-muted-foreground">
         Group by
       </label>
-      <NativeSelect
+      <Select
         id={id}
+        label="Group by"
         className="w-32"
+        align="end"
         value={group}
-        onChange={(event) => {
-          const next = BACKLOG_GROUPS.find((value) => value === event.target.value) ?? "none";
+        options={BACKLOG_GROUPS.map((value) => ({ value, label: LABELS[value] }))}
+        onChange={(next) => {
+          const value = next ?? "none";
           const query = filtersToSearchParams(filters, {
-            group: next === "none" ? undefined : next,
+            group: value === "none" ? undefined : value,
           }).toString();
           router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
         }}
-      >
-        {BACKLOG_GROUPS.map((value) => (
-          <option key={value} value={value}>
-            {LABELS[value]}
-          </option>
-        ))}
-      </NativeSelect>
+      />
     </div>
   );
 }

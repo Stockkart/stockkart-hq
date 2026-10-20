@@ -90,6 +90,7 @@ nobody can sign in.
 | `AUTH_URL`                                                               | no       | Public URL of the app. Not needed on Vercel. Set it for `next start` elsewhere, and leave it unset rather than empty |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | later    | Attachments (Phase 2). Backups use GitHub secrets instead                                                            |
 | `GITHUB_WEBHOOK_SECRET`                                                  | later    | GitHub webhook HMAC (Phase 2)                                                                                        |
+| `HQ_LOG_QUERIES`                                                         | no       | `1` logs every database round trip per request (counts and ms only, never SQL). Off by default; see "Performance"    |
 
 Generate `AUTH_SECRET` with:
 
@@ -103,6 +104,7 @@ openssl rand -base64 32
 | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pnpm dev`                                         | Dev server on 127.0.0.1:3000                                                                                                                         |
 | `pnpm build` / `pnpm start`                        | Production build / serve on 127.0.0.1                                                                                                                |
+| `pnpm local:prod`                                  | Build, then serve the production build on http://127.0.0.1:3001 (the fast way to use HQ locally; see "Performance")                                  |
 | `pnpm lint`, `pnpm typecheck`, `pnpm format:check` | Static checks                                                                                                                                        |
 | `pnpm test`                                        | Unit tests (Vitest). Never touch the network: fetch and the DB are faked. DB-backed suites are skipped unless `HQ_DB_TESTS=1` (see "Database tests") |
 | `pnpm test:e2e`                                    | Playwright smoke tests against a production build (run `pnpm build` first; first time: `pnpm playwright install chromium`)                           |
@@ -177,6 +179,48 @@ continues after the highest imported number.
 
 **The imported content never goes into this repo** (S-7): the script writes only to the
 database, and the tests use small synthetic markdown.
+
+## Performance
+
+HQ talks to Neon over HTTP, so **every database round trip costs a full network round
+trip** to the Neon region (about 180 ms warm from far away, 500–650 ms when a new TLS
+connection is needed). Page speed is therefore mostly the number of round trips:
+
+- Reads go through `read()` (`src/server/db/read-batch.ts`): the reads one request starts
+  together are sent as one `db.batch()`, one HTTP request. Queries take the project by key
+  and the issue by number as subqueries (`IdRef`), so a page does not wait for the project
+  before loading the rest. Every page is one round trip; keep it that way (no query that
+  waits for another query's result, no per-row lookups).
+- Mutations re-render only the pages that show what they changed (`actions/refresh.ts`),
+  and the UI shows the change optimistically before the server answers.
+- Every route has a `loading.tsx`, so a click shows the next page's shell at once.
+
+To see the round trips, set `HQ_LOG_QUERIES=1` (e.g. in `.env.development.local`) and
+watch the server log: one `[db]` line per round trip with its statement count and the
+request's running totals. It logs counts and timings only, never SQL or parameters.
+
+**For daily use, run the production build locally.** `next dev` compiles each route on
+its first visit and renders more slowly; a production build was 1.4–1.8× faster per page in our measurements:
+
+```bash
+AUTH_URL=http://127.0.0.1:3001 pnpm local:prod   # build, then serve on 127.0.0.1:3001
+```
+
+or without a local Node.js, in Docker (loopback only, reads `.env` read-only):
+
+```bash
+docker run --rm -it --network host -u "$(id -u):$(id -g)" -e HOME=/tmp \
+  -e AUTH_URL=http://127.0.0.1:3001 -v "$PWD:/app" -w /app node:20-bookworm-slim \
+  sh -c 'node node_modules/next/dist/bin/next build && node node_modules/next/dist/bin/next start --hostname 127.0.0.1 --port 3001'
+```
+
+**Region matters.** Put Neon in the region closest to the users and the hosting, and run
+the Vercel functions in the same region as Neon: a function far from its database pays the
+distance on every round trip. Neon is in AWS `ap-southeast-1` (Singapore), so `vercel.json`
+pins the functions to Vercel's `sin1` (Singapore, `ap-southeast-1`; one region works on
+every plan; see [Vercel regions](https://vercel.com/docs/regions) and
+[configuring function regions](https://vercel.com/docs/functions/configuring-functions/region),
+checked 2026-10-20). If Neon moves, change `regions` with it.
 
 ## Deploying to Vercel
 

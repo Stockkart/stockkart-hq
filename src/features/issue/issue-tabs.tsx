@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -50,7 +49,6 @@ export function IssueTabs(props: IssueTabsProps) {
 }
 
 function Comments({ issueId, comments, projectKeys, currentUserId }: IssueTabsProps) {
-  const router = useRouter();
   const [draft, setDraft] = useState<RichTextDoc | null>(null);
   const [composerKey, setComposerKey] = useState(0);
   const [pending, startTransition] = useTransition();
@@ -65,7 +63,7 @@ function Comments({ issueId, comments, projectKeys, currentUserId }: IssueTabsPr
       setDraft(null);
       // Remount the composer to clear it.
       setComposerKey((key) => key + 1);
-      router.refresh();
+      // No router.refresh(): the action already re-rendered this page in its response.
     });
   }
 
@@ -130,7 +128,6 @@ function CommentItem({
   /** Moves focus somewhere sensible once this item disappears. */
   onDeleted: () => void;
 }) {
-  const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [body, setBody] = useState(comment.body);
   const [draft, setDraft] = useState<RichTextDoc>(comment.body);
@@ -161,7 +158,6 @@ function CommentItem({
       if (result === null) return;
       setBody(next);
       close();
-      router.refresh();
     });
   }
 
@@ -171,7 +167,6 @@ function CommentItem({
       const result = await callAction(() => deleteCommentAction({ commentId: comment.id }));
       if (result === null) return;
       onDeleted();
-      router.refresh();
     });
   }
 

@@ -5,7 +5,8 @@ import { ServiceError } from "@/server/services/errors";
 
 const authMock = vi.hoisted(() => vi.fn<() => Promise<Session | null>>());
 vi.mock("@/server/auth/auth", () => ({ auth: authMock }));
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+const revalidatePath = vi.hoisted(() => vi.fn());
+vi.mock("next/cache", () => ({ revalidatePath }));
 
 const issueService = vi.hoisted(() => ({
   createIssue: vi.fn(),
@@ -92,6 +93,37 @@ describe("issue server actions", () => {
     authMock.mockResolvedValue(session);
     issueService.deleteIssue.mockRejectedValue(new Error("boom"));
     await expect(actions.deleteIssueAction({ issueId: ID })).rejects.toThrow("boom");
+  });
+
+  it.each(validInputs)(
+    "%s refreshes only issue/doc pages, never the whole project subtree",
+    async (name, input) => {
+      authMock.mockResolvedValue(session);
+      revalidatePath.mockReset();
+      await actions[name](input);
+      expect(revalidatePath).toHaveBeenCalled();
+      for (const [path, type] of revalidatePath.mock.calls) {
+        expect(type).toBe("page");
+        expect(path).toMatch(
+          /^\/(\[projectKey\]\/(issues|backlog|board|adrs|docs\/\[id\])|my-work|todos)/,
+        );
+        expect(path).not.toBe("/[projectKey]");
+      }
+    },
+  );
+
+  it("refreshes just the issue page for links and comments", async () => {
+    authMock.mockResolvedValue(session);
+    revalidatePath.mockReset();
+    await actions.addLinkAction({ issueId: ID, relation: "blocks", targetKey: "STK-1" });
+    expect(revalidatePath.mock.calls).toEqual([["/[projectKey]/issues/[key]", "page"]]);
+  });
+
+  it("does not refresh anything when the input is rejected", async () => {
+    authMock.mockResolvedValue(session);
+    revalidatePath.mockReset();
+    await actions.updateIssueFieldAction({ issueId: "nope" });
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 
   it("loads issue templates only with a session", async () => {

@@ -2,12 +2,13 @@
 
 import { FileText, Plus, X } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useId, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
+import { Combobox } from "@/components/ui/combobox";
+import { Select } from "@/components/ui/select";
+import { searchIssueOptions } from "@/features/search/issue-picker-search";
 import { docPath, type LinkedDocView } from "@/lib/docs/views";
 import {
   type IssueType,
@@ -56,7 +57,6 @@ interface SubtasksProps {
  * Subtasks cannot have subtasks, so the section is hidden for them.
  */
 export function Subtasks({ issueId, issueType, projectKey, items }: SubtasksProps) {
-  const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [title, setTitle] = useState("");
   const [pending, startTransition] = useTransition();
@@ -79,7 +79,7 @@ export function Subtasks({ issueId, issueType, projectKey, items }: SubtasksProp
       );
       if (created === null) return;
       setTitle("");
-      router.refresh();
+      // No router.refresh(): the action already re-rendered this page in its response.
     });
   }
 
@@ -152,10 +152,9 @@ interface LinksProps {
 
 /** ISS-6 links, worded from this issue (inverse derived), plus where it is mentioned. */
 export function Links({ issueId, projectKey, links, mentions, docs = [] }: LinksProps) {
-  const router = useRouter();
   const [adding, setAdding] = useState(false);
   const [relation, setRelation] = useState<LinkRelation>("blocks");
-  const [targetKey, setTargetKey] = useState("");
+  const [target, setTarget] = useState<{ key: string; label: string } | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const [pending, startTransition] = useTransition();
   const ids = { heading: useId(), relation: useId(), key: useId() };
@@ -164,15 +163,14 @@ export function Links({ issueId, projectKey, links, mentions, docs = [] }: Links
     .filter((link) => !hidden.has(link.linkId))
     .sort((a, b) => LINK_RELATION_ORDER[a.relation] - LINK_RELATION_ORDER[b.relation]);
 
-  function add() {
-    const key = targetKey.trim();
-    if (!key) return;
+  /** Adds the link; a pick in the issue picker calls this at once (no extra Enter). */
+  function add(key = target?.key) {
+    if (!key || pending) return;
     startTransition(async () => {
       const result = await callAction(() => addLinkAction({ issueId, relation, targetKey: key }));
       if (result === null) return;
-      setTargetKey("");
+      setTarget(null);
       setAdding(false);
-      router.refresh();
     });
   }
 
@@ -213,38 +211,42 @@ export function Links({ issueId, projectKey, links, mentions, docs = [] }: Links
             <label htmlFor={ids.relation} className="text-xs text-muted-foreground">
               This issue
             </label>
-            <NativeSelect
+            <Select
               id={ids.relation}
+              label="This issue"
+              className="w-40"
               value={relation}
-              onChange={(event) => {
-                const next = LINK_RELATIONS.find((value) => value === event.target.value);
+              options={LINK_RELATIONS.map((value) => ({
+                value,
+                label: LINK_RELATION_LABELS[value],
+              }))}
+              onChange={(next) => {
                 if (next) setRelation(next);
-              }}
-            >
-              {LINK_RELATIONS.map((value) => (
-                <option key={value} value={value}>
-                  {LINK_RELATION_LABELS[value]}
-                </option>
-              ))}
-            </NativeSelect>
-          </div>
-          <div className="flex flex-col gap-1">
-            <label htmlFor={ids.key} className="text-xs text-muted-foreground">
-              Issue key
-            </label>
-            <Input
-              id={ids.key}
-              autoFocus
-              className="h-8 w-32 font-mono"
-              placeholder={`${projectKey}-1`}
-              value={targetKey}
-              onChange={(event) => setTargetKey(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setAdding(false);
               }}
             />
           </div>
-          <Button type="submit" size="sm" disabled={pending || !targetKey.trim()}>
+          <div className="flex flex-col gap-1">
+            <label htmlFor={ids.key} className="text-xs text-muted-foreground">
+              Issue
+            </label>
+            <Combobox
+              id={ids.key}
+              label="Issue"
+              className="w-64"
+              value={target?.key ?? null}
+              valueLabel={target?.label ?? null}
+              placeholder={`Search, or type ${projectKey}-1`}
+              searchPlaceholder="Key or words…"
+              emptyText="No matching issue"
+              promptText="Type a key or words to search"
+              loadOptions={(query) => searchIssueOptions(query)}
+              onChange={(key, option) => {
+                setTarget(key && option ? { key, label: option.label } : null);
+                if (key) add(key);
+              }}
+            />
+          </div>
+          <Button type="submit" size="sm" disabled={pending || !target}>
             Add link
           </Button>
         </form>

@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
 
-import { loadProjectFromRoute } from "@/features/issue/project-route";
+import { requireProject, resolveProjectKey } from "@/features/issue/project-route";
 import { Board } from "@/features/planning/board";
 import { LimitNotice } from "@/features/planning/limit-notice";
 import { EMPTY_FILTERS } from "@/lib/issues/filters";
 import { requirePageSession } from "@/server/auth/require-session";
 import { issueQueries, planningQueries } from "@/server/services";
 import { BOARD_DONE_DAYS, ISSUE_LIST_LIMIT } from "@/server/services/planning-queries";
+import { projectIdByKey } from "@/server/services/sql";
 
 interface Props {
   params: Promise<{ projectKey: string }>;
@@ -22,14 +23,17 @@ export default async function BoardPage({ params }: Props) {
   // Layouts and pages render in parallel, so each page checks the session itself too.
   const session = await requirePageSession();
   const { projectKey } = await params;
-  const project = await loadProjectFromRoute(projectKey, "/board");
-  const [issues, meta] = await Promise.all([
-    planningQueries.listIssues(project.id, {
+  const key = resolveProjectKey(projectKey, "/board");
+  // One round trip: the queries find the project by key themselves.
+  const projectId = projectIdByKey(key);
+  const [project, issues, meta] = await Promise.all([
+    requireProject(key),
+    planningQueries.listIssues(projectId, {
       scope: "board",
       filters: EMPTY_FILTERS,
       currentUserId: session.user.id,
     }),
-    issueQueries.getProjectMeta(project.id),
+    issueQueries.getProjectMeta(projectId),
   ]);
 
   return (
