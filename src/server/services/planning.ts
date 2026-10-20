@@ -3,13 +3,15 @@ import { generateKeyBetween } from "fractional-indexing";
 import { z } from "zod";
 
 import { type moveIssueInput, type recordViewInput } from "@/lib/planning/schemas";
+import { type moveIssueToSprintInput } from "@/lib/sprints/schemas";
 import { directRead, type Read } from "@/server/db/read-batch";
 import { type AppDatabase } from "@/server/db/types";
 
-import { conflict, notFound, pgErrorInfo, UNIQUE_VIOLATION } from "./errors";
+import { conflict, invalid, notFound, pgErrorInfo, UNIQUE_VIOLATION } from "./errors";
 import { rowsOf } from "./sql";
 
 export type MoveIssueData = z.output<typeof moveIssueInput>;
+export type MoveIssueToSprintData = z.output<typeof moveIssueToSprintInput>;
 export type RecordViewData = z.output<typeof recordViewInput>;
 
 /** Attempts when concurrent moves keep landing on the same gap (see `moveIssue`). */
@@ -24,7 +26,7 @@ export interface PlanningServiceOptions {
   beforeRankWrite?: () => Promise<void>;
 }
 
-/** Backlog ordering (BLG-1) and My Work view tracking (MY-1). */
+/** Backlog ordering (BLG-1), sprint assignment (BLG-3) and My Work view tracking (MY-1). */
 export function createPlanningService(db: AppDatabase, options: PlanningServiceOptions = {}) {
   const read = options.read ?? directRead;
 
@@ -104,6 +106,105 @@ export function createPlanningService(db: AppDatabase, options: PlanningServiceO
           if (!rankTaken) throw error;
           if (attempt >= RANK_ATTEMPTS) throw conflict("Too many concurrent moves; try again");
           // Jitter so racing movers do not collide again on the next attempt.
+          await sleep(Math.random() * 20 * attempt);
+        }
+      }
+    },
+
+    /**
+     * BLG-3: puts an issue into a sprint (`sprintId`) or back into the backlog (null) and,
+     * with `afterIssueId` (null = the top), re-ranks it in the same statement, exactly as
+     * `moveIssue` does (same neighbour read, same unique-rank retry). Without `afterIssueId`
+     * the issue keeps its rank, which keeps every section in rank order.
+     *
+     * A sprint change is an edit: it bumps `updated_at` and logs `updated`/`sprint`
+     * (from → to sprint id) in the same statement, which the burndown replays (SPR-3). The
+     * sprint must be a planned or active one of the issue's project, re-checked at write
+     * time so a sprint closed meanwhile is refused.
+     */
+    async moveIssueToSprint(
+      actorId: string,
+      input: MoveIssueToSprintData,
+    ): Promise<{ rank: string; sprintId: string | null }> {
+      const reRank = input.afterIssueId !== undefined;
+      const afterIssueId = input.afterIssueId ?? null;
+      const sprintId = input.sprintId;
+      for (let attempt = 1; ; attempt += 1) {
+        // One round trip per attempt: the sprint check and (when re-ranking) the neighbours.
+        const [check, found] = await Promise.all([
+          read(
+            db.execute(sql`
+              SELECT s.state::text AS state, s.project_id = i.project_id AS same_project
+              FROM issues i
+              LEFT JOIN sprints s ON s.id = ${sprintId}::uuid
+              WHERE i.id = ${input.issueId}::uuid AND i.deleted_at IS NULL
+            `),
+          ),
+          reRank ? neighbours(input.issueId, afterIssueId) : Promise.resolve(null),
+        ]);
+        const [sprintRow] = rowsOf(
+          check,
+          z.object({ state: z.string().nullable(), same_project: z.boolean().nullable() }),
+        );
+        if (!sprintRow) throw notFound("Issue");
+        if (sprintId !== null) {
+          if (sprintRow.state === null || !sprintRow.same_project) throw notFound("Sprint");
+          if (sprintRow.state === "closed") throw invalid("That sprint is closed");
+        }
+        let rank: string | null = null;
+        if (reRank) {
+          if (!found) throw notFound("Issue");
+          const { current, prev, next } = found;
+          if (afterIssueId && prev === null) throw notFound("The issue to move after");
+          const inPlace = (prev === null || current > prev) && (next === null || current < next);
+          rank = inPlace ? null : generateKeyBetween(prev, next);
+        }
+        await options.beforeRankWrite?.();
+        try {
+          const result = await db.execute(sql`
+            WITH old AS (
+              SELECT id, sprint_id FROM issues
+              WHERE id = ${input.issueId}::uuid AND deleted_at IS NULL
+              FOR UPDATE
+            ),
+            changed AS (
+              UPDATE issues SET sprint_id = ${sprintId}::uuid,
+                rank = COALESCE(${rank}::text, issues.rank),
+                updated_at = CASE WHEN old.sprint_id IS DISTINCT FROM ${sprintId}::uuid
+                  THEN now() ELSE issues.updated_at END
+              FROM old
+              WHERE issues.id = old.id AND (${sprintId}::uuid IS NULL OR EXISTS (
+                -- The share lock orders this move against a start or completion of the
+                -- target sprint (which update its row): a sprint closing meanwhile is seen
+                -- closed here, and a starting one snapshots its members after this move.
+                SELECT 1 FROM sprints s WHERE s.id = ${sprintId}::uuid
+                  AND s.project_id = issues.project_id AND s.state <> 'closed'
+                FOR SHARE
+              ))
+              RETURNING issues.id, old.sprint_id::text AS from_value,
+                issues.sprint_id::text AS to_value, issues.rank
+            ),
+            sprint_activity AS (
+              INSERT INTO activity (entity_type, entity_id, actor_id, action, field,
+                from_value, to_value)
+              SELECT 'issue', id, ${actorId}::uuid, 'updated', 'sprint', from_value, to_value
+              FROM changed
+              WHERE from_value IS DISTINCT FROM to_value
+            )
+            SELECT rank, to_value FROM changed
+          `);
+          const [row] = rowsOf(
+            result,
+            z.object({ rank: z.string(), to_value: z.string().nullable() }),
+          );
+          if (!row) throw notFound("Issue or open sprint");
+          return { rank: row.rank, sprintId: row.to_value };
+        } catch (error) {
+          const info = pgErrorInfo(error);
+          const rankTaken =
+            info?.code === UNIQUE_VIOLATION && info.constraint === "issues_project_rank_unique";
+          if (!rankTaken) throw error;
+          if (attempt >= RANK_ATTEMPTS) throw conflict("Too many concurrent moves; try again");
           await sleep(Math.random() * 20 * attempt);
         }
       }

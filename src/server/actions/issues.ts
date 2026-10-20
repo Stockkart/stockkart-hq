@@ -31,6 +31,8 @@ import {
   ISSUE_PAGE,
   ISSUE_VIEWS,
   refreshPages,
+  SPRINT_PAGE,
+  SPRINTS,
   TODOS,
 } from "./refresh";
 
@@ -54,8 +56,9 @@ function run<S extends z.ZodType, T>(
   return runAction(schema, input, action, () => refreshPages(...pages));
 }
 
-/** Field changes also show in the Linked issues panel of doc pages. */
-const FIELD_PAGES = [...ISSUE_VIEWS, DOC_PAGE];
+/** Field changes also show in the Linked issues panel of doc pages, and (status, points,
+ * sprint) in the sprint tallies and burndowns. */
+const FIELD_PAGES = [...ISSUE_VIEWS, DOC_PAGE, SPRINTS, SPRINT_PAGE];
 /** A deleted issue also leaves the ADR log's links and a promoted todo's link. */
 const DELETE_PAGES = [...FIELD_PAGES, ADR_LOG, TODOS];
 /** Labels show on the issue, the lists and in the filter options. */
@@ -69,7 +72,8 @@ export async function createIssueAction(input: unknown): Promise<ActionResult<Cr
     createIssueInput,
     input,
     (data) => issueService.createIssue(session.user.id, data),
-    ISSUE_VIEWS,
+    // A new issue may go straight into a sprint (BLG-3).
+    [...ISSUE_VIEWS, SPRINTS, SPRINT_PAGE],
   );
 }
 

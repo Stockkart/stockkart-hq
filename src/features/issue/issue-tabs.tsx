@@ -248,6 +248,7 @@ function ActivityList({
       statuses: new Map(meta.statuses.map((status) => [status.id, status.name])),
       users: new Map(meta.users.map((user) => [user.id, user.name])),
       components: new Map(meta.components.map((component) => [component.id, component.name])),
+      sprints: new Map(meta.sprints.map((sprint) => [sprint.id, sprint.name])),
       issueKeys,
     }),
     [meta, issueKeys],

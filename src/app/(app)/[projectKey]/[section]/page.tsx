@@ -9,11 +9,10 @@ import { requirePageSession } from "@/server/auth/require-session";
 /**
  * "Coming soon" placeholder for the project pages in the sidebar (§5.1) that later Phase 1
  * slices build. A real page at e.g. `[projectKey]/backlog/page.tsx` takes precedence over
- * this dynamic segment, so each slice simply adds its own route. Backlog, Board, Docs and
- * ADRs have real routes now, so only the sections below are still placeholders.
+ * this dynamic segment, so each slice simply adds its own route. Backlog, Board, Sprints, Docs
+ * and ADRs have real routes now, so only the sections below are still placeholders.
  */
 const SECTIONS: Record<string, string> = {
-  sprints: "Sprints",
   roadmap: "Roadmap",
   diagrams: "Diagrams",
   incidents: "Incidents",

@@ -30,6 +30,8 @@ export const createIssueInput = z.object({
   parentId: id.nullish(),
   assigneeId: id.nullish(),
   componentId: id.nullish(),
+  /** BLG-3: a planned or active sprint of the project; omitted = the backlog. */
+  sprintId: id.nullish(),
 });
 export type CreateIssueInput = z.input<typeof createIssueInput>;
 
@@ -48,6 +50,8 @@ export const updateIssueFieldInput = z.discriminatedUnion("field", [
   }),
   z.object({ issueId: id, field: z.literal("dueDate"), value: isoDate.nullable() }),
   z.object({ issueId: id, field: z.literal("parent"), value: id.nullable() }),
+  /** BLG-3: a planned or active sprint, or null for the backlog. */
+  z.object({ issueId: id, field: z.literal("sprint"), value: id.nullable() }),
 ]);
 export type UpdateIssueFieldInput = z.input<typeof updateIssueFieldInput>;
 export type IssueField = UpdateIssueFieldInput["field"];

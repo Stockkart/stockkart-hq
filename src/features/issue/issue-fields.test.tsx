@@ -29,6 +29,10 @@ const meta: ProjectMeta = {
     { id: "u-ada", name: "Ada Lovelace", email: "ada@example.test" },
   ],
   epics: [{ id: "e1", key: "STK-1", title: "Big epic", type: "epic" }],
+  sprints: [
+    { id: "sp-7", name: "Sprint 7", state: "active" },
+    { id: "sp-8", name: "Sprint 8", state: "planned" },
+  ],
 };
 const issue: IssueDetail = {
   id: "i5",
@@ -47,6 +51,7 @@ const issue: IssueDetail = {
   parent: null,
   storyPoints: null,
   dueDate: null,
+  sprintId: null,
   createdAt: new Date(),
   updatedAt: new Date(),
   resolvedAt: null,
@@ -144,5 +149,31 @@ describe("IssueFields side panel (ISS-5) with our pickers", () => {
     await user.click(screen.getByRole("option", { name: "ocr" }));
     await waitFor(() => expect(screen.queryByRole("list", { name: "Labels" })).toBeNull());
     expect(toast.error).toHaveBeenCalledWith("Nope");
+  });
+
+  it("puts the issue into a sprint and back into the backlog (BLG-3)", async () => {
+    const user = userEvent.setup();
+    renderFields();
+    const sprint = screen.getByRole("combobox", { name: "Sprint" });
+    expect(sprint).toHaveTextContent("Backlog");
+    await user.click(sprint);
+    await user.click(screen.getByRole("option", { name: /Sprint 7/ }));
+    expect(sprint).toHaveTextContent("Sprint 7");
+    await waitFor(() =>
+      expect(actions.updateIssueFieldAction).toHaveBeenCalledWith({
+        issueId: "i5",
+        field: "sprint",
+        value: "sp-7",
+      }),
+    );
+    await user.click(sprint);
+    await user.click(screen.getByRole("option", { name: "Backlog" }));
+    await waitFor(() =>
+      expect(actions.updateIssueFieldAction).toHaveBeenLastCalledWith({
+        issueId: "i5",
+        field: "sprint",
+        value: null,
+      }),
+    );
   });
 });

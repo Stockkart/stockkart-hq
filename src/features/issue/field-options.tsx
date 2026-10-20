@@ -7,6 +7,7 @@ import {
   PRIORITY_LABELS,
 } from "@/lib/issues/constants";
 import { type IssueSummary, type LabelView, type StatusOption } from "@/lib/issues/views";
+import { type SprintOption } from "@/lib/sprints/views";
 
 import { Avatar, IssueTypeGlyph, PriorityGlyph, StatusGlyph } from "./issue-badges";
 
@@ -55,6 +56,25 @@ export const issueOptions = (issues: IssueSummary[]): SelectOption<string>[] =>
     keywords: issue.key,
     icon: <IssueTypeGlyph type={issue.type} />,
   }));
+
+/**
+ * BLG-3 sprint picker: the active and planned sprints. An issue still in a closed sprint
+ * (a Done issue stays there) shows that as a disabled entry rather than as "Backlog".
+ */
+export function sprintOptions(
+  sprints: SprintOption[],
+  currentId: string | null = null,
+): SelectOption<string>[] {
+  const options = sprints.map((sprint): SelectOption<string> => ({
+    value: sprint.id,
+    label: sprint.name,
+    detail: sprint.state === "active" ? "Active" : undefined,
+  }));
+  if (currentId && !sprints.some((sprint) => sprint.id === currentId)) {
+    options.push({ value: currentId, label: "A closed sprint", disabled: true });
+  }
+  return options;
+}
 
 /** A label's colour as a dot (grey when it has none). */
 export function LabelDot({ color }: { color: string | null }) {

@@ -14,6 +14,8 @@ export interface ActivityLookups {
   statuses: Map<string, string>;
   users: Map<string, string>;
   components: Map<string, string>;
+  /** Open sprints by id; a closed or deleted sprint shows as "an earlier sprint". */
+  sprints?: Map<string, string>;
   issueKeys: Record<string, string>;
 }
 
@@ -34,6 +36,7 @@ const FIELD_LABELS: Record<string, string> = {
   storyPoints: "story points",
   dueDate: "due date",
   parent: "parent",
+  sprint: "sprint",
 };
 
 const metaSchema = z
@@ -51,6 +54,8 @@ function display(field: string | null, value: string | null, lookups: ActivityLo
       return lookups.components.get(value) ?? "a deleted component";
     case "parent":
       return lookups.issueKeys[value] ?? "a deleted issue";
+    case "sprint":
+      return lookups.sprints?.get(value) ?? "an earlier sprint";
     case "priority": {
       const priority = PRIORITIES.find((p) => String(p) === value);
       return priority === undefined ? value : PRIORITY_LABELS[priority];
