@@ -28,7 +28,9 @@ comments and commit bodies.
   `fractional-indexing` is CC0-1.0 (public domain dedication), accepted explicitly.
   DOMPurify is dual-licensed MPL-2.0 OR Apache-2.0; we use it under Apache-2.0. Recharts is
   MIT (its d3 parts via `victory-vendor` are ISC). mermaid stays
-  on 11.x while CI runs Node 20 (12.x needs Node 22).
+  on 11.x while CI runs Node 20 (12.x needs Node 22). `@aws-sdk/client-s3` and
+  `@aws-sdk/s3-request-presigner` (R2) are Apache-2.0; AWS SDK releases after early 2027
+  need Node 22, so they too stay pinned until CI drops Node 20.
 
 ## Layout
 
@@ -43,22 +45,30 @@ src/
                           the rest (roadmap, …)
   app/api/auth/           Auth.js route handlers
   app/api/webhooks/github GitHub org webhook (GH-1…GH-3): HMAC-verified, logic in server/github/
+  app/api/files/          authed file downloads (S-5): [id] (attachments) and
+                          thumbnail/diagram/[id]; 302 to a presigned R2 URL (≤ 5 min)
   proxy.ts                default-deny gate (Next.js 16 name for middleware.ts)
   env.ts                  Zod-validated server env (throws on import if invalid)
   server/auth/            Auth.js config, inventory-api client, rate limit, session policy
   server/actions/         server actions ("use server"), each starting with requireSession()
-  server/services/        DB logic as factories (createIssueService(db) …); index.ts wires db
+  server/services/        DB logic as factories (createIssueService(db) …); index.ts wires db;
+                          notifications.ts holds the shared notify() signature (NTF-1)
+  server/storage/         private R2 bucket (S-5): presigned upload/download, key layout,
+                          fail-closed StorageNotConfigured; index.ts wires env
   server/db/              Drizzle schema, client, seed, AppDatabase type
   server/import/          handbook import (IMP-1…3), driven by scripts/import-handbook.ts
   server/github/          webhook: signature check, Zod payloads, pure event → plan rules
                           (services/github.ts applies a plan in ONE statement, deduped by
                           delivery id; never add a webhook write outside that statement)
   lib/                    isomorphic code: constants, Zod input schemas, keys, rich text,
-                          markdown → editor JSON (lib/markdown)
+                          markdown → editor JSON (lib/markdown), upload policy
+                          (lib/attachments/policy.ts), @user mentions (lib/mentions.ts),
+                          plain-text rules per editor node (lib/rich-text-nodes/)
   features/               feature UI (shell/, issue/, planning/, sprints/, todos/, search/,
                           docs/, editor/)
-  features/editor/        shared Tiptap editor (client-only; `variant="doc"` adds tables,
-                          callouts and Mermaid blocks) and the safe JSON renderer
+  features/editor/        shared Tiptap editor (client-only; variants `issue`, `comment`,
+                          `doc`), its feature registry (extensions/) and the safe JSON
+                          renderer with its node registry (renderers/)
   components/ui/          shadcn/ui components (owned code, edit freely)
   test/                   test fakes and the DB-test helpers
 drizzle/                  generated SQL migrations (committed)
@@ -91,6 +101,29 @@ e2e/                      Playwright smoke tests
   `recent_views` for MY-1 …), plus `entity_type = 'user'` for @mentions and
   `docs.source_path` for re-runnable imports. Phase 1 slices must not need a migration;
   later phases add their own tables.
+- Migration `0004_p1_foundation` holds the schema of the P1 slices, so **they add no
+  migration** (talk to the owner first if one seems needed):
+  - `watchers` (issue_id, user_id; PK both; ISS-11) and `notifications` (recipient
+    `user_id`, `type` enum, entity_type/entity_id, `actor_id`, `meta`, `read_at`; NTF-1).
+    `notifications.dedupe_key` is unique and nullable: write `<event>:<userId>` and
+    `ON CONFLICT DO NOTHING` so retries never duplicate. Only `read_at` changes, so no
+    `updated_at`. Call `notificationService.notify(...)` (`services/notifications.ts`);
+    until the notifications slice lands it is a no-op with the final signature.
+  - `saved_views` (VW-3): user, project, name (unique per user and project), `filter` jsonb
+    (the URL filter shape), `shared`, fractional `position`.
+  - `attachments` (ISS-9): entity_type `issue|comment|doc`, `storage_key` (unique),
+    filename, mime, `size_bytes` (CHECK 1 B…10 MB), width/height, uploader, `status`
+    `pending|ready`, soft delete. Serve only `ready`, undeleted rows, via `/api/files/[id]`.
+  - `diagrams` (DGM-1…7) and `diagram_versions` (DGM-4): like docs (optimistic `version`,
+    fractional `position`, `scene_text` → generated `search` + GIN, soft delete), plus
+    `kind` `whiteboard|flow`, `thumbnail_key`, `template_id`. CHECK
+    `octet_length(scene::text) < 2 MB` (`DIAGRAM_SCENE_MAX_BYTES`) on both tables.
+  - `projects.default_assignee_id` (PRJ-3), `users.notify_email` (NTF-2, default off),
+    `entity_type = 'attachment'`.
+- @user mentions: `extractUserMentionIds(doc)` (`lib/mentions.ts`) reads `mention` nodes;
+  `userMentionSyncCtes` / `userMentionSyncStatement` (`services/sql.ts`) keep the
+  `to_type = 'user'` mention links in sync, like the issue-key ones, and RETURN the newly
+  mentioned users so only they are notified.
 - Shared vocabularies (issue types, statuses, doc types …) live in `src/lib/**/constants.ts`
   and feed both the `pgEnum`s and the Zod schemas. Adding an enum value needs a migration.
 - Soft delete: tables with `deleted_at` are never hard-deleted by the app; every read
@@ -117,6 +150,39 @@ e2e/                      Playwright smoke tests
   (`saveDoc` in `services/docs.ts`); losing returns the winner's copy, never overwrites.
   Tree moves and deletes take a per-project advisory lock in the same transaction, so the
   cycle check sees the tree as it is. Mermaid SVG is inserted only after DOMPurify (S-8).
+
+## File storage (R2)
+
+- Use only `@/server/storage` (server-only; it imports `@/env`). Never build an R2 or
+  public URL yourself, and never make the bucket or an object public (S-5).
+- Keys come from `attachmentKey(filename)` / `diagramThumbnailKey(id)`; the module refuses
+  any other prefix for uploads and deletes (`backups/` and `tmp/` belong to the workflow).
+- Pick the stored type with `classifyUpload(mime, filename).contentType` and pass exactly
+  that to `presignUpload`/`putObject` (anything else is refused). Size limit 10 MB
+  (`MAX_ATTACHMENT_BYTES`). The client's mime type and name are untrusted.
+- Upload flow: insert a `pending` attachment row → `presignUpload` → the browser PUTs to
+  R2 → a server action `headObject`s it, checks size and type, and sets `ready`.
+- Catch `StorageNotConfigured` and show `STORAGE_NOT_CONFIGURED_MESSAGE`. Tests inject a
+  transport (`createStorage(config, () => fakeTransport)`); presigning is local and needs
+  no network.
+
+## Adding an editor node
+
+The editor, the plain-text extractor and the read-only renderer each have a registry, so
+a feature adds files of its own plus ONE line per registry (no edits to the shared files):
+
+1. `src/features/editor/extensions/<feature>.ts`: export an `EditorFeature` (`name`,
+   `variants` among `issue`/`comment`/`doc`, `extensions(context)`, optional
+   `insertButtons` / `toolbarGroups`), and add it to `EDITOR_FEATURES` in
+   `extensions/index.ts`. Client-only code (node views, suggestion popups) lives next to it.
+2. `src/lib/rich-text-nodes/<feature>.ts`: export `PlainTextRules` for the node types
+   (`block`, `code`, `text(node)` for text held in attrs) and add them to `RULES` in
+   `rich-text-nodes/index.ts`, so search and `STK-123` extraction see the node.
+3. `src/features/editor/renderers/<feature>.tsx`: export `NodeRenderers` (React elements
+   only, validate every attr, no "use client") and add them to `RENDERERS` in
+   `renderers/index.ts`. Unregistered types render only their children.
+4. Test the three pieces next to their files. The existing doc blocks (`doc-blocks.ts[x]`
+   in each folder: callout, table, Mermaid) are the reference.
 
 ## Adding a server action
 

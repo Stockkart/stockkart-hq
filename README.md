@@ -86,15 +86,15 @@ Names only; values never go in the repo. `.env*` files are git-ignored except
 required variable is missing or malformed. Without `STOCKKART_API_URL` or `AUTH_SECRET`
 nobody can sign in.
 
-| Name                                                                     | Required | Purpose                                                                                                              |
-| ------------------------------------------------------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------- |
-| `DATABASE_URL`                                                           | yes      | Neon Postgres connection string (`postgres://…?sslmode=require`)                                                     |
-| `STOCKKART_API_URL`                                                      | yes      | inventory-api base URL **without** `/api/v1`. Must be https (http only for localhost)                                |
-| `AUTH_SECRET`                                                            | yes      | Auth.js encryption secret, ≥ 32 random bytes                                                                         |
-| `AUTH_URL`                                                               | no       | Public URL of the app. Not needed on Vercel. Set it for `next start` elsewhere, and leave it unset rather than empty |
-| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | later    | Attachments (Phase 2). Backups use GitHub secrets instead                                                            |
-| `GITHUB_WEBHOOK_SECRET`                                                  | no       | GitHub webhook HMAC secret (`openssl rand -hex 32`). Unset: the app runs, the webhook answers 503 and does nothing   |
-| `HQ_LOG_QUERIES`                                                         | no       | `1` logs every database round trip per request (counts and ms only, never SQL). Off by default; see "Performance"    |
+| Name                                                                     | Required | Purpose                                                                                                                                                                                                              |
+| ------------------------------------------------------------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                                                           | yes      | Neon Postgres connection string (`postgres://…?sslmode=require`)                                                                                                                                                     |
+| `STOCKKART_API_URL`                                                      | yes      | inventory-api base URL **without** `/api/v1`. Must be https (http only for localhost)                                                                                                                                |
+| `AUTH_SECRET`                                                            | yes      | Auth.js encryption secret, ≥ 32 random bytes                                                                                                                                                                         |
+| `AUTH_URL`                                                               | no       | Public URL of the app. Not needed on Vercel. Set it for `next start` elsewhere, and leave it unset rather than empty                                                                                                 |
+| `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | no       | Private Cloudflare R2 bucket for attachments and diagram thumbnails (see "File storage (R2)"). Unset or incomplete: the app runs, file routes answer 503 and uploads are refused. Backups use GitHub secrets instead |
+| `GITHUB_WEBHOOK_SECRET`                                                  | no       | GitHub webhook HMAC secret (`openssl rand -hex 32`). Unset: the app runs, the webhook answers 503 and does nothing                                                                                                   |
+| `HQ_LOG_QUERIES`                                                         | no       | `1` logs every database round trip per request (counts and ms only, never SQL). Off by default; see "Performance"                                                                                                    |
 
 Generate `AUTH_SECRET` with:
 
@@ -311,6 +311,67 @@ GITHUB_WEBHOOK_SECRET='<same value as the server>' pnpm exec tsx scripts/send-te
 > with the real client address, or change `clientIpFrom()` in
 > `src/server/auth/rate-limit.ts`, before deploying there.
 
+## File storage (R2)
+
+Attachments (ISS-9, DOC-1 images) and diagram thumbnails (DGM-5) live in a **private**
+Cloudflare R2 bucket (S-5), reached through `src/server/storage/` (S3-compatible API,
+endpoint `https://<account-id>.r2.cloudflarestorage.com`, region `auto`):
+
+- Uploads go **straight from the browser to R2** with a presigned `PUT` (Vercel function
+  bodies are limited to about 4.5 MB). The URL lives 5 minutes and signs the
+  `Content-Type` and `Content-Length`, so the client cannot change the type or size.
+- Downloads go through `/api/files/[id]` (and `/api/files/thumbnail/diagram/[id]`): the
+  route checks the session, then answers `302` to a presigned `GET` valid 5 minutes that
+  sets `Content-Type` and `Content-Disposition`. Images show inline; PDFs, text and logs
+  download (PDFs may be opened inline); SVG, HTML and other active types always download as
+  `application/octet-stream`, so nothing can run script on the R2 origin. 10 MB per file.
+- Without all four `R2_*` variables nothing breaks: storage calls fail closed
+  (`StorageNotConfigured`), the file routes answer `503` and the UI says "File storage isn't
+  set up yet". No public bucket URL is ever built.
+- Object keys: `attachments/<uuid>/<file-name>`, `thumbnails/diagrams/<diagram-id>.png`,
+  `backups/` and `tmp/` (the backup workflow).
+
+### Setup (once, in the Cloudflare dashboard)
+
+Never paste the values into the repo, an issue or a chat; they go only into Vercel, GitHub
+Actions secrets and your git-ignored `.env.local`.
+
+1. **R2 → Create bucket**, e.g. `stockkart-hq-files`. Keep it **private**: do not connect a
+   custom domain and leave the `r2.dev` public URL **disabled**.
+2. **R2 → Manage API tokens → Create API token**: permission **Object Read & Write**,
+   scoped to **that bucket only** ("Apply to specific buckets only"), no expiry or a
+   reminder to rotate. Copy the Access Key ID and Secret Access Key (shown once). The
+   account id is on the R2 overview page.
+3. Set `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and `R2_BUCKET` in
+   Vercel (Production; a separate bucket and token for Preview if previews may upload) and
+   in `.env.local` for local development, then redeploy (the CSP picks up the R2 origin at
+   build time).
+4. **Bucket → Settings → CORS policy**: allow the HQ origins to `PUT` (uploads) and `GET`
+   with the signed headers, nothing else:
+
+   ```json
+   [
+     {
+       "AllowedOrigins": ["https://<your-hq-domain>", "http://localhost:3000"],
+       "AllowedMethods": ["PUT", "GET"],
+       "AllowedHeaders": ["Content-Type", "Content-Length"],
+       "MaxAgeSeconds": 3600
+     }
+   ]
+   ```
+
+   (Add `http://127.0.0.1:3000` too if you open the dev server by IP.)
+
+5. **Bucket → Settings → Object lifecycle rules**: delete objects with prefix `tmp/` after
+   **1 day** (left-overs of failed backups) and with prefix `backups/` after **30 days**
+   (see "Backups").
+6. **Cloudflare → Notifications → Add**: a billing / usage notification for R2, so a
+   runaway upload loop cannot run up a bill unnoticed (the free tier covers 10 GB).
+
+Check: an anonymous `curl -I https://<account-id>.r2.cloudflarestorage.com/<bucket>/x`
+must be denied (`400`/`403`), and `curl -I https://<your-hq-domain>/api/files/x` must answer
+`401`.
+
 ## Backups
 
 `.github/workflows/backup.yml` runs nightly: `pg_dump` → gzip → private R2 bucket under
@@ -361,6 +422,8 @@ gunzip -c stockkart-hq-<timestamp>.sql.gz | psql "$RESTORE_DATABASE_URL"
 - [ ] Apply migrations `0002_sprint_activity` and `0003_github_integration` to each Neon
       branch (`pnpm db:migrate` applies them in order), then set up the org
       webhook as in "GitHub integration" and check its `ping` in Recent Deliveries.
+- [ ] Apply migration `0004_p1_foundation` (watchers, notifications, saved views,
+      attachments, diagrams) to each Neon branch, then set up R2 as in "File storage (R2)".
 
 ## Security notes
 
