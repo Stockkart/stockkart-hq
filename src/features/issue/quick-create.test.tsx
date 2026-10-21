@@ -96,6 +96,29 @@ describe("QuickCreate (ISS-4)", () => {
     expect(router.refresh).not.toHaveBeenCalled();
   });
 
+  it("creates straight into a sprint picked with the keyboard (BLG-3)", async () => {
+    const user = userEvent.setup();
+    const sprints = {
+      STK: [
+        { id: "7d1a2c4e-1f3b-4c5d-8e9f-0a1b2c3d4e5f", name: "Sprint 7", state: "active" as const },
+      ],
+    };
+    render(<QuickCreate defaultProjectKey="STK" sprintOptionsByProject={sprints} />);
+    await user.click(screen.getByRole("button", { name: /create/i }));
+    await user.type(await screen.findByLabelText("Title"), "Ship it");
+    const sprint = screen.getByRole("combobox", { name: "Sprint" });
+    expect(sprint).toHaveTextContent("Backlog");
+    sprint.focus();
+    await user.keyboard("{Enter}{End}{Enter}");
+    expect(sprint).toHaveTextContent("Sprint 7");
+    await user.click(screen.getByRole("button", { name: "Create issue" }));
+    await waitFor(() =>
+      expect(actions.createIssueAction).toHaveBeenCalledWith(
+        expect.objectContaining({ sprintId: "7d1a2c4e-1f3b-4c5d-8e9f-0a1b2c3d4e5f" }),
+      ),
+    );
+  });
+
   it("pre-fills the description from the chosen type's template", async () => {
     const user = userEvent.setup();
     render(<QuickCreate defaultProjectKey="STK" />);

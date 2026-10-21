@@ -25,6 +25,7 @@ import {
   issues,
   labels,
   projects,
+  sprints,
   statuses,
   templates,
   users,
@@ -93,7 +94,13 @@ export function createIssueQueries(db: AppDatabase, { read = directRead }: Query
     async getProject(key: string) {
       const [project] = await read(
         db
-          .select({ id: projects.id, key: projects.key, name: projects.name })
+          .select({
+            id: projects.id,
+            key: projects.key,
+            name: projects.name,
+            // SPR-1: the default length of a new sprint.
+            sprintLengthDays: projects.sprintLengthDays,
+          })
           .from(projects)
           .where(and(eq(projects.key, key), isNull(projects.archivedAt)))
           .limit(1),
@@ -158,6 +165,7 @@ export function createIssueQueries(db: AppDatabase, { read = directRead }: Query
               componentId: issues.componentId,
               storyPoints: issues.storyPoints,
               dueDate: issues.dueDate,
+              sprintId: issues.sprintId,
               createdAt: issues.createdAt,
               updatedAt: issues.updatedAt,
               resolvedAt: issues.resolvedAt,
@@ -214,6 +222,7 @@ export function createIssueQueries(db: AppDatabase, { read = directRead }: Query
             : null,
         storyPoints: issue.storyPoints,
         dueDate: issue.dueDate,
+        sprintId: issue.sprintId,
         createdAt: issue.createdAt,
         updatedAt: issue.updatedAt,
         resolvedAt: issue.resolvedAt,
@@ -221,57 +230,71 @@ export function createIssueQueries(db: AppDatabase, { read = directRead }: Query
       };
     },
 
-    /** Side-panel options: statuses, components, labels, every HQ user, epics. */
+    /** Side-panel options: statuses, components, labels, every HQ user, epics, open sprints. */
     async getProjectMeta(projectId: IdRef): Promise<ProjectMeta> {
-      const [statusRows, componentRows, labelRows, userRows, epicRows] = await Promise.all([
-        read(
-          db
-            .select({ id: statuses.id, name: statuses.name, category: statuses.category })
-            .from(statuses)
-            .where(eq(statuses.projectId, projectId))
-            .orderBy(asc(statuses.position)),
-        ),
-        read(
-          db
-            .select({ id: components.id, name: components.name })
-            .from(components)
-            .where(eq(components.projectId, projectId))
-            .orderBy(asc(components.name)),
-        ),
-        read(
-          db
-            .select({ id: labels.id, name: labels.name, color: labels.color })
-            .from(labels)
-            .where(eq(labels.projectId, projectId))
-            .orderBy(asc(labels.name)),
-        ),
-        read(
-          db
-            .select({ id: users.id, name: users.name, email: users.email })
-            .from(users)
-            .orderBy(asc(users.name)),
-        ),
-        read(
-          db
-            .select(summaryColumns)
-            .from(issues)
-            .innerJoin(projects, eq(projects.id, issues.projectId))
-            .where(
-              and(
-                eq(issues.projectId, projectId),
-                eq(issues.type, "epic"),
-                isNull(issues.deletedAt),
+      const [statusRows, componentRows, labelRows, userRows, epicRows, sprintRows] =
+        await Promise.all([
+          read(
+            db
+              .select({ id: statuses.id, name: statuses.name, category: statuses.category })
+              .from(statuses)
+              .where(eq(statuses.projectId, projectId))
+              .orderBy(asc(statuses.position)),
+          ),
+          read(
+            db
+              .select({ id: components.id, name: components.name })
+              .from(components)
+              .where(eq(components.projectId, projectId))
+              .orderBy(asc(components.name)),
+          ),
+          read(
+            db
+              .select({ id: labels.id, name: labels.name, color: labels.color })
+              .from(labels)
+              .where(eq(labels.projectId, projectId))
+              .orderBy(asc(labels.name)),
+          ),
+          read(
+            db
+              .select({ id: users.id, name: users.name, email: users.email })
+              .from(users)
+              .orderBy(asc(users.name)),
+          ),
+          read(
+            db
+              .select(summaryColumns)
+              .from(issues)
+              .innerJoin(projects, eq(projects.id, issues.projectId))
+              .where(
+                and(
+                  eq(issues.projectId, projectId),
+                  eq(issues.type, "epic"),
+                  isNull(issues.deletedAt),
+                ),
+              )
+              .orderBy(desc(issues.number)),
+          ),
+          // Active first, then planned by start date (BLG-3 sprint picker).
+          read(
+            db
+              .select({ id: sprints.id, name: sprints.name, state: sprints.state })
+              .from(sprints)
+              .where(and(eq(sprints.projectId, projectId), ne(sprints.state, "closed")))
+              .orderBy(
+                sql`${sprints.state} = 'active' DESC`,
+                sql`${sprints.startDate} ASC NULLS LAST`,
+                asc(sprints.createdAt),
               ),
-            )
-            .orderBy(desc(issues.number)),
-        ),
-      ]);
+          ),
+        ]);
       return {
         statuses: statusRows,
         components: componentRows,
         labels: labelRows,
         users: userRows,
         epics: epicRows.map(toSummary),
+        sprints: sprintRows,
       };
     },
 

@@ -14,8 +14,10 @@ backlog with drag and drop, a board, My Work with recently viewed issues, person
 can be promoted to issues, and a ⌘K palette that searches issues, docs and comments); and
 docs: a page tree with drag and drop, docs from 13 built-in templates, an autosaving editor
 with optimistic locking, tables, callouts and Mermaid diagrams, ADRs with numbering and a
-log, and a one-time handbook import. The database schema covers all of Phase 1; sprints,
-roadmap, diagrams, incidents and services are still "coming soon".
+log, and a one-time handbook import. Sprints (SPR-1…4) are in too: sprint sections on the
+backlog with Start/Complete, a board scoped to the active sprint, and a sprints page with a
+burndown and velocity reconstructed from the activity log. The database schema covers all of
+Phase 1; roadmap, diagrams, incidents and services are still "coming soon".
 
 ## Stack
 
@@ -27,6 +29,7 @@ roadmap, diagrams, incidents and services are still "coming soon".
 | UI        | Tailwind CSS 4, shadcn/ui components, lucide-react                                      |
 | Editor    | Tiptap 3 (MIT packages only), loaded client-only                                        |
 | Planning  | dnd-kit (MIT) for backlog and board drag and drop                                       |
+| Charts    | Recharts (MIT, client-only) for the burndown and velocity charts                        |
 | Diagrams  | Mermaid (MIT, strict mode, client-only) with DOMPurify (Apache-2.0 option) on its SVG   |
 | Import    | markdown-it (MIT) for the handbook import                                               |
 | Tests     | Vitest + Testing Library (unit), Playwright (smoke)                                     |
@@ -54,7 +57,8 @@ All dependency versions are pinned exactly.
 6. Sign-out ends the HQ session and calls `/auth/logout`.
 
 `src/proxy.ts` (Next.js 16's name for `middleware.ts`) denies every route without a session
-except `/login`, `/api/auth/*`, `/api/webhooks/github` (placeholder, returns 501) and static
+except `/login`, `/api/auth/*`, `/api/webhooks/github` (authenticated by its HMAC signature
+instead, see "GitHub integration") and static
 build assets. Pages redirect to `/login`; API routes get `401`. Server code re-checks with
 `requireSession()`.
 
@@ -89,7 +93,7 @@ nobody can sign in.
 | `AUTH_SECRET`                                                            | yes      | Auth.js encryption secret, ≥ 32 random bytes                                                                         |
 | `AUTH_URL`                                                               | no       | Public URL of the app. Not needed on Vercel. Set it for `next start` elsewhere, and leave it unset rather than empty |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | later    | Attachments (Phase 2). Backups use GitHub secrets instead                                                            |
-| `GITHUB_WEBHOOK_SECRET`                                                  | later    | GitHub webhook HMAC (Phase 2)                                                                                        |
+| `GITHUB_WEBHOOK_SECRET`                                                  | no       | GitHub webhook HMAC secret (`openssl rand -hex 32`). Unset: the app runs, the webhook answers 503 and does nothing   |
 | `HQ_LOG_QUERIES`                                                         | no       | `1` logs every database round trip per request (counts and ms only, never SQL). Off by default; see "Performance"    |
 
 Generate `AUTH_SECRET` with:
@@ -222,6 +226,74 @@ every plan; see [Vercel regions](https://vercel.com/docs/regions) and
 [configuring function regions](https://vercel.com/docs/functions/configuring-functions/region),
 checked 2026-10-20). If Neon moves, change `regions` with it.
 
+## GitHub integration
+
+Branches, pull requests and commits that mention an issue key show in the issue's
+**Development** panel, and a merged PR that says "Fixes STK-123" moves the issue to Done
+(SPEC §4.15, GH-1…GH-4). It is one **organisation webhook**; there is no GitHub App and HQ
+holds no GitHub token.
+
+### Setup (once, by an org owner)
+
+The webhook needs the deployed **HTTPS** URL; GitHub cannot reach a local `127.0.0.1`.
+
+1. Generate the secret: `openssl rand -hex 32`. Keep it out of files and chat.
+2. Vercel → the HQ project → Settings → Environment Variables: add
+   `GITHUB_WEBHOOK_SECRET` with that value for **Production**, then redeploy. Until it is
+   set, the webhook answers `503` and accepts nothing.
+3. GitHub → `Stockkart` organisation → Settings → Webhooks → **Add webhook**:
+   - Payload URL: `https://<your-hq-domain>/api/webhooks/github`
+   - Content type: `application/json`
+   - Secret: the same value as in step 2
+   - SSL verification: enabled
+   - "Let me select individual events": **Pull requests**, **Pushes**, **Branch or tag
+     creation** (untick everything else, including "Issues")
+   - Active: ticked → **Add webhook**
+4. GitHub sends a `ping` at once. Open the webhook → **Recent Deliveries**: the ping should
+   show `200`. Each delivery shows the request, the response code and body (e.g.
+   `{"ok":true,"linked":2,...}`), and can be redelivered from there (a redelivery of an
+   applied delivery changes nothing). `401` means the secrets differ; `503` means
+   `GITHUB_WEBHOOK_SECRET` is not set on that deployment.
+5. Each HQ user sets their GitHub username under **Settings → Profile**, so their PRs and
+   commits show with their HQ name. Usernames are unique in HQ but not verified against
+   GitHub (first come, display only: it never grants access or changes an issue).
+
+### Behaviour
+
+| Event                                                                                             | What HQ does                                                                                                                         |
+| ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Branch created or pushed, PR opened/edited/synchronized, or commit pushed, mentioning `STK-123`   | Links the branch, PR or commit to the issue. No status change                                                                        |
+| Any PR state change (opened, draft, ready, closed unmerged, reopened)                             | Updates the linked PR's state. No status change (opening a PR does **not** move the issue to In Review)                              |
+| PR merged into the repo's default branch whose title or body says "Closes/Fixes/Resolves STK-123" | Moves each referenced issue to the project's done status ("Done"), unless it is already done; the Activity tab shows it as by GitHub |
+| PR merged without a closing keyword, or merged into another branch                                | Links only                                                                                                                           |
+| Repository outside the `Stockkart` organisation                                                   | Ignored (`200`, no effect)                                                                                                           |
+| PRs and commits from before the webhook existed                                                   | Not handled (no backfill)                                                                                                            |
+
+Keys match in any case (`stk-42-oom-ocr` links STK-42), for every project key; unknown keys
+are ignored. Closing keywords are `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`,
+`resolve`, `resolves`, `resolved`, optionally with a colon, and may list several keys
+("Fixes STK-1, STK-2"). A push links at most its first 100 commits.
+
+Security: every delivery must carry a valid `X-Hub-Signature-256` (HMAC-SHA256 of the raw
+body, compared in constant time) before anything is parsed; bodies over 1 MB get `413`;
+each `X-GitHub-Delivery` is applied once (remembered for 30 days). The delivery id is not
+signed, so it only dedupes redeliveries; replays are harmless because every rule is
+idempotent on its own (a PR's state never moves back to an older event's, and a merge
+closes its issues once). Payloads are validated with Zod, and links must point into the
+delivering repository; logs hold the event, delivery id, repository and counts, never the
+payload or the secret.
+
+### Local testing
+
+`scripts/send-test-webhook.ts` signs a synthetic delivery with `GITHUB_WEBHOOK_SECRET` from
+your shell and posts it to a running HQ (default `http://127.0.0.1:3000`; only https URLs or
+plain http to `127.0.0.1`/`localhost` are accepted). Run HQ with the same secret:
+
+```bash
+GITHUB_WEBHOOK_SECRET='<same value as the server>' pnpm exec tsx scripts/send-test-webhook.ts \
+  --event pr-opened --key STK-1 --pr 7      # also: ping, create, push, pr-merged
+```
+
 ## Deploying to Vercel
 
 1. Import the GitHub repo in Vercel (framework preset: Next.js; Vercel runs `pnpm install`
@@ -286,6 +358,9 @@ gunzip -c stockkart-hq-<timestamp>.sql.gz | psql "$RESTORE_DATABASE_URL"
 - [ ] Sign in as a `SUPER_USER` (you should see "My Work") and as an OWNER/CASHIER (you should
       see "Access denied").
 - [ ] Later: add the backup secrets listed under "Backups" and an R2 lifecycle rule.
+- [ ] Apply migrations `0002_sprint_activity` and `0003_github_integration` to each Neon
+      branch (`pnpm db:migrate` applies them in order), then set up the org
+      webhook as in "GitHub integration" and check its `ping` in Recent Deliveries.
 
 ## Security notes
 

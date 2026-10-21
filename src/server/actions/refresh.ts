@@ -20,9 +20,20 @@ export const DOC_PAGE = "/[projectKey]/docs/[id]";
 export const TODOS = "/todos";
 /** The ADR log lists the keys of the (live) issues each ADR links to. */
 export const ADR_LOG = "/[projectKey]/adrs";
+/** SPR-1…4: the sprint list (tallies, burndown, velocity) and one sprint's page. */
+export const SPRINTS = "/[projectKey]/sprints";
+export const SPRINT_PAGE = "/[projectKey]/sprints/[sprintId]";
+/** The signed-in user's profile (GitHub username, GH-4). */
+export const PROFILE = "/settings/profile";
 
 /** Every page that lists or shows issue fields. */
 export const ISSUE_VIEWS = [ISSUE_LIST, ISSUE_PAGE, BACKLOG, BOARD, MY_WORK] as const;
+
+/**
+ * Pages that show sprints or sprint membership: the backlog's sprint sections, the board's
+ * sprint scope, the sprint pages and the Sprint field of the issue page.
+ */
+export const SPRINT_VIEWS = [BACKLOG, BOARD, SPRINTS, SPRINT_PAGE, ISSUE_PAGE] as const;
 
 export function refreshPages(...patterns: readonly string[]): void {
   for (const pattern of new Set(patterns)) revalidatePath(pattern, "page");

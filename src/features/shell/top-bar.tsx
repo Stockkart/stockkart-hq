@@ -1,10 +1,12 @@
 import { Bell, LogOut } from "lucide-react";
+import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { QuickCreate } from "@/features/issue/quick-create";
 import { CommandPalette } from "@/features/search/command-palette";
 import { type IssueType } from "@/lib/issues/constants";
 import { type RichTextDoc } from "@/lib/rich-text";
+import { type SprintOption } from "@/lib/sprints/views";
 import { signOutAction } from "@/server/actions/auth";
 
 import { DEFAULT_PROJECT_KEY } from "./nav-items";
@@ -13,6 +15,8 @@ interface TopBarProps {
   userName: string;
   /** Quick-create templates, loaded with the page. */
   issueTemplates?: Partial<Record<IssueType, RichTextDoc>>;
+  /** Quick-create sprint options per project key, loaded with the page. */
+  sprintOptions?: Record<string, SprintOption[]>;
 }
 
 function initials(name: string): string {
@@ -22,24 +26,29 @@ function initials(name: string): string {
   return letters.toUpperCase() || "?";
 }
 
-export function TopBar({ userName, issueTemplates }: TopBarProps) {
+export function TopBar({ userName, issueTemplates, sprintOptions }: TopBarProps) {
   return (
     <header className="flex h-14 items-center gap-3 border-b px-4">
       {/* ⌘K search (SRCH-1); notifications (NTF-1) are still a placeholder. */}
       <div className="flex flex-1 items-center">
         <CommandPalette defaultProjectKey={DEFAULT_PROJECT_KEY} />
       </div>
-      <QuickCreate defaultProjectKey={DEFAULT_PROJECT_KEY} initialTemplates={issueTemplates} />
+      <QuickCreate
+        defaultProjectKey={DEFAULT_PROJECT_KEY}
+        initialTemplates={issueTemplates}
+        sprintOptionsByProject={sprintOptions}
+      />
       <Button variant="ghost" size="icon" disabled aria-label="Notifications (coming soon)">
         <Bell aria-hidden="true" />
       </Button>
-      <span
-        title={userName}
-        className="flex size-8 items-center justify-center rounded-full bg-secondary text-xs font-semibold"
+      <Link
+        href="/settings/profile"
+        title={`${userName}: profile`}
+        className="flex size-8 items-center justify-center rounded-full bg-secondary text-xs font-semibold outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
       >
         <span aria-hidden="true">{initials(userName)}</span>
-        <span className="sr-only">Signed in as {userName}</span>
-      </span>
+        <span className="sr-only">Signed in as {userName}. Profile settings</span>
+      </Link>
       <form action={signOutAction}>
         <Button type="submit" variant="ghost" size="sm">
           <LogOut aria-hidden="true" />

@@ -71,8 +71,17 @@ export const LINK_RELATION_LABELS: Record<LinkRelation, string> = {
 };
 
 /** `entity_links` / `comments` / `activity` polymorphic targets (SPEC §8). `user` is the
- * target of @mentions (ISS-7, DOC-9, MY-1). */
-export const ENTITY_TYPES = ["issue", "doc", "diagram", "incident", "comment", "user"] as const;
+ * target of @mentions (ISS-7, DOC-9, MY-1). `sprint` is the subject of the sprint
+ * lifecycle activity (SPR-1/2: `sprint_started` holds the burndown's start snapshot). */
+export const ENTITY_TYPES = [
+  "issue",
+  "doc",
+  "diagram",
+  "incident",
+  "comment",
+  "user",
+  "sprint",
+] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 /** Things that can be commented on (SPEC §8 `comments.entity_type`). */

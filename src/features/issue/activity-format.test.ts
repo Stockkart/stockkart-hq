@@ -58,4 +58,31 @@ describe("describeActivity (ISS-8)", () => {
       { verb: "added label", from: null, to: null },
     );
   });
+
+  it("words GitHub status changes (GH-3)", () => {
+    const github = entry({
+      actorName: null,
+      field: "status",
+      fromValue: "s-todo",
+      toValue: "s-done",
+      meta: { source: "github", repo: "Stockkart/inventory-api", pr: 118, mergedBy: "imf-ali" },
+    });
+    expect(describeActivity(github, lookups)).toEqual({
+      actor: "GitHub",
+      verb: "moved this to",
+      from: null,
+      to: "Done",
+      note: "PR #118 in inventory-api merged by imf-ali",
+    });
+    expect(
+      describeActivity({ ...github, meta: { source: "github", pr: 7, mergedBy: null } }, lookups)
+        .note,
+    ).toBe("PR #7 merged");
+    // Only system rows (no HQ actor) are attributed to GitHub.
+    expect(describeActivity({ ...github, actorName: "Ada" }, lookups)).toEqual({
+      verb: "changed status",
+      from: "Todo",
+      to: "Done",
+    });
+  });
 });

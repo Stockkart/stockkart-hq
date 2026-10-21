@@ -26,7 +26,8 @@ comments and commit bodies.
   Check the license of every new package (MIT, Apache-2.0, BSD or ISC; no GPL or paid add-ons).
   The editor is Tiptap rather than BlockNote because BlockNote is MPL-2.0;
   `fractional-indexing` is CC0-1.0 (public domain dedication), accepted explicitly.
-  DOMPurify is dual-licensed MPL-2.0 OR Apache-2.0; we use it under Apache-2.0. mermaid stays
+  DOMPurify is dual-licensed MPL-2.0 OR Apache-2.0; we use it under Apache-2.0. Recharts is
+  MIT (its d3 parts via `victory-vendor` are ISC). mermaid stays
   on 11.x while CI runs Node 20 (12.x needs Node 22).
 
 ## Layout
@@ -34,12 +35,14 @@ comments and commit bodies.
 ```
 src/
   app/(auth)/login/       login page + client form
-  app/(app)/              signed-in app shell (layout calls requirePageSession); my-work/, todos/
+  app/(app)/              signed-in app shell (layout calls requirePageSession); my-work/, todos/,
+                          settings/profile/
   app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, backlog/, board/, docs/
-                          (tree layout, list, docs/[id] editor), adrs/, and a "coming soon"
-                          [section] placeholder for the rest (sprints, roadmap, …)
+                          (tree layout, list, docs/[id] editor), adrs/, sprints/ (list,
+                          sprints/[sprintId]), and a "coming soon" [section] placeholder for
+                          the rest (roadmap, …)
   app/api/auth/           Auth.js route handlers
-  app/api/webhooks/github placeholder (501) until GH-1
+  app/api/webhooks/github GitHub org webhook (GH-1…GH-3): HMAC-verified, logic in server/github/
   proxy.ts                default-deny gate (Next.js 16 name for middleware.ts)
   env.ts                  Zod-validated server env (throws on import if invalid)
   server/auth/            Auth.js config, inventory-api client, rate limit, session policy
@@ -47,15 +50,19 @@ src/
   server/services/        DB logic as factories (createIssueService(db) …); index.ts wires db
   server/db/              Drizzle schema, client, seed, AppDatabase type
   server/import/          handbook import (IMP-1…3), driven by scripts/import-handbook.ts
+  server/github/          webhook: signature check, Zod payloads, pure event → plan rules
+                          (services/github.ts applies a plan in ONE statement, deduped by
+                          delivery id; never add a webhook write outside that statement)
   lib/                    isomorphic code: constants, Zod input schemas, keys, rich text,
                           markdown → editor JSON (lib/markdown)
-  features/               feature UI (shell/, issue/, planning/, todos/, search/, docs/, editor/)
+  features/               feature UI (shell/, issue/, planning/, sprints/, todos/, search/,
+                          docs/, editor/)
   features/editor/        shared Tiptap editor (client-only; `variant="doc"` adds tables,
                           callouts and Mermaid blocks) and the safe JSON renderer
   components/ui/          shadcn/ui components (owned code, edit freely)
   test/                   test fakes and the DB-test helpers
 drizzle/                  generated SQL migrations (committed)
-scripts/                  seed.ts, import-handbook.ts
+scripts/                  seed.ts, import-handbook.ts, send-test-webhook.ts (signed local delivery)
 e2e/                      Playwright smoke tests
 ```
 
@@ -100,7 +107,10 @@ e2e/                      Playwright smoke tests
   the lock wait), use `RunAtomic` (`db.batch()` on Neon, a transaction on node-postgres) with
   separate statements, as the mention sync does. Parse raw results with `rowsOf(result, zodRow)`.
 - `activity` is append-only: record `from_value` → `to_value` as raw text (ids, numbers,
-  ISO dates) in the same statement as the change; the UI resolves names.
+  ISO dates) in the same statement as the change; the UI resolves names. The sprint
+  burndown and velocity (SPR-3/4, `lib/sprints/burndown.ts`) replay the `sprint`, `status`
+  and `storyPoints` rows, so every write of those fields must log them; sprint lifecycle
+  events use `entity_type = 'sprint'` (`sprint_started.meta` is the start snapshot).
 - Rich text is stored as editor JSON (`RichTextDoc`, validated by `richTextDocSchema`) plus
   plain text. Render it with `RichTextView`; never render stored HTML.
 - Docs use optimistic locking (§7.4): a content save is `UPDATE … WHERE version = base`

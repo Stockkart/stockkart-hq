@@ -3,11 +3,16 @@ import { db, read, runAtomic } from "@/server/db/client";
 import { createCommentService } from "./comments";
 import { createDocQueries } from "./doc-queries";
 import { createDocService } from "./docs";
+import { createGithubService } from "./github";
+import { createGithubQueries } from "./github-queries";
 import { createIssueQueries } from "./issue-queries";
 import { createIssueService } from "./issues";
 import { createPlanningService } from "./planning";
 import { createPlanningQueries } from "./planning-queries";
+import { createProfileService } from "./profile";
 import { createSearchService } from "./search";
+import { createSprintQueries } from "./sprint-queries";
+import { createSprintService } from "./sprints";
 import { createTodoService } from "./todos";
 
 // Wiring only: the real Neon database for the app. Tests build the same services on a
@@ -22,3 +27,8 @@ export const todoService = createTodoService(db, { read });
 export const searchService = createSearchService(db);
 export const docService = createDocService(db, { runAtomic, read });
 export const docQueries = createDocQueries(db, { read });
+export const sprintService = createSprintService(db, { runAtomic, read });
+export const sprintQueries = createSprintQueries(db, { read });
+export const githubService = createGithubService(db);
+export const githubQueries = createGithubQueries(db, { read });
+export const profileService = createProfileService(db, { read });

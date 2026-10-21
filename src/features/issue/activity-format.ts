@@ -14,6 +14,8 @@ export interface ActivityLookups {
   statuses: Map<string, string>;
   users: Map<string, string>;
   components: Map<string, string>;
+  /** Open sprints by id; a closed or deleted sprint shows as "an earlier sprint". */
+  sprints?: Map<string, string>;
   issueKeys: Record<string, string>;
 }
 
@@ -22,6 +24,10 @@ export interface ActivitySentence {
   verb: string;
   from: string | null;
   to: string | null;
+  /** Who did it, when not an HQ user (GitHub events have no `actor_id`). */
+  actor?: string;
+  /** Extra context, e.g. "PR #118 in inventory-api merged by imf-ali". */
+  note?: string;
 }
 
 const FIELD_LABELS: Record<string, string> = {
@@ -34,11 +40,27 @@ const FIELD_LABELS: Record<string, string> = {
   storyPoints: "story points",
   dueDate: "due date",
   parent: "parent",
+  sprint: "sprint",
 };
 
 const metaSchema = z
   .object({ name: z.string().optional(), relation: z.enum(LINK_RELATIONS).optional() })
   .catch({});
+
+/** GH-3 activity: written by the webhook with `actor_id` null and this meta. */
+const githubMetaSchema = z.object({
+  source: z.literal("github"),
+  repo: z.string().optional(),
+  pr: z.number().int().nullish(),
+  mergedBy: z.string().nullish(),
+});
+
+function githubNote(meta: z.infer<typeof githubMetaSchema>): string | undefined {
+  if (meta.pr === null || meta.pr === undefined) return undefined;
+  const repo = meta.repo?.split("/").at(-1);
+  const pr = repo ? `PR #${meta.pr} in ${repo}` : `PR #${meta.pr}`;
+  return meta.mergedBy ? `${pr} merged by ${meta.mergedBy}` : `${pr} merged`;
+}
 
 function display(field: string | null, value: string | null, lookups: ActivityLookups) {
   if (value === null) return null;
@@ -51,6 +73,8 @@ function display(field: string | null, value: string | null, lookups: ActivityLo
       return lookups.components.get(value) ?? "a deleted component";
     case "parent":
       return lookups.issueKeys[value] ?? "a deleted issue";
+    case "sprint":
+      return lookups.sprints?.get(value) ?? "an earlier sprint";
     case "priority": {
       const priority = PRIORITIES.find((p) => String(p) === value);
       return priority === undefined ? value : PRIORITY_LABELS[priority];
@@ -61,6 +85,22 @@ function display(field: string | null, value: string | null, lookups: ActivityLo
 }
 
 export function describeActivity(entry: ActivityView, lookups: ActivityLookups): ActivitySentence {
+  const github = githubMetaSchema.safeParse(entry.meta);
+  // GitHub only ever writes status changes; anything else from it falls through below.
+  if (
+    github.success &&
+    entry.actorName === null &&
+    entry.action === "updated" &&
+    entry.field === "status"
+  ) {
+    return {
+      actor: "GitHub",
+      verb: "moved this to",
+      from: null,
+      to: display("status", entry.toValue, lookups) ?? "none",
+      note: githubNote(github.data),
+    };
+  }
   const meta = metaSchema.parse(entry.meta ?? {});
   switch (entry.action) {
     case "created":

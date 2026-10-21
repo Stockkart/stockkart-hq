@@ -34,9 +34,10 @@ export const DEFAULT_PROJECT_KEY = "STK";
 const projectHref = (section: string) => `/${DEFAULT_PROJECT_KEY}/${section}`;
 
 /**
- * SPEC §5.1 app shell. My Work, Todos, Backlog, Board, Issues, Docs and ADRs work in Phase 1;
- * Sprints, Roadmap, Diagrams, Incidents and Services show the "coming soon" placeholder
- * (`[projectKey]/[section]`) until their slice lands. Settings has no page yet.
+ * SPEC §5.1 app shell. My Work, Todos, Backlog, Board, Issues, Sprints, Docs and ADRs work;
+ * Roadmap, Diagrams, Incidents and Services show the "coming soon" placeholder
+ * (`[projectKey]/[section]`) until their slice lands. Settings opens the profile (GitHub
+ * username, GH-4).
  */
 export const NAV_SECTIONS: NavSection[] = [
   {
@@ -61,6 +62,6 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    items: [{ label: "Settings", icon: Settings }],
+    items: [{ label: "Settings", icon: Settings, href: "/settings/profile" }],
   },
 ];
