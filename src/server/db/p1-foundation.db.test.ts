@@ -152,6 +152,12 @@ describeDb("P1 foundation schema (Postgres)", () => {
       "attachments_storage_key_unique",
     );
     const other = { ...row, storageKey: attachmentKey("x.png") };
+    for (const storageKey of ["backups/stockkart-hq.sql.gz", "tmp/x", `attachments/${id}/../x`]) {
+      expect(
+        await violation(db.insert(attachments).values({ ...other, id: randomUUID(), storageKey })),
+        storageKey,
+      ).toBe("attachments_storage_key_layout");
+    }
     expect(
       await violation(db.insert(attachments).values({ ...other, id: randomUUID(), sizeBytes: 0 })),
     ).toBe("attachments_size_range");
@@ -201,9 +207,19 @@ describeDb("P1 foundation schema (Postgres)", () => {
       expect(hits.map((hit) => hit.id)).toContain(created?.id);
     });
 
-    it("refuses a scene of 2 MB or more", async () => {
+    it("refuses a scene of 2 MB or more, and a thumbnail key outside its layout", async () => {
       const big = { blob: "x".repeat(DIAGRAM_SCENE_MAX_BYTES) };
       expect(await violation(newDiagram({ scene: big }))).toBe("diagrams_scene_size");
+      expect(await violation(newDiagram({ thumbnailKey: "backups/stockkart-hq.sql.gz" }))).toBe(
+        "diagrams_thumbnail_key_layout",
+      );
+    });
+
+    it("saves a scene whose label text is too long for one tsvector", async () => {
+      // ~1.4 MB of distinct words would exceed the 1 MB tsvector cap without the left() cut.
+      const sceneText = Array.from({ length: 120_000 }, (_, index) => `label${index}`).join(" ");
+      const [created] = await newDiagram({ sceneText });
+      expect(created?.version).toBe(1);
     });
 
     it("keeps one snapshot per version and serves only saved thumbnails", async () => {

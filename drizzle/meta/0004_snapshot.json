@@ -1,5 +1,5 @@
 {
-  "id": "a05b3ed9-f237-4498-8630-e22a9458a702",
+  "id": "f58b92b7-e509-4d1c-a878-a180ded851e7",
   "prevId": "b66839fc-1255-47d2-9a99-d33fa999241d",
   "version": "7",
   "dialect": "postgresql",
@@ -290,6 +290,10 @@
         "attachments_dimensions_positive": {
           "name": "attachments_dimensions_positive",
           "value": "(\"attachments\".\"width\" IS NULL OR \"attachments\".\"width\" > 0) AND (\"attachments\".\"height\" IS NULL OR \"attachments\".\"height\" > 0)"
+        },
+        "attachments_storage_key_layout": {
+          "name": "attachments_storage_key_layout",
+          "value": "\"attachments\".\"storage_key\" ~ '^attachments/[0-9a-f-]{36}/[A-Za-z0-9-][A-Za-z0-9._-]{0,99}$'"
         }
       },
       "isRLSEnabled": false
@@ -631,6 +635,10 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
+        "diagram_versions_version_positive": {
+          "name": "diagram_versions_version_positive",
+          "value": "\"diagram_versions\".\"version\" > 0"
+        },
         "diagram_versions_scene_size": {
           "name": "diagram_versions_scene_size",
           "value": "octet_length(\"diagram_versions\".\"scene\"::text) < 2097152"
@@ -730,7 +738,7 @@
           "primaryKey": false,
           "notNull": false,
           "generated": {
-            "as": "setweight(to_tsvector('english'::regconfig, coalesce(\"title\", '')), 'A') || setweight(to_tsvector('english'::regconfig, coalesce(\"scene_text\", '')), 'B')",
+            "as": "setweight(to_tsvector('english'::regconfig, coalesce(\"title\", '')), 'A') || setweight(to_tsvector('english'::regconfig, left(coalesce(\"scene_text\", ''), 200000)), 'B')",
             "type": "stored"
           }
         },
@@ -852,6 +860,10 @@
         "diagrams_scene_size": {
           "name": "diagrams_scene_size",
           "value": "octet_length(\"diagrams\".\"scene\"::text) < 2097152"
+        },
+        "diagrams_thumbnail_key_layout": {
+          "name": "diagrams_thumbnail_key_layout",
+          "value": "\"diagrams\".\"thumbnail_key\" IS NULL OR \"diagrams\".\"thumbnail_key\" ~ '^thumbnails/diagrams/[0-9a-f-]{36}[.]png$'"
         }
       },
       "isRLSEnabled": false
@@ -2695,6 +2707,27 @@
             },
             {
               "expression": "read_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "notifications_user_created_idx": {
+          "name": "notifications_user_created_idx",
+          "columns": [
+            {
+              "expression": "user_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"

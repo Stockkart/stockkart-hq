@@ -732,6 +732,8 @@ export const notifications = pgTable(
       table.readAt,
       table.createdAt.desc(),
     ),
+    // "All notifications", read and unread together, newest first.
+    index("notifications_user_created_idx").on(table.userId, table.createdAt.desc()),
   ],
 );
 
@@ -806,6 +808,12 @@ export const attachments = pgTable(
       "attachments_dimensions_positive",
       sql`(${table.width} IS NULL OR ${table.width} > 0) AND (${table.height} IS NULL OR ${table.height} > 0)`,
     ),
+    // The `attachmentKey` layout only (server/storage/keys.ts), so a row can never point the
+    // download route at `backups/` or `tmp/`. The storage module checks it again.
+    check(
+      "attachments_storage_key_layout",
+      sql`${table.storageKey} ~ '^attachments/[0-9a-f-]{36}/[A-Za-z0-9-][A-Za-z0-9._-]{0,99}$'`,
+    ),
   ],
 );
 
@@ -836,8 +844,10 @@ export const diagrams = pgTable(
     /** List order per project; a fractional key like `docs.position`. */
     position: fractionalKey("position").notNull(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    // A tsvector is capped at 1 MB, so only the first 200 000 characters of the labels are
+    // indexed; a huge scene can never make its own save fail.
     search: tsvector("search").generatedAlwaysAs(
-      sql`setweight(to_tsvector('english'::regconfig, coalesce("title", '')), 'A') || setweight(to_tsvector('english'::regconfig, coalesce("scene_text", '')), 'B')`,
+      sql`setweight(to_tsvector('english'::regconfig, coalesce("title", '')), 'A') || setweight(to_tsvector('english'::regconfig, left(coalesce("scene_text", ''), 200000)), 'B')`,
     ),
     ...timestamps,
   },
@@ -848,6 +858,11 @@ export const diagrams = pgTable(
     check(
       "diagrams_scene_size",
       sql`octet_length(${table.scene}::text) < ${sql.raw(String(DIAGRAM_SCENE_MAX_BYTES))}`,
+    ),
+    // The `diagramThumbnailKey` layout only (see `attachments_storage_key_layout`).
+    check(
+      "diagrams_thumbnail_key_layout",
+      sql`${table.thumbnailKey} IS NULL OR ${table.thumbnailKey} ~ '^thumbnails/diagrams/[0-9a-f-]{36}[.]png$'`,
     ),
   ],
 );
@@ -868,6 +883,7 @@ export const diagramVersions = pgTable(
   },
   (table) => [
     uniqueIndex("diagram_versions_diagram_version_unique").on(table.diagramId, table.version),
+    check("diagram_versions_version_positive", sql`${table.version} > 0`),
     check(
       "diagram_versions_scene_size",
       sql`octet_length(${table.scene}::text) < ${sql.raw(String(DIAGRAM_SCENE_MAX_BYTES))}`,

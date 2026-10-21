@@ -20,7 +20,8 @@ CREATE TABLE "attachments" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "attachments_storage_key_unique" UNIQUE("storage_key"),
 	CONSTRAINT "attachments_size_range" CHECK ("attachments"."size_bytes" BETWEEN 1 AND 10485760),
-	CONSTRAINT "attachments_dimensions_positive" CHECK (("attachments"."width" IS NULL OR "attachments"."width" > 0) AND ("attachments"."height" IS NULL OR "attachments"."height" > 0))
+	CONSTRAINT "attachments_dimensions_positive" CHECK (("attachments"."width" IS NULL OR "attachments"."width" > 0) AND ("attachments"."height" IS NULL OR "attachments"."height" > 0)),
+	CONSTRAINT "attachments_storage_key_layout" CHECK ("attachments"."storage_key" ~ '^attachments/[0-9a-f-]{36}/[A-Za-z0-9-][A-Za-z0-9._-]{0,99}$')
 );
 --> statement-breakpoint
 CREATE TABLE "diagram_versions" (
@@ -31,6 +32,7 @@ CREATE TABLE "diagram_versions" (
 	"scene" jsonb NOT NULL,
 	"author_id" uuid,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "diagram_versions_version_positive" CHECK ("diagram_versions"."version" > 0),
 	CONSTRAINT "diagram_versions_scene_size" CHECK (octet_length("diagram_versions"."scene"::text) < 2097152)
 );
 --> statement-breakpoint
@@ -48,11 +50,12 @@ CREATE TABLE "diagrams" (
 	"template_id" uuid,
 	"position" text COLLATE "C" NOT NULL,
 	"deleted_at" timestamp with time zone,
-	"search" "tsvector" GENERATED ALWAYS AS (setweight(to_tsvector('english'::regconfig, coalesce("title", '')), 'A') || setweight(to_tsvector('english'::regconfig, coalesce("scene_text", '')), 'B')) STORED,
+	"search" "tsvector" GENERATED ALWAYS AS (setweight(to_tsvector('english'::regconfig, coalesce("title", '')), 'A') || setweight(to_tsvector('english'::regconfig, left(coalesce("scene_text", ''), 200000)), 'B')) STORED,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "diagrams_version_positive" CHECK ("diagrams"."version" > 0),
-	CONSTRAINT "diagrams_scene_size" CHECK (octet_length("diagrams"."scene"::text) < 2097152)
+	CONSTRAINT "diagrams_scene_size" CHECK (octet_length("diagrams"."scene"::text) < 2097152),
+	CONSTRAINT "diagrams_thumbnail_key_layout" CHECK ("diagrams"."thumbnail_key" IS NULL OR "diagrams"."thumbnail_key" ~ '^thumbnails/diagrams/[0-9a-f-]{36}[.]png$')
 );
 --> statement-breakpoint
 CREATE TABLE "notifications" (
@@ -109,6 +112,7 @@ CREATE UNIQUE INDEX "diagram_versions_diagram_version_unique" ON "diagram_versio
 CREATE INDEX "diagrams_project_position_idx" ON "diagrams" USING btree ("project_id","position");--> statement-breakpoint
 CREATE INDEX "diagrams_search_idx" ON "diagrams" USING gin ("search");--> statement-breakpoint
 CREATE INDEX "notifications_user_read_created_idx" ON "notifications" USING btree ("user_id","read_at","created_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "notifications_user_created_idx" ON "notifications" USING btree ("user_id","created_at" DESC NULLS LAST);--> statement-breakpoint
 CREATE UNIQUE INDEX "saved_views_user_project_name_unique" ON "saved_views" USING btree ("user_id","project_id","name");--> statement-breakpoint
 CREATE INDEX "saved_views_project_shared_idx" ON "saved_views" USING btree ("project_id") WHERE "saved_views"."shared";--> statement-breakpoint
 CREATE INDEX "watchers_user_idx" ON "watchers" USING btree ("user_id");--> statement-breakpoint

@@ -8,7 +8,14 @@ export type DiagramKind = (typeof DIAGRAM_KINDS)[number];
 
 /**
  * Upper bound of a stored scene, in bytes of its JSON text (§7.3 expects 50–500 KB). The
- * database enforces it with a CHECK on `octet_length(scene::text)`, so validate input against
- * the same number before writing. Embedded images live in R2, never in the scene.
+ * database enforces it with a CHECK on `octet_length(scene::text) < DIAGRAM_SCENE_MAX_BYTES`,
+ * so a scene AT the limit is refused. Embedded images live in R2, never in the scene.
  */
 export const DIAGRAM_SCENE_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * What the app accepts, measured as UTF-8 bytes of `JSON.stringify(scene)`. Postgres prints
+ * jsonb with `", "` and `": "` separators, so `scene::text` is longer than compact JSON;
+ * this headroom keeps an accepted scene from failing the CHECK (a 500 instead of a message).
+ */
+export const DIAGRAM_SCENE_INPUT_MAX_BYTES = 1.5 * 1024 * 1024;
