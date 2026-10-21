@@ -111,6 +111,10 @@ export function describeActivity(entry: ActivityView, lookups: ActivityLookups):
       return { verb: "added label", from: null, to: meta.name ?? null };
     case "label_removed":
       return { verb: "removed label", from: meta.name ?? null, to: null };
+    case "attachment_added":
+      return { verb: "attached", from: null, to: meta.name ?? "a file" };
+    case "attachment_removed":
+      return { verb: "removed attachment", from: meta.name ?? "a file", to: null };
     case "link_added":
     case "link_removed": {
       const other = entry.action === "link_added" ? entry.toValue : entry.fromValue;

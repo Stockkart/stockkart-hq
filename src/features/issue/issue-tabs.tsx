@@ -4,10 +4,16 @@ import { useMemo, useRef, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  AttachmentUploadProvider,
+  useAttachmentUpload,
+} from "@/features/attachments/upload-context";
 import { LazyRichTextEditor } from "@/features/editor/lazy-rich-text-editor";
 import { RichTextView } from "@/features/editor/rich-text-view";
+import { attachmentIdsIn } from "@/lib/attachments/nodes";
 import { type ActivityView, type CommentView, type ProjectMeta } from "@/lib/issues/views";
 import { isEmptyDoc, type RichTextDoc } from "@/lib/rich-text";
+import { adoptCommentAttachmentsAction } from "@/server/actions/attachments";
 import {
   createCommentAction,
   deleteCommentAction,
@@ -60,6 +66,14 @@ function Comments({ issueId, comments, projectKeys, currentUserId }: IssueTabsPr
     startTransition(async () => {
       const created = await callAction(() => createCommentAction({ issueId, body }));
       if (created === null) return;
+      // Files pasted into the draft were attached to the issue; move them onto the new
+      // comment so they show inline only (ISS-9). If this fails they stay on the issue.
+      const attachmentIds = attachmentIdsIn(body);
+      if (attachmentIds.length > 0) {
+        await callAction(() =>
+          adoptCommentAttachmentsAction({ commentId: created.id, attachmentIds }),
+        );
+      }
       setDraft(null);
       // Remount the composer to clear it.
       setComposerKey((key) => key + 1);
@@ -134,6 +148,7 @@ function CommentItem({
   const [draft, setDraft] = useState<RichTextDoc>(comment.body);
   const [pending, startTransition] = useTransition();
   const editButton = useRef<HTMLButtonElement>(null);
+  const { storageReady } = useAttachmentUpload();
   const author = comment.authorName ?? "Former user";
   // Follow the server copy after a refresh, unless this comment is being edited.
   const serverKey = JSON.stringify(comment.body);
@@ -209,16 +224,22 @@ function CommentItem({
         </div>
         {editing ? (
           <div className="flex flex-col gap-2">
-            <LazyRichTextEditor
-              variant="comment"
-              initialContent={body}
-              projectKeys={projectKeys}
-              label="Edit comment"
-              autoFocus
-              onChange={setDraft}
-              onSubmit={save}
-              onCancel={close}
-            />
+            {/* Files added while editing belong to this comment (inline only). */}
+            <AttachmentUploadProvider
+              target={{ entityType: "comment", entityId: comment.id }}
+              storageReady={storageReady}
+            >
+              <LazyRichTextEditor
+                variant="comment"
+                initialContent={body}
+                projectKeys={projectKeys}
+                label="Edit comment"
+                autoFocus
+                onChange={setDraft}
+                onSubmit={save}
+                onCancel={close}
+              />
+            </AttachmentUploadProvider>
             <div className="flex justify-end gap-2">
               <Button variant="ghost" size="sm" onClick={close}>
                 Cancel

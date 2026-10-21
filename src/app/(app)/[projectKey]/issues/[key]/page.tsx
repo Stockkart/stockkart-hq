@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 
+import { AttachmentsPanel } from "@/features/attachments/attachments-panel";
+import { AttachmentUploadProvider } from "@/features/attachments/upload-context";
 import { DevelopmentPanel } from "@/features/issue/development-panel";
 import { IssueDescription } from "@/features/issue/issue-description";
 import { IssueFields } from "@/features/issue/issue-fields";
@@ -11,8 +13,15 @@ import { requireProject, resolveProjectKey } from "@/features/issue/project-rout
 import { RecordIssueView } from "@/features/issue/record-view";
 import { formatIssueKey, parseIssueKey } from "@/lib/issues/keys";
 import { requirePageSession } from "@/server/auth/require-session";
-import { commentService, docQueries, githubQueries, issueQueries } from "@/server/services";
+import {
+  commentService,
+  docQueries,
+  fileQueries,
+  githubQueries,
+  issueQueries,
+} from "@/server/services";
 import { issueIdByNumber, projectIdByKey } from "@/server/services/sql";
+import { storageConfigured } from "@/server/storage";
 
 interface Props {
   params: Promise<{ projectKey: string; key: string }>;
@@ -54,6 +63,7 @@ export default async function IssuePage({ params }: Props) {
     subtaskParents,
     docs,
     development,
+    attachments,
   ] = await Promise.all([
     requireProject(projectRouteKey),
     issueQueries.getIssue(projectId, ref.number),
@@ -69,9 +79,12 @@ export default async function IssuePage({ params }: Props) {
     docQueries.docsLinkingTo(issueId),
     // GH-4 branches, PRs and commits; same batch.
     githubQueries.listDevelopment(issueId),
+    // ISS-9 attachments panel; same batch.
+    fileQueries.listAttachments("issue", issueId),
   ]);
   if (!issue) notFound();
   const parentOptions = issue.type === "subtask" ? subtaskParents : meta.epics;
+  const storageReady = storageConfigured();
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-6">
@@ -84,35 +97,47 @@ export default async function IssuePage({ params }: Props) {
         title={issue.title}
       />
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_18rem]">
-        <div className="flex min-w-0 flex-col gap-8">
-          <IssueDescription
-            issueId={issue.id}
-            description={issue.description}
-            projectKeys={projectKeys}
-          />
-          <Subtasks
-            issueId={issue.id}
-            issueType={issue.type}
-            projectKey={project.key}
-            items={children}
-          />
-          <Links
-            issueId={issue.id}
-            projectKey={project.key}
-            links={links}
-            mentions={mentions}
-            docs={docs}
-          />
-          <IssueTabs
-            issueId={issue.id}
-            comments={comments}
-            activity={activity.entries}
-            issueKeys={activity.issueKeys}
-            meta={meta}
-            projectKeys={projectKeys}
-            currentUserId={session.user.id}
-          />
-        </div>
+        {/* Files pasted into the description or a new comment attach to the issue (ISS-9). */}
+        <AttachmentUploadProvider
+          target={{ entityType: "issue", entityId: issue.id }}
+          storageReady={storageReady}
+        >
+          <div className="flex min-w-0 flex-col gap-8">
+            <IssueDescription
+              issueId={issue.id}
+              description={issue.description}
+              projectKeys={projectKeys}
+            />
+            <AttachmentsPanel
+              target={{ entityType: "issue", entityId: issue.id }}
+              attachments={attachments}
+              currentUserId={session.user.id}
+              storageReady={storageReady}
+            />
+            <Subtasks
+              issueId={issue.id}
+              issueType={issue.type}
+              projectKey={project.key}
+              items={children}
+            />
+            <Links
+              issueId={issue.id}
+              projectKey={project.key}
+              links={links}
+              mentions={mentions}
+              docs={docs}
+            />
+            <IssueTabs
+              issueId={issue.id}
+              comments={comments}
+              activity={activity.entries}
+              issueKeys={activity.issueKeys}
+              meta={meta}
+              projectKeys={projectKeys}
+              currentUserId={session.user.id}
+            />
+          </div>
+        </AttachmentUploadProvider>
         <div className="flex flex-col gap-8 lg:sticky lg:top-6 lg:self-start lg:border-l lg:pl-6">
           <IssueFields
             issue={issue}

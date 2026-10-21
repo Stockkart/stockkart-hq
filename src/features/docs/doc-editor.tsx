@@ -3,7 +3,7 @@
 import { Copy, History, RefreshCw, Save, Trash2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -59,6 +59,8 @@ export interface DocEditorProps {
   linkedIssues: LinkedIssueView[];
   versions: DocVersionView[];
   childCount: number;
+  /** ISS-9 attachments panel, shown below the editor. */
+  attachmentsPanel?: ReactNode;
 }
 
 /** Issue references that count as mentions; a change means the Linked issues panel changed. */
@@ -159,6 +161,7 @@ export function DocEditor({
   linkedIssues,
   versions,
   childCount,
+  attachmentsPanel,
 }: DocEditorProps) {
   const router = useRouter();
   const isAdr = doc.type === "adr";
@@ -377,6 +380,8 @@ export function DocEditor({
           className="min-h-[60vh]"
           onChange={(content) => saver.change({ content })}
         />
+
+        {attachmentsPanel}
       </div>
 
       <DocSidePanel
