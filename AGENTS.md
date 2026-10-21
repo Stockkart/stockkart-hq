@@ -117,9 +117,16 @@ e2e/                      Playwright smoke tests
   - `diagrams` (DGM-1…7) and `diagram_versions` (DGM-4): like docs (optimistic `version`,
     fractional `position`, `scene_text` → generated `search` + GIN, soft delete), plus
     `kind` `whiteboard|flow`, `thumbnail_key`, `template_id`. CHECK
-    `octet_length(scene::text) < 2 MB` (`DIAGRAM_SCENE_MAX_BYTES`) on both tables.
+    `octet_length(scene::text) < 2 MB` (`DIAGRAM_SCENE_MAX_BYTES`) on both tables; validate
+    input as `JSON.stringify(scene)` ≤ `DIAGRAM_SCENE_INPUT_MAX_BYTES` (1.5 MB, headroom for
+    jsonb's wider text form). Search indexes the first 200 000 characters of `scene_text`.
+  - `attachments.storage_key` and `diagrams.thumbnail_key` have CHECKs for the exact key
+    layouts (`attachmentKey`, `diagramThumbnailKey`).
   - `projects.default_assignee_id` (PRJ-3), `users.notify_email` (NTF-2, default off),
-    `entity_type = 'attachment'`.
+    `entity_type = 'attachment'`. That enum value is added in 0004 inside the migration
+    transaction, so no later SQL migration may use `'attachment'` (default, index predicate,
+    CHECK, backfill) until 0004 is applied everywhere on its own; a fresh database that
+    applies both at once would fail. App queries may use it freely.
 - @user mentions: `extractUserMentionIds(doc)` (`lib/mentions.ts`) reads `mention` nodes;
   `userMentionSyncCtes` / `userMentionSyncStatement` (`services/sql.ts`) keep the
   `to_type = 'user'` mention links in sync, like the issue-key ones, and RETURN the newly
@@ -155,13 +162,16 @@ e2e/                      Playwright smoke tests
 
 - Use only `@/server/storage` (server-only; it imports `@/env`). Never build an R2 or
   public URL yourself, and never make the bucket or an object public (S-5).
-- Keys come from `attachmentKey(filename)` / `diagramThumbnailKey(id)`; the module refuses
-  any other prefix for uploads and deletes (`backups/` and `tmp/` belong to the workflow).
+- Keys come from `attachmentKey(filename)` / `diagramThumbnailKey(id)`; every storage call
+  refuses any other key (`isAppKey`), so `backups/` and `tmp/` (the workflow's) are never
+  signed or touched by the app, even from a bad DB row.
 - Pick the stored type with `classifyUpload(mime, filename).contentType` and pass exactly
   that to `presignUpload`/`putObject` (anything else is refused). Size limit 10 MB
   (`MAX_ATTACHMENT_BYTES`). The client's mime type and name are untrusted.
 - Upload flow: insert a `pending` attachment row → `presignUpload` → the browser PUTs to
-  R2 → a server action `headObject`s it, checks size and type, and sets `ready`.
+  R2 → a server action `headObject`s it, checks size and type, and sets `ready`. A signed
+  PUT stays usable for its 5 minutes, so the uploader could replace the object with another
+  of the same type and size until then; do not treat the bytes as immutable before that.
 - Catch `StorageNotConfigured` and show `STORAGE_NOT_CONFIGURED_MESSAGE`. Tests inject a
   transport (`createStorage(config, () => fakeTransport)`); presigning is local and needs
   no network.
@@ -182,7 +192,8 @@ a feature adds files of its own plus ONE line per registry (no edits to the shar
    only, validate every attr, no "use client") and add them to `RENDERERS` in
    `renderers/index.ts`. Unregistered types render only their children.
 4. Test the three pieces next to their files. The existing doc blocks (`doc-blocks.ts[x]`
-   in each folder: callout, table, Mermaid) are the reference.
+   in each folder: callout, table, Mermaid) are the reference. Registering a node type or
+   feature name twice throws at load (`mergeRegistries`), so a merge collision fails tests.
 
 ## Adding a server action
 

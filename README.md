@@ -372,6 +372,11 @@ Check: an anonymous `curl -I https://<account-id>.r2.cloudflarestorage.com/<buck
 must be denied (`400`/`403`), and `curl -I https://<your-hq-domain>/api/files/x` must answer
 `401`.
 
+The app can only sign or touch `attachments/` and `thumbnails/` keys, but its token can
+read the whole bucket. To keep the database backups out of reach of a compromised app
+token, consider a separate backups bucket with its own token: the backup workflow reads its
+own GitHub secrets, so `R2_BUCKET` there can differ from Vercel's.
+
 ## Backups
 
 `.github/workflows/backup.yml` runs nightly: `pg_dump` → gzip → private R2 bucket under
