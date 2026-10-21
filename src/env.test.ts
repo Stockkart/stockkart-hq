@@ -50,6 +50,22 @@ describe("env validation (fail fast, fail closed)", () => {
     );
   });
 
+  it("starts without R2 settings and checks their format only when set", () => {
+    expect(parseEnv(valid).R2_BUCKET).toBeUndefined();
+    expect(parseEnv({ ...valid, R2_ACCOUNT_ID: "", R2_BUCKET: "" }).R2_ACCOUNT_ID).toBeUndefined();
+    const r2 = {
+      ...valid,
+      R2_ACCOUNT_ID: "0123456789abcdef0123456789abcdef",
+      R2_BUCKET: "stockkart-hq-files",
+    };
+    expect(parseEnv(r2)).toMatchObject({ R2_BUCKET: "stockkart-hq-files" });
+    expect(() => parseEnv({ ...r2, R2_ACCOUNT_ID: "not-an-account" })).toThrow("R2_ACCOUNT_ID");
+    expect(() => parseEnv({ ...r2, R2_BUCKET: "Has_Upper" })).toThrow("R2_BUCKET");
+    expect(() => parseEnv({ ...r2, R2_BUCKET: "Has_Upper" })).toThrow(
+      expect.objectContaining({ message: expect.not.stringContaining("Has_Upper") }),
+    );
+  });
+
   it("keeps the query log off unless HQ_LOG_QUERIES is exactly 1", () => {
     expect(parseEnv(valid).HQ_LOG_QUERIES).toBe(false);
     expect(parseEnv({ ...valid, HQ_LOG_QUERIES: "0" }).HQ_LOG_QUERIES).toBe(false);
