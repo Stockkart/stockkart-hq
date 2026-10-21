@@ -1,6 +1,7 @@
 import { mergeRegistries } from "@/lib/registry";
 
 import { attachmentRenderers } from "./attachments";
+import { diagramEmbedRenderers } from "./diagram-embed";
 import { calloutRenderers, mermaidRenderers, tableRenderers } from "./doc-blocks";
 import { mentionRenderers } from "./mentions";
 import { type NodeRenderer, type NodeRenderers } from "./types";
@@ -17,6 +18,7 @@ const RENDERERS: readonly NodeRenderers[] = [
   mermaidRenderers,
   mentionRenderers,
   attachmentRenderers,
+  diagramEmbedRenderers,
   // P1 slices add one line each, e.g. mentionRenderers, imageRenderers, diagramEmbedRenderers.
 ];
 

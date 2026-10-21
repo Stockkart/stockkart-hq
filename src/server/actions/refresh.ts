@@ -30,6 +30,9 @@ export const PROJECT_SETTINGS = "/[projectKey]/settings";
 export const TRASH = "/[projectKey]/trash";
 /** NTF-1: the full notification list (the bell's count comes with the app layout). */
 export const NOTIFICATIONS = "/notifications";
+/** DGM-*: the diagram grid and one diagram's editor (title, versions, Linked panel). */
+export const DIAGRAMS = "/[projectKey]/diagrams";
+export const DIAGRAM_PAGE = "/[projectKey]/diagrams/[id]";
 
 /** Every page that lists or shows issue fields. */
 export const ISSUE_VIEWS = [ISSUE_LIST, ISSUE_PAGE, BACKLOG, BOARD, MY_WORK] as const;

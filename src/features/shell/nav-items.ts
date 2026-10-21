@@ -35,8 +35,8 @@ export const DEFAULT_PROJECT_KEY = "STK";
 const projectHref = (section: string) => `/${DEFAULT_PROJECT_KEY}/${section}`;
 
 /**
- * SPEC §5.1 app shell. My Work, Todos, Backlog, Board, Issues, Sprints, Docs and ADRs work;
- * Roadmap, Diagrams, Incidents and Services show the "coming soon" placeholder
+ * SPEC §5.1 app shell. My Work, Todos, Backlog, Board, Issues, Sprints, Docs, ADRs and
+ * Diagrams work; Roadmap, Incidents and Services show the "coming soon" placeholder
  * (`[projectKey]/[section]`) until their slice lands. Settings opens the profile (GitHub
  * username, GH-4).
  */

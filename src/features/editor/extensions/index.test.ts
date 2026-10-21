@@ -14,6 +14,7 @@ describe("editor feature registry", () => {
       ...docBlocks,
       "mention",
       "attachments",
+      "diagramEmbed",
     ]);
     // @mentions (ISS-7, DOC-9) and attachments (ISS-9, DOC-8) are in every editor.
     expect(featuresFor("issue").map((feature) => feature.name)).toEqual(["mention", "attachments"]);
@@ -28,6 +29,7 @@ describe("editor feature registry", () => {
       "mermaid",
       "mention",
       ...attachmentExtensions,
+      "diagramEmbed",
     ]);
     expect(featureExtensions({ variant: "issue", projectKeys: [] }).map((e) => e.name)).toEqual([
       "mention",
@@ -37,7 +39,7 @@ describe("editor feature registry", () => {
 
   it("builds the same doc toolbar groups as before the registry", () => {
     expect(labels(featureToolbarGroups("doc"))).toEqual([
-      ["Callout", "Insert table", "Mermaid diagram", "Attach file"],
+      ["Callout", "Insert table", "Mermaid diagram", "Attach file", "Insert diagram"],
       ["Add row below", "Add column right", "Delete row", "Delete table"],
     ]);
     expect(labels(featureToolbarGroups("comment"))).toEqual([["Attach file"]]);
@@ -71,6 +73,7 @@ describe("editor feature registry", () => {
       "Insert table",
       "Mermaid diagram",
       "Attach file",
+      "Insert diagram",
       "Sample",
     ]);
   });

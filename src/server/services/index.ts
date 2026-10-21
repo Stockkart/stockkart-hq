@@ -4,6 +4,8 @@ import { storage } from "@/server/storage";
 import { createAttachmentService } from "./attachments";
 import { createBulkService } from "./bulk";
 import { createCommentService } from "./comments";
+import { createDiagramQueries } from "./diagram-queries";
+import { createDiagramService } from "./diagrams";
 import { createDocQueries } from "./doc-queries";
 import { createDocService } from "./docs";
 import { createFileQueries } from "./files";
@@ -57,3 +59,6 @@ export const trashService = createTrashService(db, { runAtomic, read });
 export const notificationQueries = createNotificationQueries(db, { read });
 export const watcherService = createWatcherService(db, { read });
 export const mentionQueries = createMentionQueries(db, { read });
+// Slice D (DGM-*).
+export const diagramService = createDiagramService(db, { runAtomic, read, storage });
+export const diagramQueries = createDiagramQueries(db, { read });

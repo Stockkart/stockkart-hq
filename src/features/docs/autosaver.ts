@@ -16,22 +16,22 @@ import { type RichTextDoc } from "@/lib/rich-text";
 
 export const AUTOSAVE_DELAY_MS = 2000;
 
-export interface ConflictInfo {
+export interface ConflictInfo<C = RichTextDoc> {
   version: number;
   title: string;
-  content: RichTextDoc | null;
+  content: C | null;
   updatedByName: string | null;
 }
 
-export type SaveResponse =
+export type SaveResponse<C = RichTextDoc> =
   | { status: "saved"; version: number; snapshotted?: boolean }
-  | { status: "conflict"; latest: ConflictInfo }
+  | { status: "conflict"; latest: ConflictInfo<C> }
   /** The request failed (network, validation, session); `message` is for the person. */
   | { status: "failed"; message: string };
 
-export interface SaveRequest {
+export interface SaveRequest<C = RichTextDoc> {
   baseVersion: number;
-  content: RichTextDoc;
+  content: C;
   /** Sent only when the title changed since the last successful save. */
   title?: string;
   snapshot: boolean;
@@ -39,29 +39,33 @@ export interface SaveRequest {
 
 export type SaverStatus = "saved" | "dirty" | "saving" | "conflict" | "error";
 
-export interface SaverState {
+export interface SaverState<C = RichTextDoc> {
   status: SaverStatus;
   version: number;
-  conflict: ConflictInfo | null;
+  conflict: ConflictInfo<C> | null;
   error: string | null;
 }
 
-export interface AutosaverDeps {
-  save: (request: SaveRequest) => Promise<SaveResponse>;
-  onState: (state: SaverState) => void;
+export interface AutosaverDeps<C = RichTextDoc> {
+  save: (request: SaveRequest<C>) => Promise<SaveResponse<C>>;
+  onState: (state: SaverState<C>) => void;
   /** After a successful save (e.g. refresh the page if the title changed). */
   onSaved?: (saved: {
     version: number;
     titleChanged: boolean;
     snapshotted: boolean;
-    content: RichTextDoc;
+    content: C;
   }) => void;
   delayMs?: number;
 }
 
-export class DocAutosaver {
-  private state: SaverState;
-  private content: RichTextDoc;
+/**
+ * The state machine for any optimistically locked content: `C` is the editor's content
+ * (rich text for docs, a scene for diagrams, DGM-4).
+ */
+export class Autosaver<C> {
+  private state: SaverState<C>;
+  private content: C;
   private title: string;
   /** The title as of the last successful save (or load). */
   private savedTitle: string;
@@ -75,8 +79,8 @@ export class DocAutosaver {
   private forceTitle = false;
 
   constructor(
-    initial: { version: number; content: RichTextDoc; title: string },
-    private readonly deps: AutosaverDeps,
+    initial: { version: number; content: C; title: string },
+    private readonly deps: AutosaverDeps<C>,
   ) {
     this.state = { status: "saved", version: initial.version, conflict: null, error: null };
     this.content = initial.content;
@@ -84,12 +88,12 @@ export class DocAutosaver {
     this.savedTitle = initial.title;
   }
 
-  get current(): SaverState {
+  get current(): SaverState<C> {
     return this.state;
   }
 
   /** My current copy (for "Copy mine"). */
-  get mine(): { title: string; content: RichTextDoc } {
+  get mine(): { title: string; content: C } {
     return { title: this.title, content: this.content };
   }
 
@@ -97,8 +101,8 @@ export class DocAutosaver {
     return this.revision !== this.savedRevision || this.state.status === "conflict";
   }
 
-  change(update: { content?: RichTextDoc; title?: string }) {
-    if (update.content) this.content = update.content;
+  change(update: { content?: C; title?: string }) {
+    if (update.content !== undefined) this.content = update.content;
     if (update.title !== undefined) this.title = update.title;
     this.revision += 1;
     if (this.state.status === "conflict") return; // wait for the person's choice
@@ -115,7 +119,7 @@ export class DocAutosaver {
   }
 
   /** Take the winner's copy. Returns it so the UI can reset the editor. */
-  reload(): ConflictInfo | null {
+  reload(): ConflictInfo<C> | null {
     const latest = this.state.conflict;
     if (!latest) return null;
     this.clearTimer();
@@ -143,7 +147,7 @@ export class DocAutosaver {
    * the content differs, someone else saved and the next save must conflict. Returns the
    * server title when it was adopted (unless I have an unsaved title of my own), else null.
    */
-  rebase(server: { version: number; title: string; content: RichTextDoc | null }): string | null {
+  rebase(server: { version: number; title: string; content: C | null }): string | null {
     if (this.inFlight || this.state.status === "conflict") return null;
     if (server.version <= this.state.version) return null;
     if (canonicalJson(server.content) !== canonicalJson(this.content)) return null;
@@ -158,7 +162,22 @@ export class DocAutosaver {
     this.clearTimer();
   }
 
-  private setState(patch: Partial<SaverState>) {
+  /**
+   * Continue from a version the server just wrote on my behalf (e.g. a DGM-4 restore):
+   * its content and title become mine, with nothing pending. Only while nothing is in
+   * flight or unsaved, so no edit is dropped.
+   */
+  adopt(next: { version: number; content: C; title: string }): boolean {
+    if (this.inFlight || this.hasUnsavedChanges) return false;
+    this.clearTimer();
+    this.content = next.content;
+    this.title = next.title;
+    this.savedTitle = next.title;
+    this.setState({ status: "saved", version: next.version, conflict: null, error: null });
+    return true;
+  }
+
+  private setState(patch: Partial<SaverState<C>>) {
     this.state = { ...this.state, ...patch };
     this.deps.onState(this.state);
   }
@@ -188,7 +207,7 @@ export class DocAutosaver {
     const snapshot = this.snapshotRequested;
     this.inFlight = true;
     this.setState({ status: "saving", error: null });
-    let response: SaveResponse;
+    let response: SaveResponse<C>;
     try {
       response = await this.deps.save({
         baseVersion: this.state.version,
@@ -226,3 +245,6 @@ export class DocAutosaver {
     }
   }
 }
+
+/** §7.4 doc autosave (rich text content). */
+export class DocAutosaver extends Autosaver<RichTextDoc> {}

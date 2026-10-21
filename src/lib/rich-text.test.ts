@@ -51,6 +51,7 @@ describe("extractPlainText with the node registry", () => {
       "mention",
       "image",
       "fileAttachment",
+      "diagramEmbed",
     ]);
     expect(PLAIN_TEXT_RULES.get("constructor")).toBeUndefined();
     expect(

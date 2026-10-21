@@ -87,7 +87,14 @@ async function saveRequest(docId: string, request: SaveRequest): Promise<SaveRes
   return { status: "conflict", latest: data.latest };
 }
 
-function SaveIndicator({ state, onRetry }: { state: SaverState; onRetry: () => void }) {
+/** "Saved · vN" and friends; shared with the diagram editor (DGM-4). */
+export function SaveIndicator({
+  state,
+  onRetry,
+}: {
+  state: SaverState<unknown>;
+  onRetry: () => void;
+}) {
   const text: Record<SaverState["status"], string> = {
     saved: `Saved · v${state.version}`,
     dirty: "Unsaved changes",
@@ -119,7 +126,8 @@ export function ConflictBanner({
   onKeepMine,
   onCopyMine,
 }: {
-  conflict: ConflictInfo;
+  /** Docs and diagrams (DGM-4) share the banner; only these fields are shown. */
+  conflict: ConflictInfo<unknown>;
   onReload: () => void;
   onKeepMine: () => void;
   onCopyMine: () => void;
