@@ -248,8 +248,14 @@ export function createSprintQueries(db: AppDatabase, { read = directRead }: Quer
         ),
         read(
           db.execute(sql`
-            SELECT id, name, category::text AS category FROM statuses
+            SELECT id::text AS id, name, category::text AS category FROM statuses
             WHERE project_id = ${projectId}
+            UNION ALL
+            -- Statuses deleted in project settings (PRJ-3): history still names them.
+            SELECT DISTINCT a.meta ->> 'statusId', a.meta ->> 'name', a.meta ->> 'category'
+            FROM activity a JOIN sprints s ON s.id = a.entity_id
+            WHERE a.entity_type = 'sprint' AND a.action = 'status_deleted'
+              AND s.project_id = ${projectId}
           `),
         ),
       ]);

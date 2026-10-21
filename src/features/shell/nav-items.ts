@@ -10,6 +10,7 @@ import {
   Server,
   Settings,
   Siren,
+  SlidersHorizontal,
   SquareKanban,
   Timer,
   UserRound,
@@ -59,6 +60,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Diagrams", icon: Network, href: projectHref("diagrams") },
       { label: "Incidents", icon: Siren, href: projectHref("incidents") },
       { label: "Services", icon: Server, href: projectHref("services") },
+      // PRJ-3 (statuses, labels, components; the trash is linked from there, ISS-13).
+      { label: "Project settings", icon: SlidersHorizontal, href: projectHref("settings") },
     ],
   },
   {

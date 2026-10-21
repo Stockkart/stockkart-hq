@@ -3,6 +3,7 @@
 import { type RefObject, useEffect } from "react";
 
 import { shouldIgnoreShortcut } from "@/features/issue/keyboard";
+import { matchesShortcut } from "@/features/shell/shortcuts";
 
 /** Marks a row (`data-nav-item`) and the link inside it that J/K focuses (`data-nav-link`). */
 export const NAV_ITEM = { "data-nav-item": "" } as const;
@@ -18,8 +19,8 @@ export const NAV_LINK = { "data-nav-link": "" } as const;
 export function useListNavigation(container: RefObject<HTMLElement | null>) {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      const key = event.key.toLowerCase();
-      if ((key !== "j" && key !== "k") || shouldIgnoreShortcut(event)) return;
+      const down = matchesShortcut(event, "next");
+      if ((!down && !matchesShortcut(event, "previous")) || shouldIgnoreShortcut(event)) return;
       const root = container.current;
       if (!root) return;
       // Rows inside collapsed sections are skipped.
@@ -35,10 +36,10 @@ export function useListNavigation(container: RefObject<HTMLElement | null>) {
       // From nothing selected, J starts at the top and K at the bottom.
       const next =
         current === -1
-          ? key === "j"
+          ? down
             ? 0
             : links.length - 1
-          : Math.min(links.length - 1, Math.max(0, current + (key === "j" ? 1 : -1)));
+          : Math.min(links.length - 1, Math.max(0, current + (down ? 1 : -1)));
       const target = links[next];
       if (!target) return;
       target.focus();

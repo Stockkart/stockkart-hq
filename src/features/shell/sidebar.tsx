@@ -3,12 +3,16 @@
 import { Boxes } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { Suspense } from "react";
 
+import { SidebarViews } from "@/features/views/sidebar-views";
 import { cn } from "@/lib/utils";
+import { type SavedViewItem } from "@/lib/views/saved-views";
 
-import { NAV_SECTIONS } from "./nav-items";
+import { DEFAULT_PROJECT_KEY, NAV_SECTIONS } from "./nav-items";
 
-export function Sidebar() {
+/** VW-3: the signed-in user's saved views (and shared ones) of the default project. */
+export function Sidebar({ savedViews = [] }: { savedViews?: SavedViewItem[] }) {
   const pathname = usePathname();
 
   return (
@@ -71,6 +75,11 @@ export function Sidebar() {
                   );
                 })}
               </ul>
+              {section.heading === DEFAULT_PROJECT_KEY ? (
+                <Suspense fallback={null}>
+                  <SidebarViews projectKey={DEFAULT_PROJECT_KEY} views={savedViews} />
+                </Suspense>
+              ) : null}
             </div>
           );
         })}

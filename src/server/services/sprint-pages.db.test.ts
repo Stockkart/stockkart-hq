@@ -13,6 +13,7 @@ import { createIssueQueries } from "./issue-queries";
 import { createIssueService } from "./issues";
 import { createPlanningQueries } from "./planning-queries";
 import { createPlanningService } from "./planning";
+import { createSavedViewService } from "./saved-views";
 import { createSprintQueries } from "./sprint-queries";
 import { createSprintService } from "./sprints";
 import { issueIdByNumber, projectIdByKey } from "./sql";
@@ -51,12 +52,17 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
       commentService: createCommentService(db, { runAtomic: transactionRunner(db), read }),
       docQueries: createDocQueries(db, { read }),
       githubQueries: createGithubQueries(db, { read }),
+      savedViewService: createSavedViewService(db, { read }),
     };
   }
 
-  /** The app layout's reads (quick-create templates and sprint options). */
+  /** The app layout's reads (quick-create templates, sprint options, sidebar views). */
   const layout = (s: ReturnType<typeof services>) =>
-    [s.issueQueries.issueTemplates(), s.sprintQueries.openSprintOptionsByProject()] as const;
+    [
+      s.issueQueries.issueTemplates(),
+      s.sprintQueries.openSprintOptionsByProject(),
+      s.savedViewService.listViews(actor, projectIdByKey("STK")),
+    ] as const;
 
   beforeAll(async () => {
     testDb = await createTestDatabase();
@@ -108,7 +114,7 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
   it.each(["board_sprint", "board"] as const)("board (%s): one round trip", async (scope) => {
     const { read, trips } = counted();
     const s = services(read);
-    const [, , , issues] = await Promise.all([
+    const [, , , , issues] = await Promise.all([
       ...layout(s),
       s.issueQueries.getProject("STK"),
       s.planningQueries.listIssues(projectId(), { ...options, scope }),
@@ -137,7 +143,7 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
   it("sprint page: one round trip", async () => {
     const { read, trips } = counted();
     const s = services(read);
-    const [, , , , inputs, issues] = await Promise.all([
+    const [, , , , , inputs, issues] = await Promise.all([
       ...layout(s),
       s.issueQueries.getProject("STK"),
       s.sprintQueries.listSprints(projectId()),
@@ -153,7 +159,7 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
     const { read, trips } = counted();
     const s = services(read);
     const issueId = issueIdByNumber(projectId(), issueNumber);
-    const [, , , issue, meta] = await Promise.all([
+    const [, , , , issue, meta] = await Promise.all([
       ...layout(s),
       s.issueQueries.getProject("STK"),
       s.issueQueries.getIssue(projectId(), issueNumber),

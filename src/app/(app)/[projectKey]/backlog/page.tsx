@@ -90,6 +90,7 @@ export default async function BacklogPage({ params, searchParams }: Props) {
         group={group}
         users={meta.users}
         filtered={hasActiveFilters(filters)}
+        bulkOptions={meta}
       />
     </div>
   );

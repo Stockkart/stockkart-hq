@@ -25,6 +25,9 @@ export const SPRINTS = "/[projectKey]/sprints";
 export const SPRINT_PAGE = "/[projectKey]/sprints/[sprintId]";
 /** The signed-in user's profile (GitHub username, GH-4). */
 export const PROFILE = "/settings/profile";
+/** PRJ-3 project settings and the ISS-13 trash. */
+export const PROJECT_SETTINGS = "/[projectKey]/settings";
+export const TRASH = "/[projectKey]/trash";
 
 /** Every page that lists or shows issue fields. */
 export const ISSUE_VIEWS = [ISSUE_LIST, ISSUE_PAGE, BACKLOG, BOARD, MY_WORK] as const;
@@ -37,4 +40,13 @@ export const SPRINT_VIEWS = [BACKLOG, BOARD, SPRINTS, SPRINT_PAGE, ISSUE_PAGE] a
 
 export function refreshPages(...patterns: readonly string[]): void {
   for (const pattern of new Set(patterns)) revalidatePath(pattern, "page");
+}
+
+/**
+ * The app shell (the signed-in layout, every page under it): for data shown in the sidebar
+ * (VW-3 saved views). A layout is not re-rendered on navigation, so a page refresh alone
+ * would leave the sidebar stale. Saved views change rarely, so the wide refresh is cheap.
+ */
+export function refreshAppShell(): void {
+  revalidatePath("/", "layout");
 }

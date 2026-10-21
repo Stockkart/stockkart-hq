@@ -25,6 +25,7 @@ import {
   type Priority,
 } from "@/lib/issues/constants";
 import { whenIdle } from "@/lib/idle";
+import { matchesShortcut } from "@/features/shell/shortcuts";
 import { PROJECT_KEY_PATTERN } from "@/lib/issues/keys";
 import { TITLE_MAX } from "@/lib/issues/schemas";
 import { isEmptyDoc, type RichTextDoc } from "@/lib/rich-text";
@@ -156,7 +157,7 @@ export function QuickCreate({
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key.toLowerCase() !== "c" || shouldIgnoreShortcut(event)) return;
+      if (!matchesShortcut(event, "create") || shouldIgnoreShortcut(event)) return;
       event.preventDefault();
       openDialog();
     }

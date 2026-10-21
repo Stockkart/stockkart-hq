@@ -18,6 +18,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { NewAdrDialog, NewDocDialog } from "@/features/docs/doc-dialogs";
 import { openQuickCreate } from "@/features/issue/quick-create-events";
+import { matchesShortcut } from "@/features/shell/shortcuts";
 import { type IssueType } from "@/lib/issues/constants";
 import { issuePathForKey, parseIssueKey, PROJECT_KEY_PATTERN } from "@/lib/issues/keys";
 import {
@@ -116,7 +117,7 @@ export function CommandPalette({ defaultProjectKey }: { defaultProjectKey: strin
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey)) return;
+      if (!matchesShortcut(event, "search") || !(event.metaKey || event.ctrlKey)) return;
       if (event.altKey || event.shiftKey) return;
       event.preventDefault();
       toggleRef.current();
