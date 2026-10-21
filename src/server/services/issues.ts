@@ -5,6 +5,7 @@ import { z } from "zod";
 import { type IssueType } from "@/lib/issues/constants";
 import { formatIssueKey, parseIssueKey } from "@/lib/issues/keys";
 import { toStoredLink, viewLink } from "@/lib/issues/links";
+import { extractUserMentionIds } from "@/lib/mentions";
 import {
   type addLabelInput,
   type addLinkInput,
@@ -17,6 +18,12 @@ import { directRead, type Read } from "@/server/db/read-batch";
 import { type AppDatabase, type RunAtomic } from "@/server/db/types";
 
 import { conflict, invalid, notFound, pgErrorInfo, UNIQUE_VIOLATION } from "./errors";
+import {
+  notificationsInsert,
+  userMentionNotifyCtes,
+  userMentionNotifyStatement,
+  watcherStatusNotifications,
+} from "./notifications";
 import { allInOrder } from "./parallel";
 import { parentProblem } from "./parent-rules";
 import {
@@ -232,6 +239,9 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
      * and points the todo at the new issue. Under READ COMMITTED a concurrent promote of the
      * same todo waits for the lock, re-checks `promoted_issue_id IS NULL` on the committed
      * row, finds it set and creates nothing, so a double click cannot make two issues.
+     *
+     * The same statement makes the reporter and the assignee watchers (ISS-11) and notifies
+     * the assignee and the @mentioned users (NTF-1), never the actor.
      */
     async createIssue(
       actorId: string,
@@ -317,7 +327,7 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
                 ${assigneeValue}, ${actorId}::uuid, ${uuidOrNull(parentId)},
                 ${uuidOrNull(componentId)}, ${uuidOrNull(sprintId)}, ${rank}
               FROM counter
-              RETURNING id, number, sprint_id
+              RETURNING id, number, sprint_id, assignee_id
             ),
             created_activity AS (
               INSERT INTO activity (entity_type, entity_id, actor_id, action, to_value)
@@ -339,7 +349,41 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
               refs,
               actorId,
               gate: sql`EXISTS (SELECT 1 FROM inserted)`,
-            })}
+            })},
+            ${userMentionNotifyCtes(
+              {
+                fromType: "issue",
+                fromId: id,
+                userIds: extractUserMentionIds(description),
+                actorId,
+                gate: sql`EXISTS (SELECT 1 FROM inserted)`,
+              },
+              {
+                type: sql`'mentioned'`,
+                entityType: sql`'issue'`,
+                entityId: sql`${id}::uuid`,
+                meta: sql`'{}'::jsonb`,
+              },
+            )},
+            -- ISS-11: the reporter and the assignee watch the new issue.
+            auto_watch AS (
+              INSERT INTO watchers (issue_id, user_id)
+              SELECT DISTINCT inserted.id, u.user_id
+              FROM inserted, LATERAL (VALUES (${actorId}::uuid), (inserted.assignee_id)) AS u(user_id)
+              WHERE u.user_id IS NOT NULL
+              ON CONFLICT DO NOTHING
+            ),
+            -- NTF-1: created with someone else as the assignee.
+            assigned_notified AS (
+              ${notificationsInsert({
+                actorId,
+                source: sql`
+                  SELECT inserted.assignee_id AS user_id, 'assigned'::text AS type,
+                    'issue'::text AS entity_type, inserted.id AS entity_id,
+                    'assigned:created:' || inserted.id::text AS event_key, '{}'::jsonb AS meta
+                  FROM inserted`,
+              })}
+            )
             SELECT id, number FROM inserted
           `);
           const [row] = rowsOf(result, z.object({ id: z.string(), number: z.number() }));
@@ -370,7 +414,10 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
      * both; the activity row is written only when the value really changed.
      *
      * A description change also resyncs its mention links, as a second statement in the same
-     * transaction (see `mentionSyncCtes` for why it cannot be part of the first).
+     * transaction (see `mentionSyncCtes` for why it cannot be part of the first), and a third
+     * notifies the users it newly @mentions. A status change notifies the issue's watchers,
+     * an assignee change makes the new assignee a watcher and notifies them, both in the
+     * write itself (ISS-11, NTF-1; never the actor).
      */
     async updateIssueField(actorId: string, input: UpdateIssueFieldData): Promise<FieldChange> {
       // The issue and the field's own check are read together (one round trip); the check
@@ -409,7 +456,10 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
       let alsoSet: SQL = sql``;
       let alsoWhere: SQL = sql``;
       let recordValues = true;
-      let mentionSync: SQL | null = null;
+      let mentionSync: SQL[] = [];
+      // CTEs after `field_activity` (which RETURNS the activity row when the value changed):
+      // the watchers and bell entries of this change, in the same statement (ISS-11, NTF-1).
+      let followUps: SQL = sql``;
 
       switch (input.field) {
         case "title":
@@ -423,13 +473,32 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
           alsoSet = sql`description_text = ${doc ? extractPlainText(doc) : ""},`;
           // Descriptions are large; activity records only that it changed.
           recordValues = false;
-          mentionSync = mentionSyncStatement({
-            fromType: "issue",
-            fromId: issue.id,
-            refs: docRefs(doc, checked.projectKeys ?? []),
-            actorId,
-            gate: sql`EXISTS (SELECT 1 FROM issues WHERE id = ${issue.id}::uuid AND deleted_at IS NULL)`,
-          });
+          const liveGate = sql`EXISTS (SELECT 1 FROM issues WHERE id = ${issue.id}::uuid AND deleted_at IS NULL)`;
+          mentionSync = [
+            mentionSyncStatement({
+              fromType: "issue",
+              fromId: issue.id,
+              refs: docRefs(doc, checked.projectKeys ?? []),
+              actorId,
+              gate: liveGate,
+            }),
+            // Only the users this save newly mentions are notified (NTF-1).
+            userMentionNotifyStatement(
+              {
+                fromType: "issue",
+                fromId: issue.id,
+                userIds: extractUserMentionIds(doc),
+                actorId,
+                gate: liveGate,
+              },
+              {
+                type: sql`'mentioned'`,
+                entityType: sql`'issue'`,
+                entityId: sql`${issue.id}::uuid`,
+                meta: sql`'{}'::jsonb`,
+              },
+            ),
+          ];
           break;
         }
         case "status": {
@@ -442,6 +511,10 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
                 THEN COALESCE(issues.resolved_at, now())
               ELSE NULL
             END,`;
+          followUps = sql`,
+            status_notified AS (
+              ${watcherStatusNotifications(actorId, sql`field_activity`, sql`'{}'::jsonb`)}
+            )`;
           break;
         }
         case "priority":
@@ -451,6 +524,24 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
         case "assignee":
           column = "assignee_id";
           value = uuidOrNull(input.value);
+          // ISS-11: the new assignee watches the issue; NTF-1: and is told (unless it is the
+          // actor). Both only when the assignee really changed (`field_activity` has a row).
+          followUps = sql`,
+            assignee_watch AS (
+              INSERT INTO watchers (issue_id, user_id)
+              SELECT entity_id, to_value::uuid FROM field_activity WHERE to_value IS NOT NULL
+              ON CONFLICT DO NOTHING
+            ),
+            assigned_notified AS (
+              ${notificationsInsert({
+                actorId,
+                source: sql`
+                  SELECT to_value::uuid AS user_id, 'assigned'::text AS type,
+                    'issue'::text AS entity_type, entity_id,
+                    'assigned:' || id::text AS event_key, '{}'::jsonb AS meta
+                  FROM field_activity WHERE to_value IS NOT NULL`,
+              })}
+            )`;
           break;
         case "component":
           column = "component_id";
@@ -510,12 +601,15 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
             CASE WHEN ${recordValues}::boolean THEN to_value END
           FROM changed
           WHERE from_value IS DISTINCT FROM to_value
+          RETURNING id, entity_id, from_value, to_value
         )
+        ${followUps}
         SELECT from_value, to_value FROM changed
       `;
-      const [result] = mentionSync
-        ? await options.runAtomic([write, mentionSync])
-        : [await db.execute(write)];
+      const [result] =
+        mentionSync.length > 0
+          ? await options.runAtomic([write, ...mentionSync])
+          : [await db.execute(write)];
       const [row] = rowsOf(
         result,
         z.object({ from_value: z.string().nullable(), to_value: z.string().nullable() }),

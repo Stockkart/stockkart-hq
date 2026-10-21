@@ -1,8 +1,9 @@
-import { Bell, LogOut } from "lucide-react";
+import { LogOut } from "lucide-react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
 import { QuickCreate } from "@/features/issue/quick-create";
+import { NotificationBell } from "@/features/notifications/notification-bell";
 import { CommandPalette } from "@/features/search/command-palette";
 import { type IssueType } from "@/lib/issues/constants";
 import { type RichTextDoc } from "@/lib/rich-text";
@@ -18,6 +19,8 @@ interface TopBarProps {
   issueTemplates?: Partial<Record<IssueType, RichTextDoc>>;
   /** Quick-create sprint options per project key, loaded with the page. */
   sprintOptions?: Record<string, SprintOption[]>;
+  /** NTF-1 bell badge, loaded with the page (the layout's batched read). */
+  unreadNotifications?: number;
 }
 
 function initials(name: string): string {
@@ -27,10 +30,15 @@ function initials(name: string): string {
   return letters.toUpperCase() || "?";
 }
 
-export function TopBar({ userName, issueTemplates, sprintOptions }: TopBarProps) {
+export function TopBar({
+  userName,
+  issueTemplates,
+  sprintOptions,
+  unreadNotifications = 0,
+}: TopBarProps) {
   return (
     <header className="flex h-14 items-center gap-3 border-b px-4">
-      {/* ⌘K search (SRCH-1); notifications (NTF-1) are still a placeholder. */}
+      {/* ⌘K search (SRCH-1). */}
       <div className="flex flex-1 items-center">
         <CommandPalette defaultProjectKey={DEFAULT_PROJECT_KEY} />
       </div>
@@ -40,9 +48,7 @@ export function TopBar({ userName, issueTemplates, sprintOptions }: TopBarProps)
         sprintOptionsByProject={sprintOptions}
       />
       <ShortcutHelp />
-      <Button variant="ghost" size="icon" disabled aria-label="Notifications (coming soon)">
-        <Bell aria-hidden="true" />
-      </Button>
+      <NotificationBell initialUnread={unreadNotifications} />
       <Link
         href="/settings/profile"
         title={`${userName}: profile`}

@@ -9,6 +9,8 @@ import { createGithubService } from "./github";
 import { createGithubQueries } from "./github-queries";
 import { createIssueQueries } from "./issue-queries";
 import { createIssueService } from "./issues";
+import { createMentionQueries } from "./mentions";
+import { createNotificationQueries } from "./notification-queries";
 import { createNotificationService } from "./notifications";
 import { createPlanningService } from "./planning";
 import { createPlanningQueries } from "./planning-queries";
@@ -21,6 +23,7 @@ import { createSprintQueries } from "./sprint-queries";
 import { createSprintService } from "./sprints";
 import { createTodoService } from "./todos";
 import { createTrashService } from "./trash";
+import { createWatcherService } from "./watchers";
 
 // Wiring only: the real Neon database for the app. Tests build the same services on a
 // node-postgres handle (src/test/db.ts).
@@ -47,3 +50,7 @@ export const settingsQueries = createSettingsQueries(db, { read });
 export const savedViewService = createSavedViewService(db, { read });
 export const bulkService = createBulkService(db, { read, notify: notificationService.notify });
 export const trashService = createTrashService(db, { runAtomic, read });
+// Slice B (NTF-1, mentions, watchers).
+export const notificationQueries = createNotificationQueries(db, { read });
+export const watcherService = createWatcherService(db, { read });
+export const mentionQueries = createMentionQueries(db, { read });

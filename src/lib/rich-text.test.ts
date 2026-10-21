@@ -40,7 +40,7 @@ describe("extractPlainText with the node registry", () => {
     expect(extractPlainText(doc, { skipCode: true })).toBe("Intro STK-1\nNote STK-2\nHead\nCell");
   });
 
-  it("registers the doc blocks, and nothing under prototype keys", () => {
+  it("registers the doc blocks and mentions, and nothing under prototype keys", () => {
     expect([...PLAIN_TEXT_RULES.keys()]).toEqual([
       "callout",
       "table",
@@ -48,6 +48,7 @@ describe("extractPlainText with the node registry", () => {
       "tableCell",
       "tableHeader",
       "mermaid",
+      "mention",
     ]);
     expect(PLAIN_TEXT_RULES.get("constructor")).toBeUndefined();
     expect(

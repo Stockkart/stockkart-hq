@@ -5,7 +5,12 @@ import { DEFAULT_PROJECT_KEY } from "@/features/shell/nav-items";
 import { Sidebar } from "@/features/shell/sidebar";
 import { TopBar } from "@/features/shell/top-bar";
 import { requirePageSession } from "@/server/auth/require-session";
-import { issueQueries, savedViewService, sprintQueries } from "@/server/services";
+import {
+  issueQueries,
+  notificationQueries,
+  savedViewService,
+  sprintQueries,
+} from "@/server/services";
 import { projectIdByKey } from "@/server/services/sql";
 
 export default async function AppLayout({ children }: Readonly<{ children: ReactNode }>) {
@@ -13,11 +18,14 @@ export default async function AppLayout({ children }: Readonly<{ children: React
   const session = await requirePageSession();
   // Quick-create templates (ISS-10) and open sprints (BLG-3) come with the page, so the
   // dialog opens without a request. Read after the session check, in the same batch as the
-  // page's own reads. The sidebar's saved views (VW-3) come in the same batch.
-  const [issueTemplates, sprintOptions, savedViews] = await Promise.all([
+  // page's own reads. The sidebar's saved views (VW-3) come in the same batch. The bell's
+  // unread count (NTF-1) rides along in the same batch too: no round trip of its own, and
+  // no client polling that would keep Neon's compute awake.
+  const [issueTemplates, sprintOptions, savedViews, unreadNotifications] = await Promise.all([
     issueQueries.issueTemplates(),
     sprintQueries.openSprintOptionsByProject(),
     savedViewService.listViews(session.user.id, projectIdByKey(DEFAULT_PROJECT_KEY)),
+    notificationQueries.unreadCount(session.user.id),
   ]);
 
   return (
@@ -34,6 +42,7 @@ export default async function AppLayout({ children }: Readonly<{ children: React
           userName={session.user.name || session.user.email}
           issueTemplates={issueTemplates}
           sprintOptions={sprintOptions}
+          unreadNotifications={unreadNotifications}
         />
         <main id="main" className="flex-1 p-6">
           {children}

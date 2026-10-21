@@ -4,6 +4,7 @@ import { z } from "zod";
 import { type AppDatabase } from "@/server/db/types";
 import { type DeliveryPlan } from "@/server/github/plan";
 
+import { watcherStatusNotifications } from "./notifications";
 import { rowsOf } from "./sql";
 
 /** GH-3: the default done status is the first done-category status that is not this one. */
@@ -49,6 +50,7 @@ const resultRow = z.object({
  *   locked → moved   only when merge_once inserted: row-lock (in id order) the issues the
  *                    merged PR closes, move each one not yet in a done-category status to
  *                    the project's done status, and log it
+ *   moved_notified   tell the moved issues' watchers (NTF-1), deduped by the activity row
  *
  * The lock is taken by `locked` (SELECT … FOR NO KEY UPDATE) as in `updateIssueField`: a
  * concurrent status change commits first and `locked` sees its result, so "already done" is
@@ -210,6 +212,11 @@ export function createGithubService(db: AppDatabase) {
             to_value, meta)
           SELECT 'issue', id, NULL, 'updated', 'status', from_value, to_value, ${meta}::jsonb
           FROM moved
+          RETURNING id, entity_id, from_value, to_value
+        ),
+        moved_notified AS (
+          -- NTF-1: the watchers of each moved issue; no actor, so the bell says "GitHub".
+          ${watcherStatusNotifications(null, sql`moved_activity`, sql`'{"source":"github"}'::jsonb`)}
         )
         SELECT
           (SELECT count(*) FROM delivery)::int AS fresh,
