@@ -16,23 +16,28 @@ export interface AttachmentUploadContextValue {
   target: UploadTarget | null;
   /** False while R2 is not configured: uploads are refused with a message, nothing breaks. */
   storageReady: boolean;
+  /** Files of a comment that is not posted yet (see `confirmUploadInput`). */
+  draft: boolean;
   upload: UploadFile;
 }
 
 const AttachmentUploadContext = createContext<AttachmentUploadContextValue>({
   target: null,
   storageReady: false,
+  draft: false,
   upload: uploadFile,
 });
 
 export function AttachmentUploadProvider({
   target,
   storageReady,
+  draft = false,
   upload = uploadFile,
   children,
 }: {
   target: UploadTarget | null;
   storageReady: boolean;
+  draft?: boolean;
   /** Injectable for tests. */
   upload?: UploadFile;
   children: ReactNode;
@@ -43,9 +48,10 @@ export function AttachmentUploadProvider({
     () => ({
       target: entityType && entityId ? { entityType, entityId } : null,
       storageReady,
+      draft,
       upload,
     }),
-    [entityType, entityId, storageReady, upload],
+    [entityType, entityId, storageReady, draft, upload],
   );
   return (
     <AttachmentUploadContext.Provider value={value}>{children}</AttachmentUploadContext.Provider>

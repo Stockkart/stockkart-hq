@@ -33,6 +33,12 @@ export type StartUploadInput = z.infer<typeof startUploadInput>;
 
 export const attachmentIdInput = z.object({ attachmentId: z.uuid() });
 
+/**
+ * `draft`: the file was added to a comment that is not posted yet. It belongs to the issue
+ * until then, but the page is not refreshed for it (it shows inline in the comment).
+ */
+export const confirmUploadInput = attachmentIdInput.extend({ draft: z.boolean().optional() });
+
 /** Moves a new comment's uploads (made while it was a draft on its issue) onto the comment. */
 export const adoptCommentAttachmentsInput = z.object({
   commentId: z.uuid(),

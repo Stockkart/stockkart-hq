@@ -15,6 +15,7 @@ import {
   IMAGE_NODE,
   imageNodeAttrs,
   MAX_ALT_LENGTH,
+  UPLOAD_NODE,
 } from "@/lib/attachments/nodes";
 import { formatBytes } from "@/lib/attachments/views";
 import { cn } from "@/lib/utils";
@@ -28,8 +29,6 @@ import { queueFile, runUpload, subscribeUpload, uploadProgress } from "./attachm
  * `fileAttachment` chip `{ attachmentId, filename, size }`. Images load through the authed
  * `/api/files/<id>` route only (S-5). The upload target comes from `AttachmentUploadProvider`.
  */
-
-export const UPLOAD_NODE = "attachmentUpload";
 
 export const NO_TARGET_MESSAGE = "Save first, then attach files";
 
@@ -70,14 +69,19 @@ function settlePlaceholder(editor: Editor, token: string, content: JSONContent |
     return true;
   });
   if (!range) return;
-  if (content) editor.chain().insertContentAt(range, content).run();
-  else editor.chain().deleteRange(range).run();
+  // Not an undo step: undoing it would bring back a placeholder whose upload is over.
+  const chain = editor.chain().command(({ tr }) => {
+    tr.setMeta("addToHistory", false);
+    return true;
+  });
+  if (content) chain.insertContentAt(range, content).run();
+  else chain.deleteRange(range).run();
 }
 
 function UploadPlaceholderView({ node, editor }: ReactNodeViewProps) {
   const token = stringAttr(node.attrs.token);
   const filename = stringAttr(node.attrs.filename) || "file";
-  const { target, storageReady, upload } = useAttachmentUpload();
+  const { target, storageReady, draft, upload } = useAttachmentUpload();
   const progress = useSyncExternalStore(
     (listener) => subscribeUpload(token, listener),
     () => uploadProgress(token),
@@ -98,7 +102,9 @@ function UploadPlaceholderView({ node, editor }: ReactNodeViewProps) {
       fail(STORAGE_NOT_CONFIGURED_MESSAGE);
       return;
     }
-    const pending = runUpload(token, (file, onProgress) => upload(file, target, { onProgress }));
+    const pending = runUpload(token, (file, onProgress) =>
+      upload(file, target, { onProgress, draft }),
+    );
     if (!pending) {
       // Left over from an interrupted upload (e.g. a reload): nothing to finish.
       settlePlaceholder(editor, token, null);
@@ -139,7 +145,7 @@ function UploadPlaceholderView({ node, editor }: ReactNodeViewProps) {
     return () => {
       active = false;
     };
-  }, [editor, token, target, storageReady, upload]);
+  }, [editor, token, target, storageReady, draft, upload]);
 
   const percent = Math.round(progress * 100);
   return (
@@ -158,6 +164,41 @@ function UploadPlaceholderView({ node, editor }: ReactNodeViewProps) {
       />
     </NodeViewWrapper>
   );
+}
+
+/** A `data-*` string attribute (kept when copying between HQ editors). */
+function dataAttribute(name: string, fallback: string | null) {
+  return {
+    default: fallback,
+    parseHTML: (element: HTMLElement) => element.getAttribute(`data-${name}`) ?? fallback,
+    renderHTML: (attributes: Record<string, unknown>) => {
+      const value = attributes[camel(name)];
+      return typeof value === "string" ? { [`data-${name}`]: value } : {};
+    },
+  };
+}
+
+function numberAttribute(name: string) {
+  return {
+    default: null,
+    parseHTML: (element: HTMLElement) => {
+      const value = Number.parseInt(element.getAttribute(`data-${name}`) ?? "", 10);
+      return Number.isSafeInteger(value) && value > 0 ? value : null;
+    },
+    renderHTML: (attributes: Record<string, unknown>) => {
+      const value = attributes[name];
+      return typeof value === "number" ? { [`data-${name}`]: String(value) } : {};
+    },
+  };
+}
+
+function camel(name: string): string {
+  return name.replace(/-([a-z])/g, (_, letter: string) => letter.toUpperCase());
+}
+
+/** Parse rule guard: only elements carrying a real attachment id become attachment nodes. */
+function ownAttachment(element: HTMLElement): false | null {
+  return fileNodeAttrs({ attachmentId: element.getAttribute("data-attachment-id") }) ? null : false;
 }
 
 /** Transient: never parsed from HTML, so a copied placeholder cannot be pasted anywhere. */
@@ -279,16 +320,17 @@ export const AttachmentImage = Node.create({
 
   addAttributes() {
     return {
-      attachmentId: { default: null },
-      alt: { default: "" },
-      width: { default: null },
-      height: { default: null },
+      attachmentId: dataAttribute("attachment-id", null),
+      alt: dataAttribute("alt", ""),
+      width: numberAttribute("width"),
+      height: numberAttribute("height"),
     };
   },
 
-  // Only our own nodes: an <img> pasted from elsewhere (any URL) is never turned into one.
+  // Only our own nodes (copy/paste between HQ editors), and only with a valid attachment id:
+  // an <img> pasted from elsewhere (any URL) is never turned into one.
   parseHTML() {
-    return [];
+    return [{ tag: `div[data-type="${IMAGE_NODE}"]`, getAttrs: ownAttachment }];
   },
 
   renderHTML({ HTMLAttributes }) {
@@ -309,14 +351,14 @@ export const FileAttachment = Node.create({
 
   addAttributes() {
     return {
-      attachmentId: { default: null },
-      filename: { default: "file" },
-      size: { default: null },
+      attachmentId: dataAttribute("attachment-id", null),
+      filename: dataAttribute("filename", "file"),
+      size: numberAttribute("size"),
     };
   },
 
   parseHTML() {
-    return [];
+    return [{ tag: `span[data-type="${FILE_NODE}"]`, getAttrs: ownAttachment }];
   },
 
   renderHTML({ node }) {
@@ -328,6 +370,9 @@ export const FileAttachment = Node.create({
       "span",
       {
         "data-type": FILE_NODE,
+        "data-attachment-id": attrs?.attachmentId ?? "",
+        "data-filename": attrs?.filename ?? "",
+        "data-size": attrs?.size === null || !attrs ? "" : String(attrs.size),
         class:
           "inline-flex items-center gap-1 rounded border bg-muted px-1.5 py-0.5 align-baseline text-xs",
       },

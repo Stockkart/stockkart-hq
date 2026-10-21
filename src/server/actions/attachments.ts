@@ -5,6 +5,7 @@ import { type AttachmentEntityType } from "@/lib/attachments/constants";
 import {
   adoptCommentAttachmentsInput,
   attachmentIdInput,
+  confirmUploadInput,
   startUploadInput,
 } from "@/lib/attachments/schemas";
 import { type AttachmentView, type StartedUpload } from "@/lib/attachments/views";
@@ -42,11 +43,11 @@ export async function confirmUploadAction(input: unknown): Promise<ActionResult<
   const session = await requireSession();
   let pages: string[] = [];
   return runAction(
-    attachmentIdInput,
+    confirmUploadInput,
     input,
     async (data) => {
       const view = await attachmentService.confirmUpload(session.user.id, data.attachmentId);
-      pages = pagesFor(view.entityType);
+      pages = data.draft ? [] : pagesFor(view.entityType);
       return view;
     },
     () => refreshPages(...pages),

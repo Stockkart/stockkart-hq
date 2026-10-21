@@ -12,6 +12,7 @@ import { matchesQuery, Select } from "@/components/ui/select";
 import { LazyRichTextEditor } from "@/features/editor/lazy-rich-text-editor";
 import { callAction } from "@/features/issue/client-utils";
 import { userOptions } from "@/features/issue/field-options";
+import { withoutPendingUploads } from "@/lib/attachments/nodes";
 import { splitAdrTitle } from "@/lib/docs/adr";
 import {
   ADR_STATUS_LABELS,
@@ -378,7 +379,8 @@ export function DocEditor({
           label="Document"
           placeholder="Write the doc. Mention issues as STK-123."
           className="min-h-[60vh]"
-          onChange={(content) => saver.change({ content })}
+          // An upload placeholder is never saved; the finished image triggers its own change.
+          onChange={(content) => saver.change({ content: withoutPendingUploads(content) })}
         />
 
         {attachmentsPanel}

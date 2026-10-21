@@ -21,6 +21,9 @@ import { type UploadFile, uploadFile, type UploadTarget } from "./upload-client"
  * and drop). Comment files are not listed here: they show inline in their comment.
  */
 
+/** Larger images get an icon: a 40 px thumbnail should not pull a 10 MB original. */
+const THUMBNAIL_MAX_BYTES = 2 * 1024 * 1024;
+
 interface Uploading {
   key: string;
   filename: string;
@@ -211,7 +214,7 @@ function AttachmentRow({
     category === "image" ? ImageIcon : category === "pdf" || category === "text" ? FileText : File;
   return (
     <li className="flex items-center gap-3 px-3 py-2 text-sm">
-      {category === "image" ? (
+      {category === "image" && item.sizeBytes <= THUMBNAIL_MAX_BYTES ? (
         // Thumbnail through the authed route; reserved box, lazy (no layout shift).
         // eslint-disable-next-line @next/next/no-img-element
         <img

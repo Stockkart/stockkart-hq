@@ -24,7 +24,11 @@ export interface UploadTarget {
 export type UploadFile = (
   file: File,
   target: UploadTarget,
-  options?: { onProgress?: (fraction: number) => void },
+  options?: {
+    onProgress?: (fraction: number) => void;
+    /** A not-yet-posted comment's file: confirm without refreshing the page. */
+    draft?: boolean;
+  },
 ) => Promise<ActionResult<AttachmentView>>;
 
 function put(
@@ -80,5 +84,7 @@ export const uploadFile: UploadFile = async (original, target, options = {}) => 
     await attempt(() => cancelUploadAction({ attachmentId: started.data.attachmentId }));
     return { ok: false, error: `Uploading ${file.name} failed; check your connection and retry` };
   }
-  return attempt(() => confirmUploadAction({ attachmentId: started.data.attachmentId }));
+  return attempt(() =>
+    confirmUploadAction({ attachmentId: started.data.attachmentId, draft: options.draft }),
+  );
 };

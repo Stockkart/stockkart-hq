@@ -181,7 +181,9 @@ e2e/                      Playwright smoke tests
   parent (`liveAttachmentParent`). UI: `features/attachments/` (panel, upload client,
   image downscaling); editor nodes `image` / `fileAttachment` via the registries. Wrap an
   editor in `AttachmentUploadProvider` (target entity + `storageReady`) to enable paste and
-  drop; a new comment's files go to its issue and move onto the comment once it is posted.
+  drop; a new comment's files go to its issue (`draft`: no page refresh) and move onto the
+  comment once it is posted. Saving is blocked while an upload placeholder is in the doc
+  (`hasPendingUploads`); doc autosave strips placeholders (`withoutPendingUploads`).
 
 ## Adding an editor node
 

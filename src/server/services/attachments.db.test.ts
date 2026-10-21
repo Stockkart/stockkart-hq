@@ -378,6 +378,85 @@ describeDb("attachment service (Postgres)", () => {
     });
   });
 
+  describe("adoptForComment", () => {
+    it("refuses files for someone else's comment, and moves nothing across issues", async () => {
+      const comments = createCommentService(db, { runAtomic: transactionRunner(db) });
+      const body = {
+        type: "doc" as const,
+        content: [{ type: "paragraph", content: [{ type: "text", text: "z" }] }],
+      };
+      const theirComment = await comments.createComment(other, { issueId, body });
+      await expect(
+        service().startUpload(actor, input({ entityType: "comment", entityId: theirComment.id })),
+      ).rejects.toMatchObject({ code: "not_found", message: "Comment not found" });
+
+      const elsewhere = await newIssue("Other issue");
+      const fromElsewhere = await upload(actor, { entityId: elsewhere });
+      const mine = await comments.createComment(actor, { issueId, body });
+      await expect(
+        service().adoptForComment(actor, { commentId: mine.id, attachmentIds: [fromElsewhere.id] }),
+      ).resolves.toEqual({ moved: 0 });
+      await comments.deleteComment(actor, mine.id);
+      await expect(
+        service().adoptForComment(actor, { commentId: mine.id, attachmentIds: [fromElsewhere.id] }),
+      ).rejects.toMatchObject({ code: "not_found" });
+    });
+  });
+
+  describe("cancelUpload and the confirm window", () => {
+    it("lets only the uploader cancel a pending upload, never a ready one", async () => {
+      const started = await service().startUpload(actor, input());
+      const row = await putAnnounced(started.attachmentId);
+      await expect(service().cancelUpload(other, started.attachmentId)).rejects.toMatchObject({
+        code: "not_found",
+      });
+      await service().cancelUpload(actor, started.attachmentId);
+      expect(bucket.deleted).toEqual([row.storageKey]);
+      expect(await db.$count(attachments, eq(attachments.id, started.attachmentId))).toBe(0);
+
+      const ready = await upload(actor);
+      await expect(service().cancelUpload(actor, ready.id)).rejects.toMatchObject({
+        code: "not_found",
+      });
+    });
+
+    it("refuses to confirm a pending upload past the confirm window", async () => {
+      const started = await service().startUpload(actor, input());
+      await putAnnounced(started.attachmentId);
+      await db.execute(
+        sql`UPDATE attachments SET created_at = now() - interval '2 hours'
+          WHERE id = ${started.attachmentId}::uuid`,
+      );
+      await expect(service().confirmUpload(actor, started.attachmentId)).rejects.toMatchObject({
+        code: "not_found",
+      });
+    });
+
+    it("keeps uploading when the side purge fails", async () => {
+      const failing = createAttachmentService(db, {
+        storage: createStorage(CONFIG, () => ({
+          ...bucket.transport,
+          send: async (command) => {
+            if (command instanceof DeleteObjectCommand) throw new Error("R2 down");
+            return bucket.transport.send(command);
+          },
+        })),
+      });
+      const stale = await service().startUpload(other, input());
+      await db.execute(
+        sql`UPDATE attachments SET created_at = now() - interval '25 hours'
+          WHERE id = ${stale.attachmentId}::uuid`,
+      );
+      await expect(failing.startUpload(other, input())).resolves.toMatchObject({
+        attachmentId: expect.any(String),
+      });
+      // The row whose object could not be deleted stays for the next run.
+      expect(await db.$count(attachments, eq(attachments.id, stale.attachmentId))).toBe(1);
+      await service().purgeStalePending(100);
+      expect(await db.$count(attachments, eq(attachments.id, stale.attachmentId))).toBe(0);
+    });
+  });
+
   describe("purgeStalePending", () => {
     it("deletes pending uploads older than a day, objects first", async () => {
       const stale = await service().startUpload(other, input());

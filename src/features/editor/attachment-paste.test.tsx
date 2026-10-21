@@ -41,13 +41,13 @@ function view(overrides: Partial<AttachmentView>): AttachmentView {
 }
 
 /** A paste event as ProseMirror reads it (jsdom has no DataTransfer). */
-function paste(target: Element, files: File[], text = "") {
+function paste(target: Element, files: File[], text = "", html = "") {
   const event = new Event("paste", { bubbles: true, cancelable: true });
   Object.defineProperty(event, "clipboardData", {
     value: {
       files,
       types: files.length > 0 ? ["Files"] : ["text/plain"],
-      getData: (type: string) => (type === "text/plain" ? text : ""),
+      getData: (type: string) => (type === "text/plain" ? text : type === "text/html" ? html : ""),
     },
   });
   target.dispatchEvent(event);
@@ -96,6 +96,7 @@ describe("pasting files into the editor (ISS-9)", () => {
     expect(upload).toHaveBeenCalledTimes(1);
     expect(upload.mock.calls[0]?.[0]).toBe(file);
     expect(upload.mock.calls[0]?.[1]).toEqual({ entityType: "issue", entityId: ISSUE });
+    expect(upload.mock.calls[0]?.[2]).toMatchObject({ draft: false });
     await waitFor(() => expect(progress).toHaveAttribute("value", "50"));
 
     await act(async () => finish({ ok: true, data: view({}) }));
@@ -177,6 +178,28 @@ describe("pasting files into the editor (ISS-9)", () => {
     });
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("Save first, then attach files"));
     expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("keeps images and file chips copied between HQ editors, never foreign images", async () => {
+    const { last } = setup(vi.fn<UploadFile>());
+    const box = await screen.findByRole("textbox", { name: "Description" });
+    const html =
+      `<div data-type="image" data-attachment-id="${IMAGE_ID}" data-alt="Chart" data-width="10" data-height="20"></div>` +
+      `<p>See <span data-type="fileAttachment" data-attachment-id="${FILE_ID}" data-filename="a.log" data-size="5">a.log</span></p>` +
+      `<img src="https://evil.test/x.png"><div data-type="image" data-attachment-id="../backups/x"></div>`;
+    act(() => {
+      paste(box, [], "Chart See a.log", html);
+    });
+    await waitFor(() => expect(JSON.stringify(last())).toContain(IMAGE_ID));
+    const content = JSON.stringify(last());
+    expect(content).toContain(
+      `{"type":"image","attrs":{"attachmentId":"${IMAGE_ID}","alt":"Chart","width":10,"height":20}}`,
+    );
+    expect(content).toContain(
+      `{"type":"fileAttachment","attrs":{"attachmentId":"${FILE_ID}","filename":"a.log","size":5}}`,
+    );
+    expect(content).not.toContain("evil.test");
+    expect(content).not.toContain("backups");
   });
 
   it("offers an Attach file toolbar button (the keyboard alternative to dropping)", async () => {

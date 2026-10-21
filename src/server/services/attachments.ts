@@ -4,7 +4,7 @@ import { type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { type AttachmentEntityType, ATTACHMENT_ENTITY_TYPES } from "@/lib/attachments/constants";
-import { classifyUpload, normalizeMime } from "@/lib/attachments/policy";
+import { classifyUpload, normalizeMime, type UploadClass } from "@/lib/attachments/policy";
 import { type StartUploadInput } from "@/lib/attachments/schemas";
 import { type AttachmentView, type StartedUpload } from "@/lib/attachments/views";
 import { type AppDatabase } from "@/server/db/types";
@@ -35,11 +35,22 @@ import { rowsOf } from "./sql";
  * objects kept (§9.3).
  */
 
+/**
+ * Abuse limit on pending uploads per user and window. Checked in the insert statement, so
+ * it holds for sequential requests; parallel requests from the same user can each see the
+ * count just below the limit and overshoot it by at most their concurrency (accepted: a
+ * signed-in staff member, 10 MB each, purged after a day).
+ */
 export const PENDING_LIMIT = 20;
 export const PENDING_WINDOW_MINUTES = 10;
 export const PENDING_MAX_AGE_HOURS = 24;
 /** How many stale pending uploads one `startUpload` cleans up on the side (cheap, bounded). */
 export const OPPORTUNISTIC_PURGE_LIMIT = 5;
+/**
+ * A pending upload can be confirmed for this long (the signed PUT lives 5 minutes), well
+ * before the purge may delete its object, so a confirm never races the purge.
+ */
+export const CONFIRM_WINDOW_MINUTES = 60;
 
 export type AttachmentStorage = Pick<
   Storage,
@@ -50,8 +61,15 @@ export type AttachmentStorage = Pick<
  * Whether the parent of an attachment is live: the issue or doc is not deleted, and for a
  * comment, the comment and the issue or doc it is on are not deleted. Used by the upload
  * check and by the download route (a deleted parent's files 404 like the parent does).
+ * With `commentAuthorId` (uploads), a comment only counts when that user wrote it: nobody
+ * attaches files to someone else's comment.
  */
-export function liveAttachmentParent(entityType: SQL, entityId: SQL): SQL {
+export function liveAttachmentParent(
+  entityType: SQL,
+  entityId: SQL,
+  { commentAuthorId }: { commentAuthorId?: string } = {},
+): SQL {
+  const author = commentAuthorId ? sql`AND pc.author_id = ${commentAuthorId}::uuid` : sql``;
   return sql`(CASE (${entityType})::text
     WHEN 'issue' THEN EXISTS (
       SELECT 1 FROM issues pi WHERE pi.id = ${entityId} AND pi.deleted_at IS NULL)
@@ -59,7 +77,7 @@ export function liveAttachmentParent(entityType: SQL, entityId: SQL): SQL {
       SELECT 1 FROM docs pd WHERE pd.id = ${entityId} AND pd.deleted_at IS NULL)
     WHEN 'comment' THEN EXISTS (
       SELECT 1 FROM comments pc
-      WHERE pc.id = ${entityId} AND pc.deleted_at IS NULL
+      WHERE pc.id = ${entityId} AND pc.deleted_at IS NULL ${author}
         AND CASE pc.entity_type::text
           WHEN 'issue' THEN EXISTS (
             SELECT 1 FROM issues pci WHERE pci.id = pc.entity_id AND pci.deleted_at IS NULL)
@@ -72,6 +90,24 @@ export function liveAttachmentParent(entityType: SQL, entityId: SQL): SQL {
 /** The name we keep for display: the last path segment, as typed (the key is sanitized). */
 export function displayFilename(filename: string): string {
   return (filename.split(/[/\\]/).pop() ?? "").trim() || "file";
+}
+
+/**
+ * The stored upload class for a file. Classified from the browser's type and the display
+ * name, then again against the object key (its sanitized name), until both agree: the
+ * storage module re-checks `classifyUpload(type, key)` before signing, and a `.csv` sent as
+ * `application/vnd.ms-excel` (→ octet-stream → `text/csv` by extension) or a name whose
+ * sanitized form is an SVG must not fail or slip through there. Each step only moves to a
+ * canonical type (the policy is idempotent after at most two passes); the bound is a guard.
+ */
+export function storedUploadClass(mime: string, filename: string, key: string): UploadClass {
+  let upload = classifyUpload(mime, filename);
+  for (let pass = 0; pass < 3; pass += 1) {
+    const again = classifyUpload(upload.contentType, key);
+    if (again.contentType === upload.contentType && again.category === upload.category) break;
+    upload = again;
+  }
+  return upload;
 }
 
 /** `text/plain; charset=utf-8` vs `text/plain;charset=UTF-8`: same type. */
@@ -162,11 +198,11 @@ export function createAttachmentService(
     async startUpload(actorId: string, input: StartUploadInput): Promise<StartedUpload> {
       requireStorage();
       const filename = displayFilename(input.filename);
-      // The client's type and name are untrusted; the policy decides what is stored.
-      const policy = classifyUpload(input.mime, filename);
-      const isImage = policy.category === "image";
       const id = newId();
       const key = attachmentKey(filename, id);
+      // The client's type and name are untrusted; the policy decides what is stored.
+      const policy = storedUploadClass(input.mime, filename, key);
+      const isImage = policy.category === "image";
       const width = isImage ? (input.width ?? null) : null;
       const height = isImage ? (input.height ?? null) : null;
 
@@ -174,7 +210,9 @@ export function createAttachmentService(
       // can go stale before the row exists.
       const result = await db.execute(sql`
         WITH parent AS (
-          SELECT ${liveAttachmentParent(sql`${input.entityType}`, sql`${input.entityId}::uuid`)} AS live
+          SELECT ${liveAttachmentParent(sql`${input.entityType}`, sql`${input.entityId}::uuid`, {
+            commentAuthorId: actorId,
+          })} AS live
         ),
         recent AS (
           SELECT count(*)::int AS pending FROM attachments
@@ -237,6 +275,8 @@ export function createAttachmentService(
           SELECT storage_key, mime, size_bytes, status::text AS status FROM attachments
           WHERE id = ${attachmentId}::uuid AND uploaded_by = ${actorId}::uuid
             AND deleted_at IS NULL
+            AND (status = 'ready'
+              OR created_at > now() - make_interval(mins => ${CONFIRM_WINDOW_MINUTES}))
         `),
         z.object({
           storage_key: z.string(),
@@ -266,6 +306,7 @@ export function createAttachmentService(
         WITH updated AS (
           UPDATE attachments SET status = 'ready', updated_at = now()
           WHERE id = ${attachmentId}::uuid AND status = 'pending' AND deleted_at IS NULL
+            AND created_at > now() - make_interval(mins => ${CONFIRM_WINDOW_MINUTES})
           RETURNING id, entity_type, entity_id, filename
         ),
         logged AS (${activityInsert("updated", actorId, "attachment_added", "uploaded")})
@@ -316,14 +357,23 @@ export function createAttachmentService(
         ),
         logged AS (${activityInsert("deleted", actorId, "attachment_removed", "deleted")})
         SELECT (SELECT entity_type::text FROM target) AS entity_type,
+          COALESCE((SELECT uploaded_by = ${actorId}::uuid FROM target), false) AS own,
           (SELECT count(*)::int FROM deleted) AS deleted
       `);
       const [row] = rowsOf(
         result,
-        z.object({ entity_type: z.enum(ATTACHMENT_ENTITY_TYPES).nullable(), deleted: z.number() }),
+        z.object({
+          entity_type: z.enum(ATTACHMENT_ENTITY_TYPES).nullable(),
+          own: z.boolean(),
+          deleted: z.number(),
+        }),
       );
       if (!row?.entity_type) throw notFound("Attachment");
-      if (row.deleted === 0) throw forbidden("Only the person who uploaded a file can delete it");
+      if (row.deleted === 0) {
+        // Own but not deleted: a concurrent delete got there first.
+        if (row.own) throw notFound("Attachment");
+        throw forbidden("Only the person who uploaded a file can delete it");
+      }
       return { entityType: row.entity_type };
     },
 
@@ -385,14 +435,24 @@ export function createAttachmentService(
         `),
         z.object({ id: z.string(), storage_key: z.string() }),
       );
-      if (stale.length === 0) return 0;
-      for (const row of stale) await storage.deleteObject(row.storage_key);
+      // Per row, so one object that cannot be deleted never blocks the rest; its row stays
+      // and is retried next time.
+      const removed: typeof stale = [];
+      for (const row of stale) {
+        try {
+          await storage.deleteObject(row.storage_key);
+          removed.push(row);
+        } catch {
+          // Left for the next run.
+        }
+      }
+      if (removed.length === 0) return 0;
       const deleted = rowsOf(
         await db.execute(sql`
           DELETE FROM attachments
           WHERE status = 'pending'
             AND id IN (${sql.join(
-              stale.map((row) => sql`${row.id}::uuid`),
+              removed.map((row) => sql`${row.id}::uuid`),
               sql`, `,
             )})
           RETURNING id

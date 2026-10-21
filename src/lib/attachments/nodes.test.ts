@@ -2,7 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { extractPlainText, type RichTextDoc } from "@/lib/rich-text";
 
-import { attachmentIdsIn, attachmentUrl, fileNodeAttrs, imageNodeAttrs } from "./nodes";
+import {
+  attachmentIdsIn,
+  attachmentUrl,
+  fileNodeAttrs,
+  hasPendingUploads,
+  imageNodeAttrs,
+  withoutPendingUploads,
+} from "./nodes";
 import { formatBytes } from "./views";
 
 const A = "11111111-2222-4333-8444-555555555555";
@@ -89,6 +96,24 @@ describe("attachment node attrs (ISS-9)", () => {
     expect(text).toContain("server.log");
     expect(text).not.toContain(A);
     expect(text.split("\n")).toContain("Login screen STK-7");
+  });
+
+  it("finds and strips upload placeholders (never saved)", () => {
+    const withUpload: RichTextDoc = {
+      type: "doc",
+      content: [
+        { type: "paragraph", content: [{ type: "text", text: "a" }] },
+        { type: "attachmentUpload", attrs: { token: "t" } },
+        { type: "blockquote", content: [{ type: "attachmentUpload", attrs: { token: "u" } }] },
+      ],
+    };
+    expect(hasPendingUploads(withUpload)).toBe(true);
+    expect(hasPendingUploads(doc)).toBe(false);
+    expect(hasPendingUploads(null)).toBe(false);
+    const stripped = withoutPendingUploads(withUpload);
+    expect(hasPendingUploads(stripped)).toBe(false);
+    expect(stripped.content).toHaveLength(2);
+    expect(withoutPendingUploads(doc)).toBe(doc);
   });
 
   it("formats sizes", () => {

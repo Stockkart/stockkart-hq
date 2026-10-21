@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, useTransition } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -10,7 +11,11 @@ import {
 } from "@/features/attachments/upload-context";
 import { LazyRichTextEditor } from "@/features/editor/lazy-rich-text-editor";
 import { RichTextView } from "@/features/editor/rich-text-view";
-import { attachmentIdsIn } from "@/lib/attachments/nodes";
+import {
+  attachmentIdsIn,
+  hasPendingUploads,
+  UPLOADS_RUNNING_MESSAGE,
+} from "@/lib/attachments/nodes";
 import { type ActivityView, type CommentView, type ProjectMeta } from "@/lib/issues/views";
 import { isEmptyDoc, type RichTextDoc } from "@/lib/rich-text";
 import { adoptCommentAttachmentsAction } from "@/server/actions/attachments";
@@ -55,6 +60,7 @@ export function IssueTabs(props: IssueTabsProps) {
 }
 
 function Comments({ issueId, comments, projectKeys, currentUserId }: IssueTabsProps) {
+  const { storageReady } = useAttachmentUpload();
   const [draft, setDraft] = useState<RichTextDoc | null>(null);
   const [composerKey, setComposerKey] = useState(0);
   const [pending, startTransition] = useTransition();
@@ -62,6 +68,10 @@ function Comments({ issueId, comments, projectKeys, currentUserId }: IssueTabsPr
 
   function submit() {
     if (!draft || isEmptyDoc(draft) || pending) return;
+    if (hasPendingUploads(draft)) {
+      toast.error(UPLOADS_RUNNING_MESSAGE);
+      return;
+    }
     const body = draft;
     startTransition(async () => {
       const created = await callAction(() => createCommentAction({ issueId, body }));
@@ -111,16 +121,24 @@ function Comments({ issueId, comments, projectKeys, currentUserId }: IssueTabsPr
           submit();
         }}
       >
-        <LazyRichTextEditor
-          key={composerKey}
-          variant="comment"
-          initialContent={null}
-          projectKeys={projectKeys}
-          label="Write a comment"
-          placeholder="Write a comment… (⌘/Ctrl+Enter to send)"
-          onChange={setDraft}
-          onSubmit={submit}
-        />
+        {/* Draft files belong to the issue until the comment is posted, then move onto it;
+            they show inline only, so confirming them does not refresh the page. */}
+        <AttachmentUploadProvider
+          target={{ entityType: "issue", entityId: issueId }}
+          storageReady={storageReady}
+          draft
+        >
+          <LazyRichTextEditor
+            key={composerKey}
+            variant="comment"
+            initialContent={null}
+            projectKeys={projectKeys}
+            label="Write a comment"
+            placeholder="Write a comment… (⌘/Ctrl+Enter to send)"
+            onChange={setDraft}
+            onSubmit={submit}
+          />
+        </AttachmentUploadProvider>
         <div className="flex justify-end">
           <Button type="submit" size="sm" disabled={pending || !draft || isEmptyDoc(draft)}>
             {pending ? "Sending…" : "Comment"}
@@ -166,6 +184,10 @@ function CommentItem({
 
   function save() {
     if (isEmptyDoc(draft)) return;
+    if (hasPendingUploads(draft)) {
+      toast.error(UPLOADS_RUNNING_MESSAGE);
+      return;
+    }
     const next = draft;
     startTransition(async () => {
       const result = await callAction(() =>

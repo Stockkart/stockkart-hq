@@ -41,6 +41,7 @@ Use `psql` 17 (the dump comes from `pg_dump` 17). The dump has no owners or gran
 
 ```bash
 read -rs RESTORE_DATABASE_URL   # paste the direct URL of the new branch, not echoed
+export RESTORE_DATABASE_URL     # so `docker run -e RESTORE_DATABASE_URL` below sees it
 gunzip -c 2026-03-14.sql.gz | psql "$RESTORE_DATABASE_URL" --set ON_ERROR_STOP=1 --single-transaction
 ```
 

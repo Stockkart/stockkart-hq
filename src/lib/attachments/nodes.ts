@@ -15,6 +15,8 @@ import { type RichTextNode } from "@/lib/rich-text";
 
 export const IMAGE_NODE = "image";
 export const FILE_NODE = "fileAttachment";
+/** Editor-only placeholder while a file uploads; never meant to be saved. */
+export const UPLOAD_NODE = "attachmentUpload";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Larger than any sane screenshot, small enough to keep layout maths sane. */
@@ -77,6 +79,24 @@ export function fileNodeAttrs(attrs: Record<string, unknown> | undefined): FileN
 export function attachmentUrl(attachmentId: string, options: { download?: boolean } = {}): string {
   return `/api/files/${encodeURIComponent(attachmentId)}${options.download ? "?download=1" : ""}`;
 }
+
+/** Whether an upload is still running in this document (its placeholder is in it). */
+export function hasPendingUploads(doc: RichTextNode | null | undefined): boolean {
+  const visit = (node: RichTextNode): boolean =>
+    node.type === UPLOAD_NODE || (node.content ?? []).some(visit);
+  return doc ? visit(doc) : false;
+}
+
+/** The document without upload placeholders (what an autosave may store). */
+export function withoutPendingUploads<T extends RichTextNode>(doc: T): T {
+  const strip = (node: RichTextNode): RichTextNode =>
+    node.content
+      ? { ...node, content: node.content.filter((child) => child.type !== UPLOAD_NODE).map(strip) }
+      : node;
+  return hasPendingUploads(doc) ? { ...doc, ...strip(doc) } : doc;
+}
+
+export const UPLOADS_RUNNING_MESSAGE = "Wait for the uploads to finish";
 
 /** Attachment ids referenced by image and file nodes anywhere in a document, deduplicated. */
 export function attachmentIdsIn(doc: RichTextNode | null | undefined): string[] {
