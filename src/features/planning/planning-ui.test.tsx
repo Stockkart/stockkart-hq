@@ -18,6 +18,8 @@ const sprintActions = vi.hoisted(() => ({
   completeSprintAction: vi.fn(),
 }));
 vi.mock("@/server/actions/sprints", () => sprintActions);
+const bulkActions = vi.hoisted(() => ({ bulkEditIssuesAction: vi.fn() }));
+vi.mock("@/server/actions/bulk", () => bulkActions);
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 vi.mock("next/link", () => ({
@@ -73,6 +75,7 @@ const backlogProps = {
   sprintDefaults: { name: "Sprint 1", startDate: "2026-06-01", endDate: "2026-06-14" },
   users: [ada],
   filtered: false,
+  bulkOptions: { statuses, users: [ada], labels: [], sprints: [] },
 };
 
 describe("Backlog (BLG-1/2/4)", () => {
@@ -141,6 +144,50 @@ describe("Backlog (BLG-1/2/4)", () => {
         value: 0,
       }),
     );
+  });
+});
+
+describe("Backlog bulk edit (ISS-12)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const issues = [issue(1), issue(2), issue(3), issue(4)];
+  const checkbox = (key: string) => screen.getByRole("checkbox", { name: `Select ${key}` });
+
+  it("selects a range with shift-click and sets the priority of all of them", async () => {
+    bulkActions.bulkEditIssuesAction.mockResolvedValue({ ok: true, data: { changed: 3 } });
+    const user = userEvent.setup();
+    render(<Backlog {...backlogProps} issues={issues} group="none" />);
+    await user.click(checkbox("STK-1"));
+    await user.keyboard("{Shift>}");
+    await user.click(checkbox("STK-3"));
+    await user.keyboard("{/Shift}");
+    const bar = screen.getByRole("group", { name: "Bulk edit 3 issues" });
+    expect(checkbox("STK-4")).not.toBeChecked();
+    await user.click(within(bar).getByRole("combobox", { name: "Set priority of 3 issues" }));
+    await user.click(screen.getByRole("option", { name: /^P0/ }));
+    await waitFor(() =>
+      expect(bulkActions.bulkEditIssuesAction).toHaveBeenCalledWith({
+        projectKey: "STK",
+        issueIds: ["i1", "i2", "i3"],
+        change: { kind: "priority", priority: 0 },
+      }),
+    );
+  });
+
+  it("toggles the focused row with x, and rolls a failed delete back", async () => {
+    bulkActions.bulkEditIssuesAction.mockResolvedValue({ ok: false, error: "Nope" });
+    const user = userEvent.setup();
+    render(<Backlog {...backlogProps} issues={issues} group="none" />);
+    screen.getByRole("link", { name: /^STK-2:/ }).focus();
+    await user.keyboard("x");
+    expect(checkbox("STK-2")).toBeChecked();
+    const bar = screen.getByRole("group", { name: "Bulk edit 1 issue" });
+    await user.click(within(bar).getByRole("button", { name: "Delete" }));
+    await user.click(await screen.findByRole("button", { name: "Delete 1 issue" }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Nope"));
+    await waitFor(() => expect(rowTitles()).toEqual(["Issue 1", "Issue 2", "Issue 3", "Issue 4"]));
   });
 });
 

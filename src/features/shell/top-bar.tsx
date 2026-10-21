@@ -10,6 +10,7 @@ import { type SprintOption } from "@/lib/sprints/views";
 import { signOutAction } from "@/server/actions/auth";
 
 import { DEFAULT_PROJECT_KEY } from "./nav-items";
+import { ShortcutHelp } from "./shortcut-help";
 
 interface TopBarProps {
   userName: string;
@@ -38,6 +39,7 @@ export function TopBar({ userName, issueTemplates, sprintOptions }: TopBarProps)
         initialTemplates={issueTemplates}
         sprintOptionsByProject={sprintOptions}
       />
+      <ShortcutHelp />
       <Button variant="ghost" size="icon" disabled aria-label="Notifications (coming soon)">
         <Bell aria-hidden="true" />
       </Button>

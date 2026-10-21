@@ -256,6 +256,12 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
         topRank(projectRef),
       ]);
       checkParent({ projectId: project.id, type: input.type }, parent);
+      // PRJ-3: no assignee given (not even "unassigned") → the project's default assignee,
+      // read in the insert itself (no extra round trip).
+      const assigneeValue =
+        input.assigneeId === undefined
+          ? sql`(SELECT default_assignee_id FROM projects WHERE id = ${project.id}::uuid)`
+          : uuidOrNull(assigneeId);
       const description = input.description ?? null;
       const descriptionText = description ? extractPlainText(description) : "";
       const refs = docRefs(description, projectKeys);
@@ -308,7 +314,7 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
               SELECT ${id}::uuid, ${project.id}::uuid, counter.issue_counter,
                 ${input.type}::issue_type, ${input.title}, ${jsonbOrNull(description)},
                 ${descriptionText}, ${statusId}::uuid, ${input.priority}::smallint,
-                ${uuidOrNull(assigneeId)}, ${actorId}::uuid, ${uuidOrNull(parentId)},
+                ${assigneeValue}, ${actorId}::uuid, ${uuidOrNull(parentId)},
                 ${uuidOrNull(componentId)}, ${uuidOrNull(sprintId)}, ${rank}
               FROM counter
               RETURNING id, number, sprint_id
@@ -671,7 +677,8 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
       if (!row || row.removed === 0) throw notFound("Link");
     },
 
-    /** Soft delete (ISS-13 restore comes later). Children and links are kept. */
+    /** Soft delete; restorable from the trash for 30 days (ISS-13, `trash.ts`). Children and
+     * links are kept. */
     async deleteIssue(actorId: string, issueId: string): Promise<void> {
       const result = await db.execute(sql`
         WITH deleted AS (

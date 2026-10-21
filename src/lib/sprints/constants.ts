@@ -40,4 +40,11 @@ export const SPRINT_ACTIONS = {
   deleted: "sprint_deleted",
   started: "sprint_started",
   completed: "sprint_completed",
+  /**
+   * PRJ-3 workflow changes, noted on every started sprint (meta: `statusId`, `name`, and
+   * `category` / `fromCategory`), so burndowns and velocity keep counting a status by what
+   * it was at the time, after it is deleted or moved to another category.
+   */
+  statusDeleted: "status_deleted",
+  statusCategoryChanged: "status_category_changed",
 } as const;

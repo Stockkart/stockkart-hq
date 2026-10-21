@@ -56,19 +56,19 @@ export const updateIssueFieldInput = z.discriminatedUnion("field", [
 export type UpdateIssueFieldInput = z.input<typeof updateIssueFieldInput>;
 export type IssueField = UpdateIssueFieldInput["field"];
 
-export const addLabelInput = z.object({
-  issueId: id,
-  name: z
-    .string()
-    .transform((value) => value.trim().replace(/\s+/g, "-").toLowerCase())
-    .pipe(
-      z
-        .string()
-        .min(1, "Label is required")
-        .max(LABEL_MAX, "Label is too long")
-        .regex(/^[\p{L}\p{N}][\p{L}\p{N}._-]*$/u, "Use letters, numbers, '.', '_' or '-'"),
-    ),
-});
+/** A label name: trimmed, spaces to dashes, lower case (shared with project settings). */
+export const labelNameSchema = z
+  .string()
+  .transform((value) => value.trim().replace(/\s+/g, "-").toLowerCase())
+  .pipe(
+    z
+      .string()
+      .min(1, "Label is required")
+      .max(LABEL_MAX, "Label is too long")
+      .regex(/^[\p{L}\p{N}][\p{L}\p{N}._-]*$/u, "Use letters, numbers, '.', '_' or '-'"),
+  );
+
+export const addLabelInput = z.object({ issueId: id, name: labelNameSchema });
 
 export const removeLabelInput = z.object({ issueId: id, labelId: id });
 

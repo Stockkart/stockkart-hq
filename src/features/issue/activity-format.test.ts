@@ -86,3 +86,49 @@ describe("describeActivity (ISS-8)", () => {
     });
   });
 });
+
+describe("describeActivity: project settings and trash (PRJ-3, ISS-13)", () => {
+  it("names a status deleted in settings and says why the issue moved", () => {
+    expect(
+      describeActivity(
+        entry({
+          field: "status",
+          fromValue: "s-gone",
+          toValue: "s-done",
+          meta: { reason: "status_deleted", fromName: "Review 2" },
+        }),
+        lookups,
+      ),
+    ).toEqual({
+      verb: "changed status",
+      from: "Review 2 (deleted)",
+      to: "Done",
+      note: "its status was deleted in project settings",
+    });
+  });
+
+  it("words a restore, and a parent dropped by it", () => {
+    expect(describeActivity(entry({ action: "restored" }), lookups).verb).toBe(
+      "restored the issue from the trash",
+    );
+    expect(
+      describeActivity(
+        entry({ field: "parent", fromValue: "i-5", meta: { reason: "parent_deleted" } }),
+        lookups,
+      ),
+    ).toMatchObject({
+      from: "STK-5",
+      to: "none",
+      note: "restored from the trash while its parent is deleted",
+    });
+  });
+
+  it("ignores an unknown reason", () => {
+    expect(
+      describeActivity(
+        entry({ field: "priority", toValue: "1", meta: { reason: "toString" } }),
+        lookups,
+      ).note,
+    ).toBeUndefined();
+  });
+});
