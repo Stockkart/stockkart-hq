@@ -66,7 +66,10 @@ export default function WhiteboardCanvas({
       ...(scene.appState.viewBackgroundColor
         ? { viewBackgroundColor: scene.appState.viewBackgroundColor }
         : {}),
-      ...(scene.appState.gridSize ? { gridSize: scene.appState.gridSize } : {}),
+      // A stored grid size means the grid is on (null or absent: off).
+      ...(scene.appState.gridSize
+        ? { gridSize: scene.appState.gridSize, gridModeEnabled: true }
+        : {}),
     },
     scrollToContent: true,
   }));
@@ -75,7 +78,8 @@ export default function WhiteboardCanvas({
   function handleChange(elements: readonly OrderedExcalidrawElement[], appState: AppState) {
     if (readOnly || !onChange) return;
     // Excalidraw reports every pointer move and selection; only real edits count.
-    const signature = `${hashElementsVersion(elements)}|${appState.viewBackgroundColor}|${appState.gridSize}`;
+    const grid = appState.gridModeEnabled ? appState.gridSize : null;
+    const signature = `${hashElementsVersion(elements)}|${appState.viewBackgroundColor}|${grid}`;
     if (signature === last.current) return;
     const first = last.current === null;
     last.current = signature;
@@ -89,7 +93,12 @@ export default function WhiteboardCanvas({
     }
     // The first call is Excalidraw loading the initial scene, not an edit.
     if (first) return;
-    onChange(toWhiteboardScene(elements, appState));
+    onChange(
+      toWhiteboardScene(elements, {
+        viewBackgroundColor: appState.viewBackgroundColor,
+        gridSize: grid,
+      }),
+    );
   }
 
   return (

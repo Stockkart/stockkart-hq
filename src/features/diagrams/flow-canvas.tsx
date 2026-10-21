@@ -73,6 +73,9 @@ export interface FlowCanvasProps {
 /** MIME type of a palette item dragged onto the canvas (the value is the node type). */
 const PALETTE_MIME = "application/x-hq-flow-node";
 
+/** What counts as an edit: nodes and edges (the viewport is saved, but never alone). */
+const signature = (scene: FlowScene) => JSON.stringify([scene.nodes, scene.edges]);
+
 const isDefaultViewport = (viewport: Viewport) =>
   viewport.x === 0 && viewport.y === 0 && viewport.zoom === 1;
 
@@ -104,26 +107,32 @@ function FlowEditor({
 }: FlowCanvasProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(sceneToNodes(scene));
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(sceneToEdges(scene));
-  const [viewport, setViewport] = useState<Viewport>(scene.viewport);
   const [editingId, setEditingId] = useState<string | null>(null);
   const flow = useReactFlow<FlowNode, Edge>();
   const wrapper = useRef<HTMLDivElement>(null);
   const counter = useRef(0);
 
-  // Report a change only when the scene itself changed (not selection, drags in progress
-  // or measured sizes), compared on the serialized scene.
-  const lastSent = useRef(
-    JSON.stringify(toFlowScene(sceneToNodes(scene), sceneToEdges(scene), scene.viewport)),
-  );
+  // Report a change only when nodes or edges changed (not selection, drags in progress,
+  // measured sizes, or panning and zooming: viewing must not create versions). The latest
+  // viewport rides along with the next real change.
+  const viewport = useRef<Viewport>(scene.viewport);
+  const onChangeRef = useRef(onChange);
   useEffect(() => {
-    if (readOnly || !onChange) return;
+    onChangeRef.current = onChange;
+  }, [onChange]);
+  const [initialSignature] = useState(() =>
+    signature(toFlowScene(sceneToNodes(scene), sceneToEdges(scene), scene.viewport)),
+  );
+  const lastSent = useRef(initialSignature);
+  useEffect(() => {
+    if (readOnly || !onChangeRef.current) return;
     if (nodes.some((node) => node.dragging)) return;
-    const next = toFlowScene(nodes, edges, viewport);
-    const json = JSON.stringify(next);
+    const next = toFlowScene(nodes, edges, viewport.current);
+    const json = signature(next);
     if (json === lastSent.current) return;
     lastSent.current = json;
-    onChange(next);
-  }, [nodes, edges, viewport, readOnly, onChange]);
+    onChangeRef.current(next);
+  }, [nodes, edges, readOnly]);
 
   const newId = (prefix: string) => {
     counter.current += 1;
@@ -175,6 +184,14 @@ function FlowEditor({
     requestAnimationFrame(() => void flow.fitView({ padding: 0.2, duration: 200 }));
   }
 
+  /** Back to the node after editing, so the keyboard flow continues where it was. */
+  const refocus = (id: string) =>
+    requestAnimationFrame(() =>
+      wrapper.current
+        ?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(id)}"]`)
+        ?.focus(),
+    );
+
   const context: FlowNodeContext = {
     readOnly,
     editingId,
@@ -184,14 +201,12 @@ function FlowEditor({
         data: { ...node.data, label: label.slice(0, FLOW_LABEL_MAX) },
       }));
       setEditingId(null);
-      // Back to the node, so the keyboard flow continues where it was.
-      requestAnimationFrame(() =>
-        wrapper.current
-          ?.querySelector<HTMLElement>(`.react-flow__node[data-id="${CSS.escape(id)}"]`)
-          ?.focus(),
-      );
+      refocus(id);
     },
-    cancelEdit: () => setEditingId(null),
+    cancelEdit: (id) => {
+      setEditingId(null);
+      refocus(id);
+    },
     openLink: onOpenLink,
   };
 
@@ -269,7 +284,9 @@ function FlowEditor({
             onNodeDoubleClick={(_event, node) => {
               if (!readOnly) setEditingId(node.id);
             }}
-            onMoveEnd={(_event, next) => setViewport(next)}
+            onMoveEnd={(_event, next) => {
+              viewport.current = next;
+            }}
             defaultViewport={scene.viewport}
             // A scene that never stored a view (e.g. made elsewhere) is fitted on open.
             fitView={isDefaultViewport(scene.viewport) && scene.nodes.length > 0}

@@ -44,7 +44,7 @@ export interface FlowNodeContext {
   readOnly: boolean;
   editingId: string | null;
   commitLabel: (id: string, label: string) => void;
-  cancelEdit: () => void;
+  cancelEdit: (id: string) => void;
   openLink: (link: FlowNodeLink) => void;
 }
 
@@ -60,6 +60,9 @@ function LabelEditor({ id, label }: { id: string; label: string }) {
   const { commitLabel, cancelEdit } = useContext(FlowNodeCtx);
   const [value, setValue] = useState(label);
   const ref = useRef<HTMLInputElement>(null);
+  // Enter or Escape already finished the edit; the blur of the unmounting input must not
+  // commit again (or commit a cancelled text).
+  const finished = useRef(false);
   useEffect(() => {
     ref.current?.focus();
     ref.current?.select();
@@ -73,11 +76,16 @@ function LabelEditor({ id, label }: { id: string; label: string }) {
       // `nodrag`: typing or selecting text must not drag the node.
       className="nodrag w-full rounded border bg-background px-1 text-center text-sm text-foreground outline-none"
       onChange={(event) => setValue(event.target.value)}
-      onBlur={() => commitLabel(id, value)}
+      onBlur={() => {
+        if (!finished.current) commitLabel(id, value);
+      }}
       onKeyDown={(event) => {
         event.stopPropagation();
+        if (event.key !== "Enter" && event.key !== "Escape") return;
+        event.preventDefault();
+        finished.current = true;
         if (event.key === "Enter") commitLabel(id, value);
-        if (event.key === "Escape") cancelEdit();
+        else cancelEdit(id);
       }}
     />
   );

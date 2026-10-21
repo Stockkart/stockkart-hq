@@ -142,16 +142,20 @@ export const DiagramEmbed = Node.create({
   draggable: true,
 
   addAttributes() {
-    const attr = (key: string, data: string) => ({
+    const attr = (key: string, data: string, normalize = (value: string) => value) => ({
       default: null,
-      parseHTML: (element: HTMLElement) => element.getAttribute(`data-${data}`),
+      parseHTML: (element: HTMLElement) => {
+        const value = element.getAttribute(`data-${data}`);
+        return value === null ? null : normalize(value);
+      },
       renderHTML: (attributes: Record<string, unknown>) => {
         const value = attributes[key];
         return typeof value === "string" ? { [`data-${data}`]: value } : {};
       },
     });
     return {
-      diagramId: attr("diagramId", "diagram-id"),
+      // Lower case, as stored: the backlink query matches the id exactly.
+      diagramId: attr("diagramId", "diagram-id", (value) => value.toLowerCase()),
       title: attr("title", "title"),
       projectKey: attr("projectKey", "project-key"),
       kind: attr("kind", "kind"),

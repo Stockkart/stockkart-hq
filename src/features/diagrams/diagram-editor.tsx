@@ -148,9 +148,11 @@ export function DiagramEditor({
     return { saver: holder.saver, thumbnails: uploader };
   });
 
+  // As loaded; a refresh after the first upload must not re-run the effect below.
+  const [hadThumbnail] = useState(diagram.hasThumbnail);
   useEffect(() => {
     // No thumbnail yet (e.g. made from a template): draw one on the first save.
-    if (!diagram.hasThumbnail) thumbnails.markChanged();
+    if (!hadThumbnail) thumbnails.markChanged();
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
       if (!saver.hasUnsavedChanges) return;
       event.preventDefault();
@@ -163,7 +165,7 @@ export function DiagramEditor({
       void thumbnails.maybeUpload({ force: true });
       saver.dispose();
     };
-  }, [saver, thumbnails, diagram.hasThumbnail]);
+  }, [saver, thumbnails, hadThumbnail]);
 
   // A refresh brought a newer version (e.g. renamed from the list). Continue from it only if
   // it holds exactly my scene; otherwise the next save reports the conflict.

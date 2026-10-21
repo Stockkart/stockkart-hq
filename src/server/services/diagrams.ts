@@ -370,20 +370,28 @@ export function createDiagramService(db: AppDatabase, options: DiagramServiceOpt
      */
     async renameDiagram(actorId: string, input: { diagramId: string; title: string }) {
       const diagram = await liveDiagram(input.diagramId);
+      // `old` locks the row first: after waiting for a concurrent save it sees that save's
+      // title (all CTEs share the snapshot taken before the wait, a locking read does not),
+      // so the activity row records what was actually replaced.
       const result = await db.execute(sql`
-        WITH before AS (SELECT title FROM diagrams WHERE id = ${diagram.id}::uuid),
-        updated AS (
-          UPDATE diagrams SET title = ${input.title}, version = version + 1,
-            updated_by = ${actorId}::uuid, updated_at = now()
+        WITH old AS (
+          SELECT id, title FROM diagrams
           WHERE id = ${diagram.id}::uuid AND deleted_at IS NULL
-          RETURNING id, version, title
+          FOR UPDATE
+        ),
+        updated AS (
+          UPDATE diagrams SET title = ${input.title}, version = diagrams.version + 1,
+            updated_by = ${actorId}::uuid, updated_at = now()
+          FROM old
+          WHERE diagrams.id = old.id
+          RETURNING diagrams.id, diagrams.version, diagrams.title, old.title AS from_title
         ),
         title_activity AS (
           INSERT INTO activity (entity_type, entity_id, actor_id, action, field, from_value,
             to_value)
-          SELECT 'diagram', u.id, ${actorId}::uuid, 'updated', 'title', b.title, u.title
-          FROM updated u, before b
-          WHERE u.title IS DISTINCT FROM b.title
+          SELECT 'diagram', u.id, ${actorId}::uuid, 'updated', 'title', u.from_title, u.title
+          FROM updated u
+          WHERE u.title IS DISTINCT FROM u.from_title
         )
         SELECT version FROM updated
       `);
