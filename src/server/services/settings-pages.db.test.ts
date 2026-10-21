@@ -5,6 +5,7 @@ import { createBatchedRead, type Read } from "@/server/db/read-batch";
 import { seed } from "@/server/db/seed";
 import { type AppDatabase, transactionRunner } from "@/server/db/types";
 import { createTestDatabase, createTestUser, describeDb, type TestDatabase } from "@/test/db";
+import { appLayoutReads } from "@/test/page-reads";
 
 import { createIssueQueries } from "./issue-queries";
 import { createIssueService } from "./issues";
@@ -12,7 +13,6 @@ import { createPlanningQueries } from "./planning-queries";
 import { createSavedViewService } from "./saved-views";
 import { createSettingsQueries } from "./settings-queries";
 import { projectIdByKey } from "./sql";
-import { createSprintQueries } from "./sprint-queries";
 import { createTrashService } from "./trash";
 
 /**
@@ -42,19 +42,14 @@ describeDb("round trips of the settings, trash and issue list pages (Postgres)",
     return {
       issueQueries: createIssueQueries(db, { read }),
       planningQueries: createPlanningQueries(db, { read }),
-      sprintQueries: createSprintQueries(db, { read }),
       savedViews: createSavedViewService(db, { read }),
       settingsQueries: createSettingsQueries(db, { read }),
       trash: createTrashService(db, { runAtomic: transactionRunner(db), read }),
     };
   }
 
-  const layout = (s: ReturnType<typeof services>) =>
-    [
-      s.issueQueries.issueTemplates(),
-      s.sprintQueries.openSprintOptionsByProject(),
-      s.savedViews.listViews(actor, projectIdByKey("STK")),
-    ] as const;
+  /** The app layout's reads (templates, sprint options, sidebar views, the bell's count). */
+  const layout = (read: Read) => appLayoutReads(db, read, actor);
 
   beforeAll(async () => {
     testDb = await createTestDatabase();
@@ -88,8 +83,8 @@ describeDb("round trips of the settings, trash and issue list pages (Postgres)",
   it("issue list with an open saved view: one round trip", async () => {
     const { read, trips } = counted();
     const s = services(read);
-    const [, , views, , , , view] = await Promise.all([
-      ...layout(s),
+    const [, , views, , , , , view] = await Promise.all([
+      ...layout(read),
       s.issueQueries.getProject("STK"),
       s.planningQueries.listIssues(projectId(), {
         scope: "all",
@@ -107,8 +102,8 @@ describeDb("round trips of the settings, trash and issue list pages (Postgres)",
   it("project settings: one round trip", async () => {
     const { read, trips } = counted();
     const s = services(read);
-    const [, , , , settings] = await Promise.all([
-      ...layout(s),
+    const [, , , , , settings] = await Promise.all([
+      ...layout(read),
       s.issueQueries.getProject("STK"),
       s.settingsQueries.getSettings(projectId()),
     ]);
@@ -119,8 +114,8 @@ describeDb("round trips of the settings, trash and issue list pages (Postgres)",
   it("trash: one round trip", async () => {
     const { read, trips } = counted();
     const s = services(read);
-    const [, , , , trash] = await Promise.all([
-      ...layout(s),
+    const [, , , , , trash] = await Promise.all([
+      ...layout(read),
       s.issueQueries.getProject("STK"),
       s.trash.listTrash(projectId()),
     ]);

@@ -7,6 +7,7 @@ import { notifications, statuses, watchers } from "@/server/db/schema";
 import { seed } from "@/server/db/seed";
 import { type AppDatabase, transactionRunner } from "@/server/db/types";
 import { createGithubWebhookHandler } from "@/server/github/webhook";
+import { appLayoutReads } from "@/test/page-reads";
 import { createTestDatabase, createTestUser, describeDb, type TestDatabase } from "@/test/db";
 import {
   deliveryId,
@@ -25,7 +26,6 @@ import { createNotificationQueries } from "./notification-queries";
 import { createNotificationService } from "./notifications";
 import { createPlanningQueries } from "./planning-queries";
 import { createProfileService } from "./profile";
-import { createSprintQueries } from "./sprint-queries";
 import { issueIdByNumber, projectIdByKey } from "./sql";
 import { createWatcherService } from "./watchers";
 
@@ -472,12 +472,8 @@ describeDb("notifications, watchers and @mentions (Postgres)", () => {
       );
       return { read, trips: () => flushes };
     }
-    const layout = (read: Read, userId: string) =>
-      [
-        createIssueQueries(db, { read }).issueTemplates(),
-        createSprintQueries(db, { read }).openSprintOptionsByProject(),
-        createNotificationQueries(db, { read }).unreadCount(userId),
-      ] as const;
+    // The app layout's reads (templates, sprint options, sidebar views, the bell's count).
+    const layout = (read: Read, userId: string) => appLayoutReads(db, read, userId);
 
     it("my work (with Mentions): one round trip", async () => {
       const { read, trips } = counted();
@@ -514,7 +510,7 @@ describeDb("notifications, watchers and @mentions (Postgres)", () => {
       const projectId = projectIdByKey("STK");
       const issueId = issueIdByNumber(projectId, issue.number);
       const q = createIssueQueries(db, { read });
-      const [, , , , detail, watching] = await Promise.all([
+      const [, , , , , detail, watching] = await Promise.all([
         ...layout(read, ada),
         q.getProject("STK"),
         q.getIssue(projectId, issue.number),
