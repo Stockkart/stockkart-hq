@@ -204,19 +204,24 @@ describe("presignDownload (S-5, S-8)", () => {
     );
   });
 
-  it("refuses an invalid key before signing", async () => {
-    const transport = fakeTransport();
-    const storage = createStorage(config, () => transport);
-    await expect(
-      storage.presignDownload({
-        key: "../secret",
-        filename: "a.png",
-        contentType: "image/png",
-        disposition: "inline",
-      }),
-    ).rejects.toBeInstanceOf(StorageInputError);
-    expect(transport.presign).not.toHaveBeenCalled();
-  });
+  it.each(["../secret", "backups/stockkart-hq-2026.sql.gz", "tmp/stockkart-hq-2026.sql.gz"])(
+    "refuses to sign a download for %s",
+    async (key) => {
+      const transport = fakeTransport();
+      const storage = createStorage(config, () => transport);
+      await expect(
+        storage.presignDownload({
+          key,
+          filename: "a.png",
+          contentType: "image/png",
+          disposition: "inline",
+        }),
+      ).rejects.toBeInstanceOf(StorageInputError);
+      await expect(storage.headObject(key)).rejects.toBeInstanceOf(StorageInputError);
+      expect(transport.presign).not.toHaveBeenCalled();
+      expect(transport.send).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe("server-side object calls (mocked S3 client)", () => {

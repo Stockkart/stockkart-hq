@@ -15,8 +15,9 @@ import { type Storage } from "./storage";
  *   404  bad id, unknown, pending or deleted (indistinguishable on purpose)
  *   503  storage is not configured
  *
- * `?download=1` asks for `attachment`; otherwise the policy's default applies (images
- * inline, everything else downloads). The policy can only make it stricter, never looser.
+ * `?download=1` asks for `attachment` and `?inline=1` for `inline`; otherwise the policy's
+ * default applies (images inline, everything else downloads). The policy can only make it
+ * stricter, never looser.
  */
 export function createFileDownloadHandler(deps: {
   storage: Pick<Storage, "storageConfigured" | "presignDownload">;
@@ -27,10 +28,15 @@ export function createFileDownloadHandler(deps: {
     if (!deps.storage.storageConfigured()) return notConfiguredResponse();
     const file = await deps.find(id.toLowerCase());
     if (!file) return notFoundResponse();
-    const wantsDownload = new URL(request.url).searchParams.get("download") === "1";
-    const disposition: Disposition = wantsDownload
-      ? "attachment"
-      : classifyUpload(file.mime, file.filename).defaultDisposition;
+    const params = new URL(request.url).searchParams;
+    // `?download=1` forces a download; `?inline=1` asks to view (PDFs). The policy in
+    // `presignDownload` still downgrades `inline` for every type that may not be shown.
+    const disposition: Disposition =
+      params.get("download") === "1"
+        ? "attachment"
+        : params.get("inline") === "1"
+          ? "inline"
+          : classifyUpload(file.mime, file.filename).defaultDisposition;
     let location: string;
     try {
       location = await deps.storage.presignDownload({

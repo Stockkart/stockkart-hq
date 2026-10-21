@@ -31,6 +31,8 @@ describe("classifyUpload (ISS-9, S-8)", () => {
     ["application/xml", "feed.xml"],
     ["text/javascript", "app.js"],
     ["", "page.HTM"],
+    ["image/png", "logo.svg."],
+    ["image/png", "logo.svg "],
   ])("never serves active content (%s, %s) inline or with its own type", (mime, filename) => {
     const upload = classifyUpload(mime, filename);
     expect(upload).toEqual({

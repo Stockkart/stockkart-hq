@@ -17,7 +17,7 @@ import {
 
 import { contentDisposition } from "./disposition";
 import { StorageInputError, StorageNotConfigured } from "./errors";
-import { isUploadableKey, isValidKey } from "./keys";
+import { isAppKey } from "./keys";
 
 /**
  * Cloudflare R2 through its S3-compatible API (SPEC §7.3, S-5). The bucket is private and
@@ -135,7 +135,7 @@ function assertPolicyContentType(key: string, contentType: string): void {
 }
 
 function assertUploadable(key: string, sizeBytes: number, contentType: string): void {
-  if (!isUploadableKey(key)) throw new StorageInputError("Invalid storage key");
+  if (!isAppKey(key)) throw new StorageInputError("Invalid storage key");
   if (!isAllowedUploadSize(sizeBytes)) throw new StorageInputError("File is empty or too large");
   assertPolicyContentType(key, contentType);
 }
@@ -177,7 +177,12 @@ export function createStorage(
      * A presigned PUT for a direct browser → R2 upload (Vercel function bodies cap at
      * ~4.5 MB). Content-Type and Content-Length are part of the signature, so the client
      * cannot upload a different type or size; the URL expires after 5 minutes. Only
-     * `attachments/` and `thumbnails/` keys can be signed for upload.
+     * attachment and thumbnail keys (`isAppKey`) can be signed.
+     *
+     * The URL stays usable until it expires, also after the server confirmed the object, so
+     * the uploader could replace it with another file of the same type and size within those
+     * 5 minutes. That is no more than the same signed-in user uploading a second file;
+     * confirm (`headObject`) after use rather than relying on the object being immutable.
      */
     async presignUpload(input: {
       key: string;
@@ -220,7 +225,8 @@ export function createStorage(
       contentType: string;
     }): Promise<string> {
       const { config: cfg, transport: t } = ready();
-      if (!isValidKey(input.key)) throw new StorageInputError("Invalid storage key");
+      // Only attachment and thumbnail keys: never a backup, whatever the DB row says.
+      if (!isAppKey(input.key)) throw new StorageInputError("Invalid storage key");
       const policy = classifyUpload(input.contentType, input.filename);
       return t.presign(
         new GetObjectCommand({
@@ -240,7 +246,7 @@ export function createStorage(
     /** Size and type of a stored object, or null when it does not exist. */
     async headObject(key: string): Promise<ObjectInfo | null> {
       const { config: cfg, transport: t } = ready();
-      if (!isValidKey(key)) throw new StorageInputError("Invalid storage key");
+      if (!isAppKey(key)) throw new StorageInputError("Invalid storage key");
       try {
         const output = headOutput.parse(
           await t.send(new HeadObjectCommand({ Bucket: cfg.bucket, Key: key })),
@@ -258,7 +264,7 @@ export function createStorage(
      */
     async deleteObject(key: string): Promise<void> {
       const { config: cfg, transport: t } = ready();
-      if (!isUploadableKey(key)) throw new StorageInputError("Invalid storage key");
+      if (!isAppKey(key)) throw new StorageInputError("Invalid storage key");
       await t.send(new DeleteObjectCommand({ Bucket: cfg.bucket, Key: key }));
     },
 

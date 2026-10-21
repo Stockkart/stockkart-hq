@@ -77,9 +77,12 @@ export function normalizeMime(mime: string): string {
   return (mime.split(";")[0] ?? "").trim().toLowerCase();
 }
 
-/** Lower-case extension of the last path segment, without the dot; "" when there is none. */
+/**
+ * Lower-case extension of the last path segment, without the dot; "" when there is none.
+ * Trailing dots and spaces are ignored (`x.svg.` and `x.svg ` are SVGs, as Windows sees them).
+ */
 export function fileExtension(filename: string): string {
-  const base = filename.split(/[/\\]/).pop() ?? "";
+  const base = (filename.split(/[/\\]/).pop() ?? "").replace(/[. ]+$/, "");
   const dot = base.lastIndexOf(".");
   return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
 }

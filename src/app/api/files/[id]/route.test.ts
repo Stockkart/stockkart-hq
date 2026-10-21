@@ -65,7 +65,7 @@ describe("GET /api/files/[id] (S-5)", () => {
     });
   });
 
-  it("asks for attachment with ?download=1, and by default for non-images", async () => {
+  it("asks for attachment with ?download=1, inline with ?inline=1, and by default for non-images", async () => {
     await get(ID, "?download=1");
     fileQueries.readyAttachment.mockResolvedValue({
       ...image,
@@ -73,9 +73,11 @@ describe("GET /api/files/[id] (S-5)", () => {
       mime: "application/pdf",
     });
     await get(ID);
+    await get(ID, "?inline=1");
     expect(storage.presignDownload.mock.calls.map(([input]) => input.disposition)).toEqual([
       "attachment",
       "attachment",
+      "inline",
     ]);
   });
 

@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { contentDisposition } from "./disposition";
-import {
-  attachmentKey,
-  diagramThumbnailKey,
-  isUploadableKey,
-  isValidKey,
-  sanitizeFilename,
-} from "./keys";
+import { attachmentKey, diagramThumbnailKey, isAppKey, sanitizeFilename } from "./keys";
 
 const ID = "AAAAAAAA-2222-4333-8444-555555555555";
 
@@ -46,24 +40,27 @@ describe("object keys (S-5 layout)", () => {
     expect(name.endsWith(".png")).toBe(true);
   });
 
-  it("accepts only well-formed keys under our prefixes", () => {
-    expect(isValidKey(attachmentKey("a.png", ID))).toBe(true);
-    expect(isValidKey("backups/stockkart-hq.sql.gz")).toBe(true);
+  it("accepts exactly the attachment and thumbnail layouts, never backups or tmp", () => {
+    expect(isAppKey(attachmentKey("a.png", ID))).toBe(true);
+    expect(isAppKey(diagramThumbnailKey(ID))).toBe(true);
     for (const key of [
       "",
+      "backups/stockkart-hq.sql.gz",
+      "tmp/stockkart-hq.sql.gz",
       "/attachments/x",
+      "attachments/x.png",
       "attachments//x",
-      "attachments/../backups/x",
-      "attachments/./x",
+      `attachments/${ID.toLowerCase()}/../backups/x`,
+      `attachments/${ID.toLowerCase()}/.hidden`,
+      `attachments/${ID.toLowerCase()}/a b`,
+      `attachments/${ID.toLowerCase()}/é`,
+      `attachments/${ID.toLowerCase()}/a/b.png`,
+      `thumbnails/diagrams/${ID.toLowerCase()}.json`,
+      "thumbnails/x/y.png",
       "other/x",
-      "attachments/a b",
-      "attachments/é",
     ]) {
-      expect(isValidKey(key), key).toBe(false);
+      expect(isAppKey(key), key).toBe(false);
     }
-    expect(isUploadableKey("backups/x")).toBe(false);
-    expect(isUploadableKey("tmp/x")).toBe(false);
-    expect(isUploadableKey(diagramThumbnailKey(ID))).toBe(true);
   });
 });
 
@@ -79,6 +76,15 @@ describe("contentDisposition", () => {
     expect(contentDisposition("inline", "")).toBe(`inline; filename="file"; filename*=UTF-8''file`);
     expect(contentDisposition("inline", "../a.png")).toBe(
       `inline; filename="a.png"; filename*=UTF-8''a.png`,
+    );
+  });
+
+  it("does not throw on a lone surrogate", () => {
+    expect(contentDisposition("attachment", "a\uD800b.txt")).toBe(
+      `attachment; filename="a_b.txt"; filename*=UTF-8''a_b.txt`,
+    );
+    expect(contentDisposition("attachment", "😀.txt")).toBe(
+      `attachment; filename="__.txt"; filename*=UTF-8''%F0%9F%98%80.txt`,
     );
   });
 });

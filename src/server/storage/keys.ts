@@ -10,18 +10,16 @@ import { randomUUID } from "node:crypto";
  *   tmp/<name>                                in-flight backups; 1-day lifecycle rule
  */
 
+/**
+ * `backups/` and `tmp/` belong to the backup workflow only: the app can neither sign nor
+ * send anything for them (`isAppKey`).
+ */
 export const KEY_PREFIXES = {
   attachments: "attachments/",
   thumbnails: "thumbnails/",
   backups: "backups/",
   tmp: "tmp/",
 } as const;
-
-/** Prefixes the app may hand out presigned PUTs for. Backups are written only by the workflow. */
-export const UPLOADABLE_PREFIXES: readonly string[] = [
-  KEY_PREFIXES.attachments,
-  KEY_PREFIXES.thumbnails,
-];
 
 const MAX_FILENAME_LENGTH = 100;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -63,18 +61,21 @@ export function diagramThumbnailKey(diagramId: string): string {
   return `${KEY_PREFIXES.thumbnails}diagrams/${diagramId.toLowerCase()}.png`;
 }
 
-/**
- * A well-formed key under one of our prefixes: no empty, `.` or `..` segments, no leading
- * slash, printable ASCII only. Every storage call checks this before signing anything.
- */
-export function isValidKey(key: string): boolean {
-  if (key.length === 0 || key.length > 512) return false;
-  if (!/^[A-Za-z0-9._\-/]+$/.test(key)) return false;
-  if (!Object.values(KEY_PREFIXES).some((prefix) => key.startsWith(prefix))) return false;
-  const segments = key.split("/");
-  return segments.every((segment) => segment !== "" && segment !== "." && segment !== "..");
-}
+/** `attachments/<uuid>/<sanitized-filename>` exactly (see `sanitizeFilename`). */
+const ATTACHMENT_KEY_PATTERN =
+  /^attachments\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[A-Za-z0-9-][A-Za-z0-9._-]{0,99}$/;
+/** `thumbnails/diagrams/<uuid>.png` exactly. */
+const THUMBNAIL_KEY_PATTERN =
+  /^thumbnails\/diagrams\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.png$/;
 
-export function isUploadableKey(key: string): boolean {
-  return isValidKey(key) && UPLOADABLE_PREFIXES.some((prefix) => key.startsWith(prefix));
+/**
+ * Whether the app may touch this key at all: exactly one of the layouts the app writes
+ * (attachments, diagram thumbnails). Every storage call (upload, download, head, put,
+ * delete) checks this before signing or sending anything, so a bad or tampered
+ * `storage_key`/`thumbnail_key` can never reach `backups/`, `tmp/` or anything else. The
+ * same layouts are CHECK constraints on `attachments.storage_key` and
+ * `diagrams.thumbnail_key`.
+ */
+export function isAppKey(key: string): boolean {
+  return ATTACHMENT_KEY_PATTERN.test(key) || THUMBNAIL_KEY_PATTERN.test(key);
 }

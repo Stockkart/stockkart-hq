@@ -7,12 +7,14 @@ import { type Disposition } from "@/lib/attachments/policy";
  */
 export function contentDisposition(disposition: Disposition, filename: string): string {
   const base = filename.split(/[/\\]/).pop() ?? "";
-  // Control characters (including CR/LF) dropped; the rest of the name is kept as typed.
+  // Control characters (including CR/LF) dropped and lone UTF-16 surrogates replaced (they
+  // would make encodeURIComponent throw); the rest of the name is kept as typed.
   const cleaned = Array.from(base)
     .filter((char) => {
       const code = char.codePointAt(0) ?? 0;
       return code >= 0x20 && code !== 0x7f;
     })
+    .map((char) => (/^[\uD800-\uDFFF]$/.test(char) ? "_" : char))
     .join("")
     .trim();
   const name = cleaned === "" ? "file" : cleaned.slice(0, 200);
