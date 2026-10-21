@@ -34,10 +34,13 @@ describe("proxy (middleware) denies anonymous access", () => {
     expect(locationPath(response)).toBe("/login");
   });
 
-  it("answers an /api route with 401", async () => {
-    const response = await send("/api/files/123");
-    expect(response.status).toBe(401);
-  });
+  it.each(["/api/files/123", "/api/files/thumbnail/diagram/123"])(
+    "answers the file route %s with 401 (S-5, S-10)",
+    async (path) => {
+      const response = await send(path);
+      expect(response.status).toBe(401);
+    },
+  );
 
   it("rejects a forged session cookie", async () => {
     const response = await send("/my-work", "authjs.session-token=not-a-real-jwe");
