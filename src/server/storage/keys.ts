@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
  *
  *   attachments/<uuid>/<sanitized-filename>   ISS-9 / DOC-1 uploads (presigned PUT)
  *   thumbnails/diagrams/<diagramId>.png       DGM-5 thumbnails
- *   backups/<name>.sql.gz                     nightly pg_dump (.github/workflows/backup.yml)
+ *   backups/daily|weekly/<date>.sql.gz        nightly pg_dump (.github/workflows/backup.yml)
  *   tmp/<name>                                in-flight backups; 1-day lifecycle rule
  */
 
