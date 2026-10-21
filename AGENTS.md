@@ -38,7 +38,7 @@ comments and commit bodies.
 src/
   app/(auth)/login/       login page + client form
   app/(app)/              signed-in app shell (layout calls requirePageSession); my-work/, todos/,
-                          settings/profile/
+                          notifications/, settings/profile/
   app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, backlog/, board/, docs/
                           (tree layout, list, docs/[id] editor), adrs/, sprints/ (list,
                           sprints/[sprintId]), and a "coming soon" [section] placeholder for
@@ -52,7 +52,8 @@ src/
   server/auth/            Auth.js config, inventory-api client, rate limit, session policy
   server/actions/         server actions ("use server"), each starting with requireSession()
   server/services/        DB logic as factories (createIssueService(db) …); index.ts wires db;
-                          notifications.ts holds the shared notify() signature (NTF-1)
+                          notifications.ts: notify() and the in-statement notification
+                          CTEs (NTF-1); watchers.ts (ISS-11); mentions.ts (MY-1)
   server/storage/         private R2 bucket (S-5): presigned upload/download, key layout,
                           fail-closed StorageNotConfigured; index.ts wires env
   server/db/              Drizzle schema, client, seed, AppDatabase type
@@ -65,7 +66,7 @@ src/
                           (lib/attachments/policy.ts), @user mentions (lib/mentions.ts),
                           plain-text rules per editor node (lib/rich-text-nodes/)
   features/               feature UI (shell/, issue/, planning/, sprints/, todos/, search/,
-                          docs/, editor/)
+                          docs/, editor/, notifications/)
   features/editor/        shared Tiptap editor (client-only; variants `issue`, `comment`,
                           `doc`), its feature registry (extensions/) and the safe JSON
                           renderer with its node registry (renderers/)
@@ -107,8 +108,13 @@ e2e/                      Playwright smoke tests
     `user_id`, `type` enum, entity_type/entity_id, `actor_id`, `meta`, `read_at`; NTF-1).
     `notifications.dedupe_key` is unique and nullable: write `<event>:<userId>` and
     `ON CONFLICT DO NOTHING` so retries never duplicate. Only `read_at` changes, so no
-    `updated_at`. Call `notificationService.notify(...)` (`services/notifications.ts`);
-    until the notifications slice lands it is a no-op with the final signature.
+    `updated_at`. Prefer writing them in the statement of the change itself:
+    `notificationsInsert` (a CTE body; drops the actor, dedupes),
+    `userMentionNotifyCtes`/`userMentionNotifyStatement` (the @mention sync plus a bell entry
+    for exactly the newly mentioned users) and `watcherStatusNotifications`. Otherwise call
+    `notifySafely(notificationService.notify, …)` after your write: it logs and swallows a
+    failure, so a notification never fails the user's action. Watchers are added by the
+    writes that make someone reporter, assignee or commenter (ISS-11).
   - `saved_views` (VW-3): user, project, name (unique per user and project), `filter` jsonb
     (the URL filter shape), `shared`, fractional `position`.
   - `attachments` (ISS-9): entity_type `issue|comment|doc`, `storage_key` (unique),

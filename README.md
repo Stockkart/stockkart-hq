@@ -198,6 +198,10 @@ connection is needed). Page speed is therefore mostly the number of round trips:
 - Mutations re-render only the pages that show what they changed (`actions/refresh.ts`),
   and the UI shows the change optimistically before the server answers.
 - Every route has a `loading.tsx`, so a click shows the next page's shell at once.
+- The notification bell's unread count is one more query in the app layout's batch, not a
+  request of its own; the bell loads its list only when opened. It does not poll, so an
+  idle tab never keeps Neon's compute awake (the count refreshes with the next page load
+  or mutation).
 
 To see the round trips, set `HQ_LOG_QUERIES=1` (e.g. in `.env.development.local`) and
 watch the server log: one `[db]` line per round trip with its statement count and the
