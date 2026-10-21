@@ -1,5 +1,7 @@
 import { db, read, runAtomic } from "@/server/db/client";
+import { storage } from "@/server/storage";
 
+import { createAttachmentService } from "./attachments";
 import { createCommentService } from "./comments";
 import { createDocQueries } from "./doc-queries";
 import { createDocService } from "./docs";
@@ -35,4 +37,5 @@ export const githubService = createGithubService(db);
 export const githubQueries = createGithubQueries(db, { read });
 export const profileService = createProfileService(db, { read });
 export const fileQueries = createFileQueries(db, { read });
+export const attachmentService = createAttachmentService(db, { storage });
 export const notificationService = createNotificationService(db);

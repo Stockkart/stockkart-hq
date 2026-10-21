@@ -8,6 +8,7 @@ import { createTestDatabase, createTestUser, describeDb, type TestDatabase } fro
 
 import { createCommentService } from "./comments";
 import { createDocQueries } from "./doc-queries";
+import { createFileQueries } from "./files";
 import { createGithubQueries } from "./github-queries";
 import { createIssueQueries } from "./issue-queries";
 import { createIssueService } from "./issues";
@@ -51,6 +52,7 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
       commentService: createCommentService(db, { runAtomic: transactionRunner(db), read }),
       docQueries: createDocQueries(db, { read }),
       githubQueries: createGithubQueries(db, { read }),
+      fileQueries: createFileQueries(db, { read }),
     };
   }
 
@@ -167,6 +169,7 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
       s.issueQueries.listSubtaskParents(projectId(), issueId),
       s.docQueries.docsLinkingTo(issueId),
       s.githubQueries.listDevelopment(issueId),
+      s.fileQueries.listAttachments("issue", issueId),
     ]);
     expect(trips()).toBe(1);
     expect(issue?.sprintId).toBe(sprintId);
