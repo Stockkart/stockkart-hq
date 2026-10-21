@@ -57,7 +57,7 @@ describe("NotificationBell (NTF-1)", () => {
   beforeEach(() => {
     actions.loadBellAction.mockReset().mockResolvedValue({
       ok: true,
-      data: { items: [item("1", false), item("2", false)], unread: 2 },
+      data: { items: [item("1", false), item("2", false)], unread: 2, asOf: new Date() },
     });
     actions.markNotificationReadAction.mockReset().mockResolvedValue({ ok: true, data: undefined });
     actions.markAllNotificationsReadAction
@@ -91,7 +91,7 @@ describe("NotificationBell (NTF-1)", () => {
     // Reopen (the server now has one unread); a refused mark puts the count back.
     actions.loadBellAction.mockResolvedValue({
       ok: true,
-      data: { items: [item("1", true), item("2", false)], unread: 1 },
+      data: { items: [item("1", true), item("2", false)], unread: 1, asOf: new Date() },
     });
     actions.markNotificationReadAction.mockResolvedValue({ ok: false, error: "Nope" });
     await user.click(screen.getByRole("button", { name: /Notifications/ }));
@@ -111,7 +111,9 @@ describe("NotificationBell (NTF-1)", () => {
     const dialog = await screen.findByRole("dialog", { name: "Notifications" });
     await within(dialog).findAllByRole("link", { name: /assigned you/ });
     await user.click(within(dialog).getByRole("button", { name: "Mark all read" }));
-    expect(actions.markAllNotificationsReadAction).toHaveBeenCalledTimes(1);
+    expect(actions.markAllNotificationsReadAction).toHaveBeenCalledWith({
+      asOf: expect.any(Date),
+    });
     expect(screen.getByRole("button", { name: "Notifications" })).toBeInTheDocument();
     expect(within(dialog).getAllByText("Read")).toHaveLength(2);
   });

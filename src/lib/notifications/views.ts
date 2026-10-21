@@ -30,12 +30,16 @@ export interface NotificationPage {
   /** 1-based. */
   page: number;
   hasMore: boolean;
+  /** When the list was read; "mark all read" stops there. */
+  asOf: Date;
 }
 
 /** The bell popover's payload (loaded when it opens). */
 export interface BellData {
   items: NotificationView[];
   unread: number;
+  /** When the list was read; "mark all read" stops there. */
+  asOf: Date;
 }
 
 /** An HQ user offered by the @mention suggestion list. */

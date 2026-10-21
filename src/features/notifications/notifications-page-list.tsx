@@ -10,11 +10,20 @@ import { useNotifications } from "./use-notifications";
 export function NotificationsPageList({
   items: serverItems,
   unread: serverUnread,
+  asOf,
+  page,
 }: {
   items: NotificationView[];
   unread: number;
+  /** When the page was read ("mark all read" stops there). */
+  asOf: Date;
+  page: number;
 }) {
-  const { items, unread, markRead, markAllRead } = useNotifications(serverItems, serverUnread);
+  const { items, unread, markRead, markAllRead } = useNotifications(
+    serverItems,
+    serverUnread,
+    asOf,
+  );
   const list = items ?? [];
 
   return (
@@ -37,7 +46,9 @@ export function NotificationsPageList({
       </div>
       {list.length === 0 ? (
         <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-          Assignments, @mentions, and comments and status changes on issues you watch show up here.
+          {page > 1
+            ? "No more notifications."
+            : "Assignments, @mentions, and comments and status changes on issues you watch show up here."}
         </p>
       ) : (
         <div className="overflow-hidden rounded-lg border">

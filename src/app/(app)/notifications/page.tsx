@@ -25,7 +25,7 @@ export default async function NotificationsPage({ searchParams }: Props) {
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
-      <NotificationsPageList items={list.items} unread={unread} />
+      <NotificationsPageList items={list.items} unread={unread} asOf={list.asOf} page={page} />
       {page > 1 || list.hasMore ? (
         <nav aria-label="Pages" className="flex items-center justify-between text-sm">
           {page > 1 ? (

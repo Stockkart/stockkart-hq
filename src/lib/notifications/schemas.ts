@@ -4,6 +4,12 @@ import { z } from "zod";
 
 export const notificationIdInput = z.object({ notificationId: z.uuid() });
 
+/**
+ * "Mark all read" marks what the user could have seen: notifications created up to `asOf`
+ * (when the list was loaded), not ones that arrived since.
+ */
+export const markAllReadInput = z.object({ asOf: z.coerce.date() });
+
 export const notifyEmailInput = z.object({ enabled: z.boolean() });
 
 export const watchIssueInput = z.object({ issueId: z.uuid(), watching: z.boolean() });

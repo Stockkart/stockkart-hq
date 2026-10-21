@@ -38,6 +38,15 @@ describe("notification wording (NTF-1)", () => {
         }),
       ),
     ).toBe("mentioned you in “Plan”");
+    expect(
+      notificationText(
+        view({
+          type: "mentioned_in_doc",
+          commentId: "c1",
+          target: { kind: "doc", title: "Plan", href: "/STK/docs/d" },
+        }),
+      ),
+    ).toBe("mentioned you in a comment on “Plan”");
     expect(notificationText(view({ type: "comment_on_watched" }))).toBe("commented on STK-12");
     expect(
       notificationText(

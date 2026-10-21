@@ -321,7 +321,7 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
                 ${uuidOrNull(assigneeId)}, ${actorId}::uuid, ${uuidOrNull(parentId)},
                 ${uuidOrNull(componentId)}, ${uuidOrNull(sprintId)}, ${rank}
               FROM counter
-              RETURNING id, number, sprint_id
+              RETURNING id, number, sprint_id, assignee_id
             ),
             created_activity AS (
               INSERT INTO activity (entity_type, entity_id, actor_id, action, to_value)
@@ -363,7 +363,7 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
             auto_watch AS (
               INSERT INTO watchers (issue_id, user_id)
               SELECT DISTINCT inserted.id, u.user_id
-              FROM inserted, (VALUES (${actorId}::uuid), (${uuidOrNull(assigneeId)})) AS u(user_id)
+              FROM inserted, LATERAL (VALUES (${actorId}::uuid), (inserted.assignee_id)) AS u(user_id)
               WHERE u.user_id IS NOT NULL
               ON CONFLICT DO NOTHING
             ),
@@ -372,7 +372,7 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
               ${notificationsInsert({
                 actorId,
                 source: sql`
-                  SELECT ${uuidOrNull(assigneeId)} AS user_id, 'assigned'::text AS type,
+                  SELECT inserted.assignee_id AS user_id, 'assigned'::text AS type,
                     'issue'::text AS entity_type, inserted.id AS entity_id,
                     'assigned:created:' || inserted.id::text AS event_key, '{}'::jsonb AS meta
                   FROM inserted`,

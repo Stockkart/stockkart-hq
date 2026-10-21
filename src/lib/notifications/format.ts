@@ -22,7 +22,8 @@ export function notificationText(view: NotificationView): string {
       if (!what) return "mentioned you in an issue that was deleted";
       return view.commentId ? `mentioned you in a comment on ${what}` : `mentioned you in ${what}`;
     case "mentioned_in_doc":
-      return what ? `mentioned you in ${what}` : "mentioned you in a doc that was deleted";
+      if (!what) return "mentioned you in a doc that was deleted";
+      return view.commentId ? `mentioned you in a comment on ${what}` : `mentioned you in ${what}`;
     case "comment_on_watched":
       return what ? `commented on ${what}` : "commented on an issue that was deleted";
     case "status_on_watched": {

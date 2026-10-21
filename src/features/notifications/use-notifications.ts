@@ -14,7 +14,12 @@ import {
  * once and rolls back if the server refuses. `items` and `unread` follow new server values
  * (`serverItems`, `serverUnread`) whenever those change.
  */
-export function useNotifications(serverItems: NotificationView[] | null, serverUnread: number) {
+export function useNotifications(
+  serverItems: NotificationView[] | null,
+  serverUnread: number,
+  /** When `serverItems` were read: "mark all read" stops there. */
+  asOf: Date | null,
+) {
   const [items, setItems] = useState(serverItems);
   const [unread, setUnread] = useState(serverUnread);
   const [seen, setSeen] = useState({ items: serverItems, unread: serverUnread });
@@ -43,10 +48,11 @@ export function useNotifications(serverItems: NotificationView[] | null, serverU
   }
 
   async function markAllRead() {
+    if (!asOf) return;
     const before = { items, unread };
     setItems((current) => (current ? current.map((entry) => ({ ...entry, read: true })) : current));
     setUnread(0);
-    const ok = await callAction(() => markAllNotificationsReadAction());
+    const ok = await callAction(() => markAllNotificationsReadAction({ asOf }));
     if (ok === null) {
       setItems(before.items);
       setUnread(before.unread);

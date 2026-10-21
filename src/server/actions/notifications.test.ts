@@ -66,7 +66,7 @@ describe("notification and watcher actions (NTF-1, NTF-2, ISS-11)", () => {
   it.each([
     ["loadBellAction", () => loadBellAction()],
     ["markNotificationReadAction", () => markNotificationReadAction({ notificationId: NOTE })],
-    ["markAllNotificationsReadAction", () => markAllNotificationsReadAction()],
+    ["markAllNotificationsReadAction", () => markAllNotificationsReadAction({ asOf: new Date() })],
     ["setNotifyEmailAction", () => setNotifyEmailAction({ enabled: true })],
     ["setWatchingAction", () => setWatchingAction({ issueId: ISSUE, watching: true })],
     ["listMentionUsersAction", () => listMentionUsersAction()],
@@ -85,7 +85,10 @@ describe("notification and watcher actions (NTF-1, NTF-2, ISS-11)", () => {
 
   it("loads the SESSION user's latest 20 and unread count", async () => {
     authMock.mockResolvedValue(session);
-    await expect(loadBellAction()).resolves.toEqual({ ok: true, data: { items: [], unread: 4 } });
+    await expect(loadBellAction()).resolves.toEqual({
+      ok: true,
+      data: { items: [], unread: 4, asOf: expect.any(Date) },
+    });
     expect(notificationQueries.latest).toHaveBeenCalledWith(ME, 20);
     expect(notificationQueries.unreadCount).toHaveBeenCalledWith(ME);
   });
@@ -97,8 +100,16 @@ describe("notification and watcher actions (NTF-1, NTF-2, ISS-11)", () => {
     ).resolves.toEqual({ ok: true, data: undefined });
     expect(notificationService.markRead).toHaveBeenCalledWith(ME, NOTE);
     expect(paths()).toEqual(["/notifications"]);
-    await markAllNotificationsReadAction();
-    expect(notificationService.markAllRead).toHaveBeenCalledWith(ME);
+    const asOf = new Date("2026-01-02T03:04:05Z");
+    await expect(markAllNotificationsReadAction({ asOf, userId: SOMEONE })).resolves.toEqual({
+      ok: true,
+      data: { marked: 4 },
+    });
+    expect(notificationService.markAllRead).toHaveBeenCalledWith(ME, asOf);
+    await expect(markAllNotificationsReadAction({ asOf: "soon" })).resolves.toMatchObject({
+      ok: false,
+    });
+    expect(notificationService.markAllRead).toHaveBeenCalledTimes(1);
   });
 
   it("reports someone else's (or a missing) notification as not found", async () => {

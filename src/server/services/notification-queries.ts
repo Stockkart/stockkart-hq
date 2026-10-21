@@ -152,8 +152,10 @@ export function createNotificationQueries(
 
     /** One page of /notifications (1-based); one extra row tells whether more follow. */
     async page(userId: string, page: number, size: number): Promise<NotificationPage> {
+      // Taken before the read, so "mark all read" never covers an entry not on screen.
+      const asOf = new Date();
       const rows = await read(listQuery(userId, size + 1, (page - 1) * size));
-      return { items: rows.slice(0, size).map(toView), page, hasMore: rows.length > size };
+      return { items: rows.slice(0, size).map(toView), page, hasMore: rows.length > size, asOf };
     },
 
     /** NTF-2: the user's email-digest opt-in (stored only for now). */

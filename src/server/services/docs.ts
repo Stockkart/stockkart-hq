@@ -242,13 +242,14 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
         actorId,
         gate: sql`EXISTS (SELECT 1 FROM inserted)`,
       })},
-      -- @user links of the copied template content; nobody is notified, since the actor
-      -- did not write those mentions (later saves notify only users they newly mention).
+      -- @user links of the copied template content; nobody is notified and nobody is
+      -- credited (created_by NULL), since the actor did not write those mentions. Later
+      -- saves notify only users they newly mention.
       ${userMentionSyncCtes({
         fromType: "doc",
         fromId: id,
         userIds: extractUserMentionIds(values.content),
-        actorId,
+        actorId: null,
         gate: sql`EXISTS (SELECT 1 FROM inserted)`,
       })}
       SELECT id::text, version, title FROM inserted

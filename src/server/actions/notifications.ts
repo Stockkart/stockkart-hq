@@ -1,10 +1,16 @@
 "use server";
 
 import { type ActionResult } from "@/lib/action-result";
-import { BELL_LATEST, notificationIdInput, notifyEmailInput } from "@/lib/notifications/schemas";
+import { z } from "zod";
+
+import {
+  BELL_LATEST,
+  markAllReadInput,
+  notificationIdInput,
+  notifyEmailInput,
+} from "@/lib/notifications/schemas";
 import { type BellData } from "@/lib/notifications/views";
 import { requireSession } from "@/server/auth/require-session";
-import { batchReads } from "@/server/db/client";
 import { notificationQueries, notificationService } from "@/server/services";
 
 import { runAction } from "./action-runner";
@@ -20,13 +26,20 @@ import { NOTIFICATIONS, PROFILE, refreshPages } from "./refresh";
 export async function loadBellAction(): Promise<ActionResult<BellData>> {
   const session = await requireSession();
   const userId = session.user.id;
-  const [items, unread] = await batchReads(() =>
-    Promise.all([
-      notificationQueries.latest(userId, BELL_LATEST),
-      notificationQueries.unreadCount(userId),
-    ]),
+  return runAction(
+    z.undefined(),
+    undefined,
+    async () => {
+      // Taken before the read, so "mark all read" never covers an entry not on screen.
+      const asOf = new Date();
+      const [items, unread] = await Promise.all([
+        notificationQueries.latest(userId, BELL_LATEST),
+        notificationQueries.unreadCount(userId),
+      ]);
+      return { items, unread, asOf };
+    },
+    () => undefined,
   );
-  return { ok: true, data: { items, unread } };
 }
 
 export async function markNotificationReadAction(input: unknown): Promise<ActionResult> {
@@ -42,11 +55,16 @@ export async function markNotificationReadAction(input: unknown): Promise<Action
   );
 }
 
-export async function markAllNotificationsReadAction(): Promise<ActionResult<{ marked: number }>> {
+export async function markAllNotificationsReadAction(
+  input: unknown,
+): Promise<ActionResult<{ marked: number }>> {
   const session = await requireSession();
-  const data = await notificationService.markAllRead(session.user.id);
-  refreshPages(NOTIFICATIONS);
-  return { ok: true, data };
+  return runAction(
+    markAllReadInput,
+    input,
+    (data) => notificationService.markAllRead(session.user.id, data.asOf),
+    () => refreshPages(NOTIFICATIONS),
+  );
 }
 
 /** NTF-2 email digest opt-in: stored only, no email is sent yet ("coming soon"). */

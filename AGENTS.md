@@ -114,7 +114,13 @@ e2e/                      Playwright smoke tests
     for exactly the newly mentioned users) and `watcherStatusNotifications`. Otherwise call
     `notifySafely(notificationService.notify, …)` after your write: it logs and swallows a
     failure, so a notification never fails the user's action. Watchers are added by the
-    writes that make someone reporter, assignee or commenter (ISS-11).
+    writes that make someone reporter, assignee or commenter (ISS-11). A mention's event
+    is its entity (`mention:<type>:<id>`), so removing someone and adding them back (e.g.
+    while a doc autosaves) does not notify them twice; this is deliberate. The bell's
+    unread count comes with the app layout's batch and does not poll: it is current after
+    a full page load, a mutation that refreshes the page, or opening the bell, but not
+    after a client-side navigation (layouts do not re-render then). Do not "fix" that
+    with polling, which would keep Neon's compute awake.
   - `saved_views` (VW-3): user, project, name (unique per user and project), `filter` jsonb
     (the URL filter shape), `shared`, fractional `position`.
   - `attachments` (ISS-9): entity_type `issue|comment|doc`, `storage_key` (unique),

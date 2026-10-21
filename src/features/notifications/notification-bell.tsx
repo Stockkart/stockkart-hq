@@ -8,6 +8,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { callAction } from "@/features/issue/client-utils";
 import { unreadBadge } from "@/lib/notifications/format";
+import { type NotificationView } from "@/lib/notifications/views";
 import { loadBellAction } from "@/server/actions/notifications";
 
 import { NotificationList } from "./notification-list";
@@ -29,16 +30,20 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
     setSeenInitial(initialUnread);
     setServerUnread(initialUnread);
   }
-  const [serverItems, setServerItems] = useState<Parameters<typeof useNotifications>[0]>(null);
+  const [loaded, setLoaded] = useState<{ items: NotificationView[]; asOf: Date } | null>(null);
   const [loading, startLoading] = useTransition();
-  const { items, unread, markRead, markAllRead } = useNotifications(serverItems, serverUnread);
+  const { items, unread, markRead, markAllRead } = useNotifications(
+    loaded?.items ?? null,
+    serverUnread,
+    loaded?.asOf ?? null,
+  );
   const badge = unreadBadge(unread);
 
   function load() {
     startLoading(async () => {
       const data = await callAction(() => loadBellAction());
       if (!data) return;
-      setServerItems(data.items);
+      setLoaded({ items: data.items, asOf: data.asOf });
       setServerUnread(data.unread);
     });
   }
@@ -83,7 +88,7 @@ export function NotificationBell({ initialUnread }: { initialUnread: number }) {
               variant="ghost"
               size="sm"
               className="h-7 px-2 text-xs"
-              disabled={unread === 0}
+              disabled={unread === 0 || items === null}
               onClick={() => void markAllRead()}
             >
               Mark all read

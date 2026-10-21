@@ -400,9 +400,16 @@ describeDb("notifications, watchers and @mentions (Postgres)", () => {
       // "Mark all read" by the other user leaves the reader's alone.
       const otherUnread = await queries().unreadCount(other);
       expect(otherUnread).toBeGreaterThan(0);
-      expect(await service().markAllRead(other)).toEqual({ marked: otherUnread });
+      expect(await service().markAllRead(other, new Date())).toEqual({ marked: otherUnread });
       expect(await queries().unreadCount(reader)).toBe(2);
-      expect(await service().markAllRead(reader)).toEqual({ marked: 2 });
+      // Only what the list showed (created up to `asOf`): a newer entry stays unread.
+      const { asOf } = await queries().page(reader, 1, 30);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await newIssue(other, { assigneeId: reader });
+      expect(await queries().unreadCount(reader)).toBe(3);
+      expect(await service().markAllRead(reader, asOf)).toEqual({ marked: 2 });
+      expect(await queries().unreadCount(reader)).toBe(1);
+      expect(await service().markAllRead(reader, new Date())).toEqual({ marked: 1 });
       expect(await queries().unreadCount(reader)).toBe(0);
     });
 

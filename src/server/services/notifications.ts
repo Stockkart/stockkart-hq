@@ -1,4 +1,4 @@
-import { and, eq, isNull, type SQL, sql } from "drizzle-orm";
+import { and, eq, isNull, lte, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { type EntityType } from "@/lib/issues/constants";
@@ -215,12 +215,21 @@ export function createNotificationService(db: AppDatabase) {
       if (rows.length === 0) throw notFound("Notification");
     },
 
-    /** Marks all of the user's unread notifications read; returns how many. */
-    async markAllRead(userId: string): Promise<{ marked: number }> {
+    /**
+     * Marks the user's unread notifications created up to `asOf` (when their list was
+     * loaded) read, so entries that arrived since stay unread; returns how many.
+     */
+    async markAllRead(userId: string, asOf: Date): Promise<{ marked: number }> {
       const rows = await db
         .update(notifications)
         .set({ readAt: sql`now()` })
-        .where(and(eq(notifications.userId, userId), isNull(notifications.readAt)))
+        .where(
+          and(
+            eq(notifications.userId, userId),
+            isNull(notifications.readAt),
+            lte(notifications.createdAt, asOf),
+          ),
+        )
         .returning({ id: notifications.id });
       return { marked: rows.length };
     },
