@@ -14,10 +14,11 @@ import { type EditorFeature } from "./types";
  * (`lib/mentions.ts`); the server links and notifies the newly mentioned users on save.
  */
 
-/** Loads the users through the server action; a failure shows an empty list. */
+/** Loads the users through the server action; a failure shows an empty list (and is retried). */
 const loadUsers: LoadMentionUsers = async () => {
   const result = await listMentionUsersAction();
-  return result.ok ? result.data : [];
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
 };
 
 export function createMentionFeature(load: LoadMentionUsers = loadUsers): EditorFeature {

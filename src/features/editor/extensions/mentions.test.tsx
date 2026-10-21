@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { Editor } from "@tiptap/core";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 
 import { type RichTextDoc } from "@/lib/rich-text";
 import { type MentionUser } from "@/lib/notifications/views";
@@ -45,16 +48,18 @@ if (!Range.prototype.getClientRects) {
   };
 }
 
-async function setup() {
+async function setup(wrap: (editor: ReactNode) => ReactNode = (editor) => editor) {
   const onChange = vi.fn<(doc: RichTextDoc) => void>();
   render(
-    <RichTextEditor
-      initialContent={null}
-      onChange={onChange}
-      projectKeys={["STK"]}
-      label="Comment"
-      variant="comment"
-    />,
+    wrap(
+      <RichTextEditor
+        initialContent={null}
+        onChange={onChange}
+        projectKeys={["STK"]}
+        label="Comment"
+        variant="comment"
+      />,
+    ),
   );
   const box = await screen.findByRole("textbox", { name: "Comment" });
   if (!("editor" in box) || !(box.editor instanceof Editor)) throw new Error("no editor");
@@ -146,5 +151,28 @@ describe("@mention suggestions (ISS-7, DOC-9)", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("No matching people");
     await key("Enter");
     expect(JSON.stringify(onChange.mock.calls.at(-1)?.[0])).not.toContain('"mention"');
+  });
+
+  it("inside a dialog, Esc closes only the list; the next Esc closes the dialog", async () => {
+    const onOpenChange = vi.fn();
+    const { box, type, key } = await setup((editor) => (
+      <Dialog open onOpenChange={onOpenChange}>
+        <DialogContent>
+          <DialogTitle>Create issue</DialogTitle>
+          <DialogDescription>Quick create</DialogDescription>
+          {editor}
+        </DialogContent>
+      </Dialog>
+    ));
+    await type("@");
+    const listbox = await screen.findByRole("listbox", { name: "Mention someone" });
+    // The popup sits inside the dialog, so the pointer can reach it.
+    expect(screen.getByRole("dialog")).toContainElement(listbox);
+    await key("Escape");
+    await waitFor(() => expect(screen.queryByRole("listbox")).not.toBeInTheDocument());
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(box).not.toHaveAttribute("aria-haspopup");
+    await key("Escape");
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 });

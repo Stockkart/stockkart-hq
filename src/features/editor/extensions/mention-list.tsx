@@ -48,16 +48,30 @@ export const MentionList = forwardRef<MentionListHandle, MentionListProps>(funct
   }
   const current = items.length > 0 ? Math.min(active, items.length - 1) : -1;
 
-  // The editor keeps the focus; point it at the list and the active option.
+  // The editor keeps the focus; point it at the list and the active option, and keep that
+  // option in view (focus does not move, so the browser would not scroll to it).
   useEffect(() => {
     editorDom.setAttribute("aria-controls", listboxId);
-    if (current >= 0) editorDom.setAttribute("aria-activedescendant", optionId(listboxId, current));
-    else editorDom.removeAttribute("aria-activedescendant");
+    editorDom.setAttribute("aria-autocomplete", "list");
+    editorDom.setAttribute("aria-haspopup", "listbox");
+    if (current >= 0) {
+      const id = optionId(listboxId, current);
+      editorDom.setAttribute("aria-activedescendant", id);
+      document.getElementById(id)?.scrollIntoView?.({ block: "nearest" });
+    } else {
+      editorDom.removeAttribute("aria-activedescendant");
+    }
   }, [editorDom, listboxId, current]);
   useEffect(
     () => () => {
-      editorDom.removeAttribute("aria-controls");
-      editorDom.removeAttribute("aria-activedescendant");
+      for (const name of [
+        "aria-controls",
+        "aria-autocomplete",
+        "aria-haspopup",
+        "aria-activedescendant",
+      ]) {
+        editorDom.removeAttribute(name);
+      }
     },
     [editorDom],
   );
@@ -97,11 +111,9 @@ export const MentionList = forwardRef<MentionListHandle, MentionListProps>(funct
     [items, current, onSelect],
   );
 
-  const status = loading
-    ? "Loading people…"
-    : items.length === 0
-      ? "No matching people"
-      : `${items.length} ${items.length === 1 ? "person" : "people"}`;
+  // Announced only when there is nothing to pick: a count per keystroke would be noise
+  // (the active option is announced through aria-activedescendant).
+  const status = items.length > 0 ? null : loading ? "Loading people…" : "No matching people";
 
   return (
     <div className="w-72 max-w-[calc(100vw-2rem)] rounded-md border bg-popover p-1 text-sm text-popover-foreground shadow-md">
@@ -137,7 +149,7 @@ export const MentionList = forwardRef<MentionListHandle, MentionListProps>(funct
       <p
         role="status"
         aria-live="polite"
-        className={cn("px-2 py-1.5 text-xs text-muted-foreground", items.length > 0 && "sr-only")}
+        className={cn("px-2 py-1.5 text-xs text-muted-foreground", status === null && "sr-only")}
       >
         {status}
       </p>
