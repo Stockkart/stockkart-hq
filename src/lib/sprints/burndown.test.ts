@@ -367,4 +367,49 @@ describe("burndown after workflow changes and restores (PRJ-3, ISS-13)", () => {
     );
     expect(remainingByDay(result)).toEqual([6, 2, 2, 6, 6]);
   });
+
+  it("counts a deleted (never restored) issue until its delete, and repeated cycles", () => {
+    const deletedAt = at(3);
+    const once = computeBurndown(
+      timeline(),
+      data(
+        [issue("a", { points: 4, deletedAt }), issue("b", { points: 2 })],
+        [change("a", deletedAt, "deleted", "false", "true")],
+      ),
+      AFTER,
+    );
+    expect(remainingByDay(once)).toEqual([6, 6, 2, 2, 2]);
+
+    const twice = computeBurndown(
+      timeline(),
+      data(
+        [issue("a", { points: 4, deletedAt: at(5) })],
+        [
+          change("a", at(2), "deleted", "false", "true"),
+          change("a", at(3), "deleted", "true", "false"),
+          change("a", at(5), "deleted", "false", "true"),
+        ],
+      ),
+      AFTER,
+    );
+    expect(remainingByDay(twice)).toEqual([4, 0, 4, 4, 0]);
+  });
+
+  it("follows chained category changes day by day", () => {
+    // "review" (today: open) was open, became done on June 2, open again on June 4.
+    const result = computeBurndown(
+      timeline(),
+      {
+        issues: [issue("a", { statusId: "review", points: 5 })],
+        changes: [],
+        statusKinds: new Map<string, StatusKind>([...statusKinds, ["review", "open"]]),
+        statusKindChanges: [
+          { statusId: "review", at: at(2), from: "open" },
+          { statusId: "review", at: at(4), from: "done" },
+        ],
+      },
+      AFTER,
+    );
+    expect(remainingByDay(result)).toEqual([5, 0, 0, 5, 5]);
+  });
 });

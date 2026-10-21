@@ -178,4 +178,15 @@ describe("IssueList bulk edit (ISS-12)", () => {
     await user.click(screen.getByRole("button", { name: "Clear selection" }));
     expect(screen.queryByRole("group", { name: /Bulk edit/ })).not.toBeInTheDocument();
   });
+
+  it("toggles with x while the row checkbox itself has focus", async () => {
+    const user = userEvent.setup();
+    renderList();
+    const box = screen.getByRole("checkbox", { name: "Select STK-2" });
+    box.focus();
+    await user.keyboard("x");
+    expect(box).toBeChecked();
+    await user.keyboard("x");
+    expect(box).not.toBeChecked();
+  });
 });

@@ -62,7 +62,16 @@ export function BulkBar({
   pending = false,
 }: BulkBarProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
-  if (count === 0) return null;
+  // Holds the bar's place while nothing is selected, so the first checkbox click does not
+  // push the rows down under the pointer (a quick shift-click would land on another row).
+  if (count === 0) {
+    return (
+      <p className="flex h-12 items-center px-3 text-sm text-muted-foreground">
+        Select issues (checkbox or{" "}
+        <kbd className="mx-1 rounded border px-1 font-mono text-xs">X</kbd>) to edit them together.
+      </p>
+    );
+  }
   const tooMany = count > BULK_MAX;
   const disabled = pending || tooMany;
   const what = plural(count);
@@ -80,7 +89,7 @@ export function BulkBar({
     <div
       role="group"
       aria-label={`Bulk edit ${what}`}
-      className="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-lg border bg-background p-2 text-sm shadow-md"
+      className="sticky top-2 z-20 flex min-h-12 flex-wrap items-center gap-2 rounded-lg border bg-background p-2 text-sm shadow-md"
     >
       <span className="px-1 font-medium tabular-nums" aria-live="polite">
         {what} selected
