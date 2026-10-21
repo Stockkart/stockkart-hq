@@ -13,6 +13,7 @@ describe("editor feature registry", () => {
       "callout",
       "table",
       "mermaid",
+      "diagramEmbed",
     ]);
     expect(featuresFor("issue")).toEqual([]);
     expect(featuresFor("comment")).toEqual([]);
@@ -20,13 +21,14 @@ describe("editor feature registry", () => {
       "callout",
       "tableKit",
       "mermaid",
+      "diagramEmbed",
     ]);
     expect(featureExtensions({ variant: "issue", projectKeys: [] })).toEqual([]);
   });
 
   it("builds the same doc toolbar groups as before the registry", () => {
     expect(labels(featureToolbarGroups("doc"))).toEqual([
-      ["Callout", "Insert table", "Mermaid diagram"],
+      ["Callout", "Insert table", "Mermaid diagram", "Insert diagram"],
       ["Add row below", "Add column right", "Delete row", "Delete table"],
     ]);
     expect(featureToolbarGroups("comment")).toEqual([]);
@@ -52,6 +54,7 @@ describe("editor feature registry", () => {
       "Callout",
       "Insert table",
       "Mermaid diagram",
+      "Insert diagram",
       "Mention",
     ]);
   });

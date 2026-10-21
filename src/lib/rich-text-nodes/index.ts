@@ -1,5 +1,6 @@
 import { mergeRegistries } from "@/lib/registry";
 
+import { diagramEmbedPlainText } from "./diagram-embed";
 import { calloutPlainText, mermaidPlainText, tablePlainText } from "./doc-blocks";
 import { type PlainTextRule, type PlainTextRules } from "./types";
 
@@ -12,6 +13,7 @@ const RULES: readonly PlainTextRules[] = [
   calloutPlainText,
   tablePlainText,
   mermaidPlainText,
+  diagramEmbedPlainText,
   // P1 slices add one line each, e.g. mentionPlainText, imagePlainText, diagramEmbedPlainText.
 ];
 

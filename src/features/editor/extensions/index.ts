@@ -2,6 +2,7 @@ import { type AnyExtension } from "@tiptap/core";
 
 import { mergeRegistries } from "@/lib/registry";
 
+import { diagramEmbedFeature } from "./diagram-embed";
 import { calloutFeature, mermaidFeature, tableFeature } from "./doc-blocks";
 import {
   type EditorExtensionContext,
@@ -20,6 +21,7 @@ const FEATURES: readonly EditorFeature[] = [
   calloutFeature,
   tableFeature,
   mermaidFeature,
+  diagramEmbedFeature,
   // P1 slices add one line each, e.g. mentionFeature, imageFeature, diagramEmbedFeature.
 ];
 

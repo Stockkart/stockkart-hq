@@ -48,6 +48,7 @@ describe("extractPlainText with the node registry", () => {
       "tableCell",
       "tableHeader",
       "mermaid",
+      "diagramEmbed",
     ]);
     expect(PLAIN_TEXT_RULES.get("constructor")).toBeUndefined();
     expect(
