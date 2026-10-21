@@ -172,7 +172,8 @@ function CommentItem({
   }
 
   return (
-    <li className="flex gap-3">
+    // The anchor a comment notification opens (NTF-1).
+    <li id={`comment-${comment.id}`} className="flex scroll-mt-20 gap-3">
       <Avatar name={author} className="mt-0.5 size-7" />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex flex-wrap items-baseline gap-x-2 text-sm">

@@ -4,17 +4,19 @@ import { Toaster } from "@/components/ui/sonner";
 import { Sidebar } from "@/features/shell/sidebar";
 import { TopBar } from "@/features/shell/top-bar";
 import { requirePageSession } from "@/server/auth/require-session";
-import { issueQueries, sprintQueries } from "@/server/services";
+import { issueQueries, notificationQueries, sprintQueries } from "@/server/services";
 
 export default async function AppLayout({ children }: Readonly<{ children: ReactNode }>) {
   // Second gate after the proxy (S-2): the app shell never renders without a session.
   const session = await requirePageSession();
   // Quick-create templates (ISS-10) and open sprints (BLG-3) come with the page, so the
   // dialog opens without a request. Read after the session check, in the same batch as the
-  // page's own reads.
-  const [issueTemplates, sprintOptions] = await Promise.all([
+  // page's own reads. The bell's unread count (NTF-1) rides along in the same batch: no
+  // round trip of its own, and no client polling that would keep Neon's compute awake.
+  const [issueTemplates, sprintOptions, unreadNotifications] = await Promise.all([
     issueQueries.issueTemplates(),
     sprintQueries.openSprintOptionsByProject(),
+    notificationQueries.unreadCount(session.user.id),
   ]);
 
   return (
@@ -31,6 +33,7 @@ export default async function AppLayout({ children }: Readonly<{ children: React
           userName={session.user.name || session.user.email}
           issueTemplates={issueTemplates}
           sprintOptions={sprintOptions}
+          unreadNotifications={unreadNotifications}
         />
         <main id="main" className="flex-1 p-6">
           {children}

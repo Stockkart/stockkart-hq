@@ -4,8 +4,9 @@ import Link from "next/link";
 import { RelativeTime } from "@/features/issue/client-utils";
 import { IssueTypeIcon, PriorityLabel, StatusBadge } from "@/features/issue/issue-badges";
 import { type StatusCategory } from "@/lib/issues/constants";
+import { MY_WORK_MENTIONS } from "@/lib/notifications/schemas";
 import { requirePageSession } from "@/server/auth/require-session";
-import { planningQueries } from "@/server/services";
+import { mentionQueries, planningQueries } from "@/server/services";
 import { BOARD_DONE_DAYS } from "@/server/services/planning-queries";
 
 export const metadata: Metadata = { title: "My Work" };
@@ -17,18 +18,21 @@ const GROUPS: { category: StatusCategory; label: string }[] = [
   { category: "done", label: `Done in the last ${BOARD_DONE_DAYS} days` },
 ];
 
+/** Where an @mention was, for the Mentions list. */
+const MENTION_SOURCE = { issue: "description", comment: "comment", doc: "doc" } as const;
+
 /**
- * MY-1: issues assigned to me by status category, and recently viewed items. "Mentions"
- * needs @user mention links, which nothing writes yet (only `STK-123` refs are linked),
- * so that section arrives with @mentions.
+ * MY-1: issues assigned to me by status category, recently viewed items, and the latest
+ * places others @mentioned me (issue descriptions, comments, docs). One round trip.
  */
 export default async function MyWorkPage() {
   // Layouts and pages render in parallel, so each page checks the session itself too.
   const session = await requirePageSession();
   const name = session.user.name || session.user.email;
-  const [assigned, recent] = await Promise.all([
+  const [assigned, recent, mentions] = await Promise.all([
     planningQueries.listAssignedTo(session.user.id),
     planningQueries.listRecentlyViewed(session.user.id),
+    mentionQueries.listMentionsOf(session.user.id, MY_WORK_MENTIONS),
   ]);
   const total = assigned.in_progress.length + assigned.todo.length;
 
@@ -105,6 +109,34 @@ export default async function MyWorkPage() {
                 </Link>
                 <span className="text-xs text-muted-foreground">
                   <RelativeTime date={item.viewedAt} />
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section aria-labelledby="mentions-heading" className="flex flex-col gap-2">
+        <h2 id="mentions-heading" className="text-lg font-medium">
+          Mentions
+        </h2>
+        {mentions.length === 0 ? (
+          <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+            When someone @mentions you in an issue, comment or doc, it shows up here.
+          </p>
+        ) : (
+          <ul className="divide-y rounded-lg border">
+            {mentions.map((item) => (
+              <li key={item.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                <span className="w-16 shrink-0 font-mono text-xs text-muted-foreground">
+                  {item.target.kind === "issue" ? item.target.key : "Doc"}
+                </span>
+                <Link href={item.target.href} className="min-w-0 flex-1 truncate hover:underline">
+                  {item.target.title}
+                </Link>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {item.mentionedByName ?? "Someone"} · {MENTION_SOURCE[item.source]} ·{" "}
+                  <RelativeTime date={item.mentionedAt} />
                 </span>
               </li>
             ))}
