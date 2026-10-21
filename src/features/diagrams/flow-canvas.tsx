@@ -34,6 +34,7 @@ import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { callAction } from "@/features/issue/client-utils";
+import { matchesShortcut } from "@/features/shell/shortcuts";
 import {
   FLOW_GRID,
   FLOW_NODE_LABELS,
@@ -226,7 +227,7 @@ function FlowEditor({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (readOnly || event.key !== "Enter") return;
+    if (readOnly || !matchesShortcut(event, "editNode")) return;
     const element = event.target instanceof HTMLElement ? event.target : null;
     if (!element?.classList.contains("react-flow__node")) return;
     const id = element.dataset.id;

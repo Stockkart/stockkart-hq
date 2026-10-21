@@ -5,7 +5,17 @@
  */
 
 export type ShortcutId =
-  "create" | "search" | "next" | "previous" | "open" | "select" | "help" | "submit" | "close";
+  | "create"
+  | "search"
+  | "next"
+  | "previous"
+  | "open"
+  | "select"
+  | "help"
+  | "submit"
+  | "close"
+  | "mention"
+  | "editNode";
 
 export interface Shortcut {
   id: ShortcutId;
@@ -13,7 +23,7 @@ export interface Shortcut {
   keys: string[];
   description: string;
   /** Where it works. */
-  scope: "Anywhere" | "Lists" | "Dialogs";
+  scope: (typeof SHORTCUT_SCOPES)[number];
 }
 
 export const SHORTCUTS: readonly Shortcut[] = [
@@ -36,6 +46,10 @@ export const SHORTCUTS: readonly Shortcut[] = [
     scope: "Dialogs",
   },
   { id: "close", keys: ["Esc"], description: "Close a dialog or menu", scope: "Dialogs" },
+  // ISS-7/DOC-9: the trigger of Tiptap's mention suggestion (its default `char`).
+  { id: "mention", keys: ["@"], description: "Mention someone", scope: "Editors" },
+  // DGM-*: the flow editor's canvas (flow-canvas.tsx matches it).
+  { id: "editNode", keys: ["Enter"], description: "Rename the focused node", scope: "Diagrams" },
 ];
 
 /** The `KeyboardEvent.key` each single-key shortcut answers to (lower-cased). */
@@ -46,6 +60,8 @@ const KEYS: Partial<Record<ShortcutId, string>> = {
   previous: "k",
   select: "x",
   help: "?",
+  mention: "@",
+  editNode: "enter",
 };
 
 /**
@@ -57,4 +73,13 @@ export function matchesShortcut(event: Pick<KeyboardEvent, "key">, id: ShortcutI
   return key !== undefined && event.key.toLowerCase() === key;
 }
 
-export const SHORTCUT_SCOPES = ["Anywhere", "Lists", "Dialogs"] as const;
+export const SHORTCUT_SCOPES = ["Anywhere", "Lists", "Dialogs", "Editors", "Diagrams"] as const;
+
+/** The `?` dialog's heading per scope. */
+export const SHORTCUT_SCOPE_LABELS: Record<(typeof SHORTCUT_SCOPES)[number], string> = {
+  Anywhere: "Anywhere",
+  Lists: "In lists (issues, backlog)",
+  Dialogs: "Dialogs",
+  Editors: "In editors (descriptions, comments, docs)",
+  Diagrams: "In flow diagrams",
+};

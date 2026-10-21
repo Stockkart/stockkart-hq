@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { shouldIgnoreShortcut } from "@/features/issue/keyboard";
 
-import { matchesShortcut, SHORTCUT_SCOPES, SHORTCUTS } from "./shortcuts";
+import { matchesShortcut, SHORTCUT_SCOPE_LABELS, SHORTCUT_SCOPES, SHORTCUTS } from "./shortcuts";
 
 /**
  * SPEC §9.5 `?`: the shortcut help, built from the shared registry (`shortcuts.ts`). A
@@ -62,7 +62,7 @@ export function ShortcutHelp() {
                 id={`shortcuts-${scope}`}
                 className="mb-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
               >
-                {scope === "Lists" ? "In lists (issues, backlog)" : scope}
+                {SHORTCUT_SCOPE_LABELS[scope]}
               </h3>
               <dl className="divide-y rounded-md border text-sm">
                 {SHORTCUTS.filter((shortcut) => shortcut.scope === scope).map((shortcut) => (

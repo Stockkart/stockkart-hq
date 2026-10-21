@@ -17,7 +17,7 @@ describe("shortcut help (§9.5 ?)", () => {
       expect(within(dialog).getByText(shortcut.description)).toBeInTheDocument();
     }
     // The keys of the spec's shortcuts are shown.
-    for (const key of ["C", "⌘/Ctrl", "J", "K", "Enter", "X", "?", "Esc"]) {
+    for (const key of ["C", "⌘/Ctrl", "J", "K", "Enter", "X", "?", "Esc", "@"]) {
       expect(within(dialog).getAllByText(key).length).toBeGreaterThan(0);
     }
     await user.keyboard("{Escape}");
@@ -56,6 +56,10 @@ describe("shortcut help (§9.5 ?)", () => {
     expect(matchesShortcut({ key: "x" }, "select")).toBe(true);
     expect(matchesShortcut({ key: "?" }, "help")).toBe(true);
     expect(matchesShortcut({ key: "j" }, "previous")).toBe(false);
+    // The other P1 slices' keys live in the same registry (mentions, flow diagrams).
+    expect(matchesShortcut({ key: "@" }, "mention")).toBe(true);
+    expect(matchesShortcut({ key: "Enter" }, "editNode")).toBe(true);
+    expect(SHORTCUTS.map((s) => s.id)).toEqual(expect.arrayContaining(["mention", "editNode"]));
     expect(new Set(SHORTCUTS.map((s) => s.id)).size).toBe(SHORTCUTS.length);
   });
 });
