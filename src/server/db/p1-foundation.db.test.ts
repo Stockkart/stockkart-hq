@@ -99,7 +99,8 @@ describeDb("P1 foundation schema (Postgres)", () => {
     await db.insert(watchers).values({ issueId, userId: temp });
     await db.delete(users).where(eq(users.id, temp));
     const rows = await db.select().from(watchers).where(eq(watchers.issueId, issueId));
-    expect(rows.map((row) => row.userId)).toEqual([bob]);
+    // Alice reported the issue, so she watches it too (ISS-11 auto-watch).
+    expect(rows.map((row) => row.userId).sort()).toEqual([alice, bob].sort());
   });
 
   it("notifications: a repeated dedupe key inserts nothing; null keys never collide", async () => {

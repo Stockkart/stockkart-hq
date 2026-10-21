@@ -25,6 +25,8 @@ export const SPRINTS = "/[projectKey]/sprints";
 export const SPRINT_PAGE = "/[projectKey]/sprints/[sprintId]";
 /** The signed-in user's profile (GitHub username, GH-4). */
 export const PROFILE = "/settings/profile";
+/** NTF-1: the full notification list (the bell's count comes with the app layout). */
+export const NOTIFICATIONS = "/notifications";
 
 /** Every page that lists or shows issue fields. */
 export const ISSUE_VIEWS = [ISSUE_LIST, ISSUE_PAGE, BACKLOG, BOARD, MY_WORK] as const;

@@ -13,12 +13,14 @@ import {
 } from "@/lib/docs/schemas";
 import { compareSiblings, siblingsOf } from "@/lib/docs/tree";
 import { formatIssueKey, parseIssueKey } from "@/lib/issues/keys";
+import { extractUserMentionIds } from "@/lib/mentions";
 import { emptyDoc, extractPlainText, type RichTextDoc } from "@/lib/rich-text";
 import { docs, issues, projects, templates, users } from "@/server/db/schema";
 import { directRead, type Read } from "@/server/db/read-batch";
 import { type AppDatabase, type RunAtomic } from "@/server/db/types";
 
 import { conflict, invalid, notFound, pgErrorInfo, UNIQUE_VIOLATION } from "./errors";
+import { userMentionNotifyStatement } from "./notifications";
 import { allInOrder } from "./parallel";
 import {
   docRefs,
@@ -26,6 +28,7 @@ import {
   mentionSyncCtes,
   mentionSyncStatement,
   rowsOf,
+  userMentionSyncCtes,
   uuidOrNull,
 } from "./sql";
 
@@ -238,6 +241,15 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
         refs,
         actorId,
         gate: sql`EXISTS (SELECT 1 FROM inserted)`,
+      })},
+      -- @user links of the copied template content; nobody is notified, since the actor
+      -- did not write those mentions (later saves notify only users they newly mention).
+      ${userMentionSyncCtes({
+        fromType: "doc",
+        fromId: id,
+        userIds: extractUserMentionIds(values.content),
+        actorId,
+        gate: sql`EXISTS (SELECT 1 FROM inserted)`,
       })}
       SELECT id::text, version, title FROM inserted
     `);
@@ -390,7 +402,27 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
         gate: sql`EXISTS (SELECT 1 FROM docs WHERE id = ${doc.id}::uuid
           AND xmin = pg_current_xact_id()::xid)`,
       });
-      const [result] = await options.runAtomic([write, sync]);
+      const [result] = await options.runAtomic([
+        write,
+        sync,
+        // NTF-1: only users this save newly @mentions are notified (same xmin gate).
+        userMentionNotifyStatement(
+          {
+            fromType: "doc",
+            fromId: doc.id,
+            userIds: extractUserMentionIds(input.content),
+            actorId,
+            gate: sql`EXISTS (SELECT 1 FROM docs WHERE id = ${doc.id}::uuid
+              AND xmin = pg_current_xact_id()::xid)`,
+          },
+          {
+            type: sql`'mentioned_in_doc'`,
+            entityType: sql`'doc'`,
+            entityId: sql`${doc.id}::uuid`,
+            meta: sql`'{}'::jsonb`,
+          },
+        ),
+      ]);
       const [row] = rowsOf(result, z.object({ version: z.number(), snapshotted: z.boolean() }));
       if (row) return { status: "saved", version: row.version, snapshotted: row.snapshotted };
 
