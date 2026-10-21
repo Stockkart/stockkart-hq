@@ -199,6 +199,15 @@ e2e/                      Playwright smoke tests
 - Catch `StorageNotConfigured` and show `STORAGE_NOT_CONFIGURED_MESSAGE`. Tests inject a
   transport (`createStorage(config, () => fakeTransport)`); presigning is local and needs
   no network.
+- Attachments (ISS-9) are implemented in `services/attachments.ts` (start / confirm /
+  cancel / soft delete by the uploader / comment adoption / pending purge) and
+  `actions/attachments.ts`. Downloads and the panel only see `ready` files of a live
+  parent (`liveAttachmentParent`). UI: `features/attachments/` (panel, upload client,
+  image downscaling); editor nodes `image` / `fileAttachment` via the registries. Wrap an
+  editor in `AttachmentUploadProvider` (target entity + `storageReady`) to enable paste and
+  drop; a new comment's files go to its issue (`draft`: no page refresh) and move onto the
+  comment once it is posted. Saving is blocked while an upload placeholder is in the doc
+  (`hasPendingUploads`); doc autosave strips placeholders (`withoutPendingUploads`).
 
 ## Adding an editor node
 

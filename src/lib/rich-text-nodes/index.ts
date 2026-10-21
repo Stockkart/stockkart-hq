@@ -1,5 +1,6 @@
 import { mergeRegistries } from "@/lib/registry";
 
+import { attachmentPlainText } from "./attachments";
 import { calloutPlainText, mermaidPlainText, tablePlainText } from "./doc-blocks";
 import { mentionPlainText } from "./mentions";
 import { type PlainTextRule, type PlainTextRules } from "./types";
@@ -14,6 +15,7 @@ const RULES: readonly PlainTextRules[] = [
   tablePlainText,
   mermaidPlainText,
   mentionPlainText,
+  attachmentPlainText,
   // P1 slices add one line each, e.g. mentionPlainText, imagePlainText, diagramEmbedPlainText.
 ];
 

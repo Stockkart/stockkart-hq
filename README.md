@@ -116,6 +116,7 @@ openssl rand -base64 32
 | `pnpm db:migrate`                                  | Apply migrations to `DATABASE_URL`                                                                                                                   |
 | `pnpm db:seed`                                     | Create the STK project, its components, the default workflow and built-in templates in `DATABASE_URL` (idempotent)                                   |
 | `pnpm import:handbook -- --dir <path>`             | Import an engineering-handbook checkout into `DATABASE_URL` as docs and ADRs (idempotent; `--dry-run` writes nothing). See "Importing the handbook"  |
+| `pnpm purge:pending-uploads`                       | Delete uploads never confirmed within 24 h (R2 object, then row) from `DATABASE_URL` + `R2_*` in the shell. See "File storage (R2)"                  |
 
 ## Database (Neon)
 
@@ -335,6 +336,13 @@ endpoint `https://<account-id>.r2.cloudflarestorage.com`, region `auto`):
   set up yet". No public bucket URL is ever built.
 - Object keys: `attachments/<uuid>/<file-name>`, `thumbnails/diagrams/<diagram-id>.png`,
   `backups/` and `tmp/` (the backup workflow).
+- Upload flow (ISS-9): `startUpload` checks the parent and inserts a `pending` row (at most
+  20 per user per 10 minutes) → the browser PUTs to R2 → `confirmUpload` HEADs the object
+  and marks it `ready`, or deletes object and row when size or type differ. Images are
+  downscaled to 2560 px and re-encoded as WebP in the browser when that is smaller. Pending
+  uploads older than 24 h are purged a few at a time on every upload; to clear a backlog run
+  `DATABASE_URL='…' R2_ACCOUNT_ID=… R2_ACCESS_KEY_ID=… R2_SECRET_ACCESS_KEY=… R2_BUCKET=…
+pnpm purge:pending-uploads`. Files of a deleted issue, doc or comment are not served.
 
 ### Setup (once, in the Cloudflare dashboard)
 
@@ -368,8 +376,8 @@ Actions secrets and your git-ignored `.env.local`.
    (Add `http://127.0.0.1:3000` too if you open the dev server by IP.)
 
 5. **Bucket → Settings → Object lifecycle rules**: delete objects with prefix `tmp/` after
-   **1 day** (left-overs of failed backups) and with prefix `backups/` after **30 days**
-   (see "Backups").
+   **1 day** (left-overs of failed backups). Backup retention is done by the workflow (see
+   "Backups").
 6. **Cloudflare → Notifications → Add**: a billing / usage notification for R2, so a
    runaway upload loop cannot run up a bill unnoticed (the free tier covers 10 GB).
 
@@ -384,21 +392,29 @@ own GitHub secrets, so `R2_BUCKET` there can differ from Vercel's.
 
 ## Backups
 
-`.github/workflows/backup.yml` runs nightly: `pg_dump` → gzip → private R2 bucket under
-`backups/`. It stays a no-op until these repository secrets exist: `BACKUP_DATABASE_URL`
-(prefer a read-only Neon role), `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`,
-`R2_SECRET_ACCESS_KEY`, `R2_BUCKET`. The dump is streamed to R2 and never stored as a
-workflow artifact, because artifacts of a public repo can be downloaded by anyone. Add an
-R2 lifecycle rule that deletes `backups/` objects after 30 days. Each dump is uploaded to
-`tmp/` first and moved to `backups/` only when `pg_dump` succeeded (a failed dump is
-deleted); add a second lifecycle rule that deletes `tmp/` objects after 1 day.
+`.github/workflows/backup.yml` runs nightly (and on demand: Actions → "Nightly database
+backup" → Run workflow, with optional `weekly` and `prune` inputs): `pg_dump` → gzip →
+private R2 bucket. It stays a no-op until these repository secrets exist:
+`BACKUP_DATABASE_URL`, `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`,
+`R2_BUCKET`. The dump is streamed to R2 and never stored as a workflow artifact, because
+artifacts of a public repo can be downloaded by anyone.
 
-Restore (into an empty Neon branch first, never straight over `main`):
+- **`BACKUP_DATABASE_URL` must be the DIRECT connection string**: Neon → Connect → turn
+  **Connection pooling off**, so the host has no `-pooler` (pg_dump needs a real session,
+  which PgBouncer's transaction pooling does not give). The job fails early with a clear
+  message on a pooled host. Prefer a read-only role.
+- **Retention: 7 daily + 4 weekly.** Every night writes `backups/daily/<YYYY-MM-DD>.sql.gz`;
+  on Sundays it is also copied (server-side) to `backups/weekly/<YYYY-MM-DD>.sql.gz`. Then
+  daily copies 7+ days old and weekly copies 28+ days old are deleted through the S3 API
+  (list + delete). The date rule is `scripts/backup-retention.sh`, unit-tested in
+  `src/test/backup-retention.test.ts`; it never selects keys outside those two layouts.
+- Each dump is uploaded to `tmp/` first and moved into place only when `pg_dump` succeeded
+  (a failed dump is deleted, and nothing is pruned); keep the lifecycle rule that deletes
+  `tmp/` objects after 1 day. A `backups/` lifecycle rule is no longer needed (if you keep
+  one as a safety net, make it longer than 28 days).
 
-```bash
-# download with any S3 client using the R2 endpoint, then:
-gunzip -c stockkart-hq-<timestamp>.sql.gz | psql "$RESTORE_DATABASE_URL"
-```
+Restore: [scripts/restore-backup.md](scripts/restore-backup.md) (download → `gunzip | psql`
+into a new Neon branch, never straight over `main`).
 
 ## Manual checklist (owner)
 

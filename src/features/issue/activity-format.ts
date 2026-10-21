@@ -135,6 +135,10 @@ export function describeActivity(entry: ActivityView, lookups: ActivityLookups):
             ? REASON_NOTES[meta.reason]
             : undefined,
       };
+    case "attachment_added":
+      return { verb: "attached", from: null, to: meta.name ?? "a file" };
+    case "attachment_removed":
+      return { verb: "removed attachment", from: meta.name ?? "a file", to: null };
     case "link_added":
     case "link_removed": {
       const other = entry.action === "link_added" ? entry.toValue : entry.fromValue;

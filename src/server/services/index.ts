@@ -1,5 +1,7 @@
 import { db, read, runAtomic } from "@/server/db/client";
+import { storage } from "@/server/storage";
 
+import { createAttachmentService } from "./attachments";
 import { createBulkService } from "./bulk";
 import { createCommentService } from "./comments";
 import { createDocQueries } from "./doc-queries";
@@ -43,6 +45,7 @@ export const githubService = createGithubService(db);
 export const githubQueries = createGithubQueries(db, { read });
 export const profileService = createProfileService(db, { read });
 export const fileQueries = createFileQueries(db, { read });
+export const attachmentService = createAttachmentService(db, { storage });
 export const notificationService = createNotificationService(db);
 // Slice A (PRJ-3, VW-3, ISS-12, ISS-13).
 export const projectSettingsService = createProjectSettingsService(db, { runAtomic, read });

@@ -49,6 +49,8 @@ describe("extractPlainText with the node registry", () => {
       "tableHeader",
       "mermaid",
       "mention",
+      "image",
+      "fileAttachment",
     ]);
     expect(PLAIN_TEXT_RULES.get("constructor")).toBeUndefined();
     expect(

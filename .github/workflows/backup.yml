@@ -1,6 +1,6 @@
 name: Nightly database backup
 
-# SPEC §9.3: pg_dump -> gzip -> private Cloudflare R2 bucket (backups/ prefix).
+# SPEC §9.3: pg_dump -> gzip -> private Cloudflare R2 bucket, 7 daily + 4 weekly copies.
 #
 # The repo is public, so:
 #   - Credentials come only from GitHub Actions secrets (forks and PRs never receive them).
@@ -10,16 +10,35 @@ name: Nightly database backup
 #   - The workflow is a no-op until every required secret exists.
 #
 # Required repository secrets:
-#   BACKUP_DATABASE_URL   Neon connection string (prefer a read-only role)
+#   BACKUP_DATABASE_URL   Neon DIRECT connection string (Neon → Connect → turn "Connection
+#                         pooling" off, so the host has no `-pooler`; pg_dump needs a session
+#                         that PgBouncer's transaction pooling cannot give). Prefer a
+#                         read-only role. The job fails early on a pooled host.
 #   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
-# Retention (30 days) is an R2 lifecycle rule on the bucket's backups/ prefix (see README).
-# Uploads go to tmp/ first and are moved to backups/ only after pg_dump succeeded; add a
+#
+# Layout and retention (scripts/backup-retention.sh, unit-tested):
+#   backups/daily/<YYYY-MM-DD>.sql.gz    every night; copies dated within the last 7 days
+#                                        are kept (fewer after failed nights)
+#   backups/weekly/<YYYY-MM-DD>.sql.gz   Sundays (or `weekly` on a manual run); copies dated
+#                                        within the last 28 days are kept (4 Sundays)
+# Nothing is pruned when the night's dump failed (the job stops before that step).
+# Uploads go to tmp/ first and are moved into place only after pg_dump succeeded; keep the
 # 1-day lifecycle rule on tmp/ for leftovers from a runner that died mid-upload.
+# Restore: scripts/restore-backup.md.
 
 on:
   schedule:
     - cron: "17 2 * * *" # 02:17 UTC nightly
   workflow_dispatch:
+    inputs:
+      weekly:
+        description: "Also store this backup as the weekly copy (otherwise only on Sundays)"
+        type: boolean
+        default: false
+      prune:
+        description: "Delete daily copies older than 7 days and weekly ones older than 28"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -57,25 +76,59 @@ jobs:
     if: needs.gate.outputs.enabled == 'true' && github.repository == 'Stockkart/stockkart-hq'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      AWS_DEFAULT_REGION: auto
+      # R2 rejects the CRC checksums newer AWS CLIs send by default; only send them when an
+      # operation requires them.
+      AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+      AWS_RESPONSE_CHECKSUM_VALIDATION: when_required
     steps:
+      - name: Require the direct (non-pooler) connection string
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          # Host only: strip scheme, credentials, then port/path/query. Nothing is printed.
+          rest="${BACKUP_DATABASE_URL#*://}"
+          host="${rest##*@}"
+          host="${host%%[:/?]*}"
+          if [ -z "$host" ]; then
+            echo "::error::BACKUP_DATABASE_URL has no host."
+            exit 1
+          fi
+          case "$host" in
+            *-pooler*)
+              echo "::error::BACKUP_DATABASE_URL uses Neon's pooled host (-pooler). Use the direct connection string: Neon → Connect → turn off connection pooling."
+              exit 1
+              ;;
+          esac
+
+      # Only the retention script is needed; nothing else of the repo is used.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/backup-retention.sh
+          sparse-checkout-cone-mode: false
+
       - name: Dump, compress and upload (streamed, nothing touches disk)
+        id: dump
         env:
           BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
           R2_BUCKET: ${{ secrets.R2_BUCKET }}
         run: |
           set -euo pipefail
-          name="stockkart-hq-$(date -u +%Y-%m-%dT%H%M%SZ).sql.gz"
+          day="$(date -u +%F)"
+          echo "day=${day}" >> "$GITHUB_OUTPUT"
           endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
-          # Upload to tmp/ first and move to backups/ only after the whole pipeline succeeded,
-          # so a failed or truncated dump never lands next to the good backups. With pipefail
-          # a pg_dump (or gzip) failure fails the pipeline even though `aws s3 cp` would
+          # Upload to tmp/ first and move into place only after the whole pipeline succeeded,
+          # so a failed or truncated dump never replaces a good backup. With pipefail a
+          # pg_dump (or gzip) failure fails the pipeline even though `aws s3 cp` would
           # happily store whatever partial stream it received; the trap then deletes it.
-          tmp_key="tmp/${name}"
-          key="backups/${name}"
+          tmp_key="tmp/stockkart-hq-$(date -u +%Y-%m-%dT%H%M%SZ).sql.gz"
+          key="backups/daily/${day}.sql.gz"
           cleanup() {
             aws s3 rm "s3://${R2_BUCKET}/${tmp_key}" --endpoint-url "$endpoint" --only-show-errors || true
           }
@@ -84,9 +137,12 @@ jobs:
           # Neon's (17). The connection string is passed as an env var, not an argument.
           # The image is pinned by digest (multi-arch index of postgres:17-alpine); bump it
           # deliberately with `docker buildx imagetools inspect postgres:17-alpine`.
+          # pg_dump's own messages can name the host and role, and this log is public: they
+          # are dropped and only the exit status is reported (reproduce locally to debug).
           docker run --rm -e BACKUP_DATABASE_URL \
               postgres:17-alpine@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24 \
-              sh -c 'pg_dump --no-owner --no-privileges --format=plain "$BACKUP_DATABASE_URL"' \
+              sh -c 'pg_dump --no-owner --no-privileges --format=plain "$BACKUP_DATABASE_URL" 2>/dev/null \
+                || { status=$?; echo "::error::pg_dump failed (exit $status)" >&2; exit "$status"; }' \
             | gzip -9 \
             | aws s3 cp - "s3://${R2_BUCKET}/${tmp_key}" \
                 --endpoint-url "$endpoint" \
@@ -96,3 +152,55 @@ jobs:
             --only-show-errors
           trap - ERR
           echo "Uploaded ${key}"
+
+      - name: Keep the weekly copy (Sundays)
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          DAY: ${{ steps.dump.outputs.day }}
+          FORCE_WEEKLY: ${{ github.event_name == 'workflow_dispatch' && inputs.weekly }}
+        run: |
+          set -euo pipefail
+          if [ "$FORCE_WEEKLY" != "true" ] && ! bash scripts/backup-retention.sh is-weekly "$DAY"; then
+            echo "Not Sunday; no weekly copy."
+            exit 0
+          fi
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          # Server-side copy inside the bucket; the dump never leaves R2.
+          aws s3 cp "s3://${R2_BUCKET}/backups/daily/${DAY}.sql.gz" \
+            "s3://${R2_BUCKET}/backups/weekly/${DAY}.sql.gz" \
+            --endpoint-url "$endpoint" \
+            --only-show-errors
+          echo "Copied backups/weekly/${DAY}.sql.gz"
+
+      - name: Delete expired copies (7 daily, 4 weekly)
+        if: github.event_name != 'workflow_dispatch' || inputs.prune
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          DAY: ${{ steps.dump.outputs.day }}
+        run: |
+          set -euo pipefail
+          endpoint="https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com"
+          # S3 API list (the CLI follows continuation tokens) → the tested retention rule →
+          # delete. Keys only; object contents are never read.
+          list() {
+            aws s3api list-objects-v2 --bucket "$R2_BUCKET" --prefix "$1" \
+              --endpoint-url "$endpoint" --query 'Contents[].Key' --output text \
+              | tr '\t' '\n'
+          }
+          expired="$({ list backups/daily/; list backups/weekly/; } \
+            | bash scripts/backup-retention.sh expired "$DAY")"
+          if [ -z "$expired" ]; then
+            echo "Nothing to delete."
+            exit 0
+          fi
+          printf '%s\n' "$expired" | while IFS= read -r key; do
+            aws s3api delete-object --bucket "$R2_BUCKET" --key "$key" \
+              --endpoint-url "$endpoint" > /dev/null
+            echo "Deleted ${key}"
+          done

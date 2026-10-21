@@ -9,32 +9,38 @@ const labels = (groups: { label: string }[][]) => groups.map((group) => group.ma
 
 describe("editor feature registry", () => {
   it("keeps the doc blocks (callout, table, Mermaid) on doc editors only", () => {
+    const docBlocks = ["callout", "table", "mermaid"];
     expect(featuresFor("doc").map((feature) => feature.name)).toEqual([
-      "callout",
-      "table",
-      "mermaid",
+      ...docBlocks,
       "mention",
+      "attachments",
     ]);
-    // @mentions (ISS-7, DOC-9) are in every editor.
-    expect(featuresFor("issue").map((feature) => feature.name)).toEqual(["mention"]);
-    expect(featuresFor("comment").map((feature) => feature.name)).toEqual(["mention"]);
+    // @mentions (ISS-7, DOC-9) and attachments (ISS-9, DOC-8) are in every editor.
+    expect(featuresFor("issue").map((feature) => feature.name)).toEqual(["mention", "attachments"]);
+    expect(featuresFor("comment").map((feature) => feature.name)).toEqual([
+      "mention",
+      "attachments",
+    ]);
+    const attachmentExtensions = ["attachmentUpload", "image", "fileAttachment", "attachmentPaste"];
     expect(featureExtensions({ variant: "doc", projectKeys: [] }).map((e) => e.name)).toEqual([
       "callout",
       "tableKit",
       "mermaid",
       "mention",
+      ...attachmentExtensions,
     ]);
     expect(featureExtensions({ variant: "issue", projectKeys: [] }).map((e) => e.name)).toEqual([
       "mention",
+      ...attachmentExtensions,
     ]);
   });
 
   it("builds the same doc toolbar groups as before the registry", () => {
     expect(labels(featureToolbarGroups("doc"))).toEqual([
-      ["Callout", "Insert table", "Mermaid diagram"],
+      ["Callout", "Insert table", "Mermaid diagram", "Attach file"],
       ["Add row below", "Add column right", "Delete row", "Delete table"],
     ]);
-    expect(featureToolbarGroups("comment")).toEqual([]);
+    expect(labels(featureToolbarGroups("comment"))).toEqual([["Attach file"]]);
   });
 
   it("adds a new feature from one registry entry", () => {
@@ -51,12 +57,20 @@ describe("editor feature registry", () => {
     const features = [...EDITOR_FEATURES, sample];
     expect(
       featureExtensions({ variant: "comment", projectKeys: ["STK"] }, features).map((e) => e.name),
-    ).toEqual(["mention", "sample1"]);
-    expect(labels(featureToolbarGroups("comment", features))).toEqual([["Sample"]]);
+    ).toEqual([
+      "mention",
+      "attachmentUpload",
+      "image",
+      "fileAttachment",
+      "attachmentPaste",
+      "sample1",
+    ]);
+    expect(labels(featureToolbarGroups("comment", features))).toEqual([["Attach file", "Sample"]]);
     expect(labels(featureToolbarGroups("doc", features))[0]).toEqual([
       "Callout",
       "Insert table",
       "Mermaid diagram",
+      "Attach file",
       "Sample",
     ]);
   });
