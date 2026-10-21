@@ -1,3 +1,5 @@
+import { mergeRegistries } from "@/lib/registry";
+
 import { calloutPlainText, mermaidPlainText, tablePlainText } from "./doc-blocks";
 import { type PlainTextRule, type PlainTextRules } from "./types";
 
@@ -13,9 +15,10 @@ const RULES: readonly PlainTextRules[] = [
   // P1 slices add one line each, e.g. mentionPlainText, imagePlainText, diagramEmbedPlainText.
 ];
 
-/** A Map, not an object, so a stored type such as "constructor" never hits a prototype key. */
-export const PLAIN_TEXT_RULES: ReadonlyMap<string, PlainTextRule> = new Map(
-  RULES.flatMap((rules) => Object.entries(rules)),
+/** Throws at load if two files register the same node type (see `mergeRegistries`). */
+export const PLAIN_TEXT_RULES: ReadonlyMap<string, PlainTextRule> = mergeRegistries(
+  "Plain-text rules",
+  RULES,
 );
 
 export { type PlainTextRule, type PlainTextRules } from "./types";

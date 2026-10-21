@@ -1,5 +1,7 @@
 import { type AnyExtension } from "@tiptap/core";
 
+import { mergeRegistries } from "@/lib/registry";
+
 import { calloutFeature, mermaidFeature, tableFeature } from "./doc-blocks";
 import {
   type EditorExtensionContext,
@@ -14,11 +16,19 @@ import {
  * itself (see AGENTS.md "Adding an editor node"). Order matters: it is the order of the
  * extensions and of the insert buttons.
  */
-export const EDITOR_FEATURES: readonly EditorFeature[] = [
+const FEATURES: readonly EditorFeature[] = [
   calloutFeature,
   tableFeature,
   mermaidFeature,
   // P1 slices add one line each, e.g. mentionFeature, imageFeature, diagramEmbedFeature.
+];
+
+/** In registry order; throws at load if two features share a name (see `mergeRegistries`). */
+export const EDITOR_FEATURES: readonly EditorFeature[] = [
+  ...mergeRegistries(
+    "Editor features",
+    FEATURES.map((feature) => ({ [feature.name]: feature })),
+  ).values(),
 ];
 
 export function featuresFor(

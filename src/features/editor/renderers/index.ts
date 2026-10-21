@@ -1,3 +1,5 @@
+import { mergeRegistries } from "@/lib/registry";
+
 import { calloutRenderers, mermaidRenderers, tableRenderers } from "./doc-blocks";
 import { type NodeRenderer, type NodeRenderers } from "./types";
 
@@ -14,9 +16,10 @@ const RENDERERS: readonly NodeRenderers[] = [
   // P1 slices add one line each, e.g. mentionRenderers, imageRenderers, diagramEmbedRenderers.
 ];
 
-/** A Map, not an object, so a stored type such as "constructor" never hits a prototype key. */
-export const NODE_RENDERERS: ReadonlyMap<string, NodeRenderer> = new Map(
-  RENDERERS.flatMap((renderers) => Object.entries(renderers)),
+/** Throws at load if two files register the same node type (see `mergeRegistries`). */
+export const NODE_RENDERERS: ReadonlyMap<string, NodeRenderer> = mergeRegistries(
+  "Node renderers",
+  RENDERERS,
 );
 
 export { type NodeRenderer, type NodeRenderers, type NodeRenderProps } from "./types";
