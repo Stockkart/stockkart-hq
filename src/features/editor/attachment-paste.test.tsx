@@ -54,7 +54,10 @@ function paste(target: Element, files: File[], text = "", html = "") {
   return event;
 }
 
-function setup(upload: UploadFile, options: { storageReady?: boolean; target?: boolean } = {}) {
+function setup(
+  upload: UploadFile,
+  options: { storageReady?: boolean; target?: boolean; variant?: "issue" | "doc" } = {},
+) {
   const docs: RichTextDoc[] = [];
   render(
     <AttachmentUploadProvider
@@ -67,6 +70,7 @@ function setup(upload: UploadFile, options: { storageReady?: boolean; target?: b
         onChange={(doc) => docs.push(doc)}
         projectKeys={["STK"]}
         label="Description"
+        variant={options.variant}
       />
     </AttachmentUploadProvider>,
   );
@@ -207,5 +211,20 @@ describe("pasting files into the editor (ISS-9)", () => {
     expect(await screen.findByRole("button", { name: "Attach file" })).toBeInTheDocument();
     // Drop is handled by the same plugin; jsdom has no layout for coordinates.
     fireEvent.click(screen.getByRole("button", { name: "Attach file" }));
+  });
+
+  it("keeps the attach button and image paste in doc editors next to the diagram picker", async () => {
+    const upload = vi.fn<UploadFile>(async () => ({ ok: true, data: view({}) }));
+    const { last } = setup(upload, { variant: "doc" });
+    // DOC-8 (diagrams) and ISS-9 (attachments) share the doc toolbar.
+    expect(await screen.findByRole("button", { name: "Attach file" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Insert diagram" })).toBeInTheDocument();
+    const box = await screen.findByRole("textbox", { name: "Description" });
+    act(() => {
+      paste(box, [new File(["png"], "Screenshot.png", { type: "image/png" })]);
+    });
+    expect(await screen.findByRole("img", { name: "shot" })).toBeInTheDocument();
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(last())).toContain('"type":"image"');
   });
 });
