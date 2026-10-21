@@ -19,7 +19,7 @@ const RENDERERS: readonly NodeRenderers[] = [
   mentionRenderers,
   attachmentRenderers,
   diagramEmbedRenderers,
-  // P1 slices add one line each, e.g. mentionRenderers, imageRenderers, diagramEmbedRenderers.
+  // A new node adds one line here.
 ];
 
 /** Throws at load if two files register the same node type (see `mergeRegistries`). */

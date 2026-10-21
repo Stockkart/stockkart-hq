@@ -18,7 +18,7 @@ const RULES: readonly PlainTextRules[] = [
   mentionPlainText,
   attachmentPlainText,
   diagramEmbedPlainText,
-  // P1 slices add one line each, e.g. mentionPlainText, imagePlainText, diagramEmbedPlainText.
+  // A new node adds one line here.
 ];
 
 /** Throws at load if two files register the same node type (see `mergeRegistries`). */

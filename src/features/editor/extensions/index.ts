@@ -26,7 +26,7 @@ const FEATURES: readonly EditorFeature[] = [
   mentionFeature,
   attachmentFeature,
   diagramEmbedFeature,
-  // P1 slices add one line each, e.g. mentionFeature, imageFeature, diagramEmbedFeature.
+  // A new editor feature adds one line here.
 ];
 
 /** In registry order; throws at load if two features share a name (see `mergeRegistries`). */
