@@ -18,6 +18,12 @@ import {
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
+import {
+  ATTACHMENT_ENTITY_TYPES,
+  ATTACHMENT_STATUSES,
+  MAX_ATTACHMENT_BYTES,
+} from "@/lib/attachments/constants";
+import { DIAGRAM_KINDS, DIAGRAM_SCENE_MAX_BYTES } from "@/lib/diagrams/constants";
 import { ADR_STATUSES, DOC_STATUSES, DOC_TYPES, TEMPLATE_KINDS } from "@/lib/docs/constants";
 import { GITHUB_PR_STATES, GITHUB_REF_KINDS } from "@/lib/github/constants";
 import {
@@ -29,13 +35,16 @@ import {
   STATUS_CATEGORIES,
   STATUS_DEFAULT_FOR,
 } from "@/lib/issues/constants";
+import { NOTIFICATION_TYPES } from "@/lib/notifications/constants";
 import { type RichTextDoc } from "@/lib/rich-text";
 
 /**
  * SPEC §8. Phase 0 tables (users, login_attempts) plus every table Phase 1 needs, defined up
  * front so the Phase 1 slices (issues; backlog/board/todos/search; docs/ADRs) share one
- * migration. Diagrams, watchers, saved views, notifications, attachments, incidents and
- * services arrive with their phases; GitHub refs and deliveries arrived with GH-1…GH-4.
+ * migration. GitHub refs and deliveries arrived with GH-1…GH-4. The Phase 2 (P1) foundation
+ * (migration 0004) added watchers, notifications, saved views, attachments, diagrams and
+ * diagram versions in one go, so the P1 feature slices need no migration of their own.
+ * Incidents and services arrive with their phase.
  *
  * Conventions:
  * - Every table has `id uuid`, `created_at`, `updated_at` unless SPEC §8 says otherwise.
@@ -81,6 +90,10 @@ export const docTypeEnum = pgEnum("doc_type", DOC_TYPES);
 export const docStatusEnum = pgEnum("doc_status", DOC_STATUSES);
 export const adrStatusEnum = pgEnum("adr_status", ADR_STATUSES);
 export const templateKindEnum = pgEnum("template_kind", TEMPLATE_KINDS);
+export const notificationTypeEnum = pgEnum("notification_type", NOTIFICATION_TYPES);
+export const attachmentEntityTypeEnum = pgEnum("attachment_entity_type", ATTACHMENT_ENTITY_TYPES);
+export const attachmentStatusEnum = pgEnum("attachment_status", ATTACHMENT_STATUSES);
+export const diagramKindEnum = pgEnum("diagram_kind", DIAGRAM_KINDS);
 
 // ── Phase 0: sign-in ─────────────────────────────────────────────────────────────────────
 
@@ -97,6 +110,8 @@ export const users = pgTable(
     lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
     // S-3: "sign out everywhere" (P1) bumps this; sessions carrying an older value are rejected.
     sessionVersion: integer("session_version").notNull().default(0),
+    /** NTF-2 (P2) email digest opt-in. Off until the user turns it on. */
+    notifyEmail: boolean("notify_email").notNull().default(false),
     ...timestamps,
   },
   (table) => [
@@ -132,6 +147,10 @@ export const projects = pgTable(
     name: text("name").notNull(),
     description: text("description"),
     leadId: uuid("lead_id").references(() => users.id, { onDelete: "set null" }),
+    /** PRJ-3: assignee for new issues created without one. Null: unassigned. */
+    defaultAssigneeId: uuid("default_assignee_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     /** Last issue number handed out; see `allocate` in services/issues.ts. Never decremented. */
     issueCounter: integer("issue_counter").notNull().default(0),
     sprintLengthDays: integer("sprint_length_days").notNull().default(14),
@@ -660,9 +679,209 @@ export const githubPrMerges = pgTable(
   (table) => [primaryKey({ columns: [table.repo, table.number] })],
 );
 
+// ── Phase 2 (P1) foundation, migration 0004 ──────────────────────────────────────────────
+
+/**
+ * ISS-11 watchers. The assignee and reporter are added automatically by the issue writes;
+ * anyone can watch or unwatch by hand. A join table, so no `id`/`updated_at`.
+ */
+export const watchers = pgTable(
+  "watchers",
+  {
+    issueId: uuid("issue_id")
+      .notNull()
+      .references(() => issues.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt,
+  },
+  (table) => [
+    primaryKey({ columns: [table.issueId, table.userId] }),
+    index("watchers_user_idx").on(table.userId),
+  ],
+);
+
+/**
+ * NTF-1 in-app notifications, one row per recipient and event. `entity_type`/`entity_id`
+ * point at what to open (no FK: polymorphic). Only `read_at` ever changes, so there is no
+ * `updated_at`. `dedupe_key` (e.g. `assigned:<issueId>:<activityId>`) makes a retried write
+ * an `ON CONFLICT DO NOTHING` instead of a second bell entry; null when no dedupe is needed.
+ */
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    type: notificationTypeEnum("type").notNull(),
+    entityType: entityTypeEnum("entity_type").notNull(),
+    entityId: uuid("entity_id").notNull(),
+    /** Who caused it; null for system/GitHub events. */
+    actorId: uuid("actor_id").references(() => users.id, { onDelete: "set null" }),
+    meta: jsonb("meta").$type<Record<string, unknown>>(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    dedupeKey: text("dedupe_key").unique("notifications_dedupe_key_unique"),
+    createdAt,
+  },
+  (table) => [
+    // The bell: a user's unread first, newest first.
+    index("notifications_user_read_created_idx").on(
+      table.userId,
+      table.readAt,
+      table.createdAt.desc(),
+    ),
+  ],
+);
+
+/**
+ * VW-3 saved views: a named issue filter (the same shape as the URL filter, VW-2), personal
+ * or `shared` with everyone in the project. Ordered per user by a fractional key.
+ */
+export const savedViews = pgTable(
+  "saved_views",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    filter: jsonb("filter").$type<Record<string, unknown>>().notNull(),
+    shared: boolean("shared").notNull().default(false),
+    position: fractionalKey("position").notNull(),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("saved_views_user_project_name_unique").on(
+      table.userId,
+      table.projectId,
+      table.name,
+    ),
+    index("saved_views_project_shared_idx")
+      .on(table.projectId)
+      .where(sql`${table.shared}`),
+  ],
+);
+
+/**
+ * ISS-9 / DOC-1 files in the private R2 bucket (S-5). The object lives at `storage_key`
+ * (`attachments/<uuid>/<sanitized-filename>`); it is only ever served through
+ * `/api/files/[id]` as a short-lived presigned URL, and only once `status = 'ready'`.
+ * Soft delete never removes the object (§9.3; a purge job is P2).
+ */
+export const attachments = pgTable(
+  "attachments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    entityType: attachmentEntityTypeEnum("entity_type").notNull(),
+    entityId: uuid("entity_id").notNull(),
+    storageKey: text("storage_key").notNull().unique("attachments_storage_key_unique"),
+    /** The original name, shown to people and sent in Content-Disposition (sanitized). */
+    filename: text("filename").notNull(),
+    mime: text("mime").notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    /** Images only. */
+    width: integer("width"),
+    height: integer("height"),
+    uploadedBy: uuid("uploaded_by").references(() => users.id, { onDelete: "set null" }),
+    status: attachmentStatusEnum("status").notNull().default("pending"),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    index("attachments_entity_idx").on(table.entityType, table.entityId),
+    // Stale pending uploads (abandoned presigned PUTs) are found for cleanup by age.
+    index("attachments_pending_created_idx")
+      .on(table.createdAt)
+      .where(sql`${table.status} = 'pending'`),
+    check(
+      "attachments_size_range",
+      sql`${table.sizeBytes} BETWEEN 1 AND ${sql.raw(String(MAX_ATTACHMENT_BYTES))}`,
+    ),
+    check(
+      "attachments_dimensions_positive",
+      sql`(${table.width} IS NULL OR ${table.width} > 0) AND (${table.height} IS NULL OR ${table.height} > 0)`,
+    ),
+  ],
+);
+
+/**
+ * DGM-1…7 whiteboards (Excalidraw scene JSON) and flows (`{ nodes, edges, viewport }`).
+ * `scene_text` holds the labels, derived on the server, for search. Optimistic locking like
+ * docs (§7.4). The scene is bounded by a CHECK (see `DIAGRAM_SCENE_MAX_BYTES`); embedded
+ * images are R2 attachments, never inline data URLs.
+ */
+export const diagrams = pgTable(
+  "diagrams",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    kind: diagramKindEnum("kind").notNull(),
+    title: text("title").notNull(),
+    scene: jsonb("scene").$type<Record<string, unknown>>().notNull(),
+    sceneText: text("scene_text").notNull().default(""),
+    /** DGM-5: `thumbnails/diagrams/<id>.png` in R2, served by an authed route. */
+    thumbnailKey: text("thumbnail_key"),
+    /** Optimistic locking (§7.4): `UPDATE … WHERE version = base`. */
+    version: integer("version").notNull().default(1),
+    ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
+    updatedBy: uuid("updated_by").references(() => users.id, { onDelete: "set null" }),
+    templateId: uuid("template_id").references(() => templates.id, { onDelete: "set null" }),
+    /** List order per project; a fractional key like `docs.position`. */
+    position: fractionalKey("position").notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    search: tsvector("search").generatedAlwaysAs(
+      sql`setweight(to_tsvector('english'::regconfig, coalesce("title", '')), 'A') || setweight(to_tsvector('english'::regconfig, coalesce("scene_text", '')), 'B')`,
+    ),
+    ...timestamps,
+  },
+  (table) => [
+    index("diagrams_project_position_idx").on(table.projectId, table.position),
+    index("diagrams_search_idx").using("gin", table.search),
+    check("diagrams_version_positive", sql`${table.version} > 0`),
+    check(
+      "diagrams_scene_size",
+      sql`octet_length(${table.scene}::text) < ${sql.raw(String(DIAGRAM_SCENE_MAX_BYTES))}`,
+    ),
+  ],
+);
+
+/** DGM-4 full snapshot per saved version (§7.3). Immutable, so no `updated_at`. */
+export const diagramVersions = pgTable(
+  "diagram_versions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    diagramId: uuid("diagram_id")
+      .notNull()
+      .references(() => diagrams.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    title: text("title").notNull(),
+    scene: jsonb("scene").$type<Record<string, unknown>>().notNull(),
+    authorId: uuid("author_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt,
+  },
+  (table) => [
+    uniqueIndex("diagram_versions_diagram_version_unique").on(table.diagramId, table.version),
+    check(
+      "diagram_versions_scene_size",
+      sql`octet_length(${table.scene}::text) < ${sql.raw(String(DIAGRAM_SCENE_MAX_BYTES))}`,
+    ),
+  ],
+);
+
 export type UserRow = typeof users.$inferSelect;
 export type ProjectRow = typeof projects.$inferSelect;
 export type StatusRow = typeof statuses.$inferSelect;
 export type IssueRow = typeof issues.$inferSelect;
 export type CommentRow = typeof comments.$inferSelect;
 export type ActivityRow = typeof activity.$inferSelect;
+export type NotificationRow = typeof notifications.$inferSelect;
+export type SavedViewRow = typeof savedViews.$inferSelect;
+export type AttachmentRow = typeof attachments.$inferSelect;
+export type DiagramRow = typeof diagrams.$inferSelect;
