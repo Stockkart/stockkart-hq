@@ -31,6 +31,10 @@ comments and commit bodies.
   on 11.x while CI runs Node 20 (12.x needs Node 22). `@aws-sdk/client-s3` and
   `@aws-sdk/s3-request-presigner` (R2) are Apache-2.0; AWS SDK releases after early 2027
   need Node 22, so they too stay pinned until CI drops Node 20.
+  Diagrams: `@excalidraw/excalidraw`, `@xyflow/react` and `@dagrejs/dagre` are MIT
+  (Excalidraw pulls in `pako` (MIT AND Zlib), `fractional-indexing` 3 (CC0-1.0) and old
+  Radix packages with React 18 peer ranges, which work on React 19). elkjs was not used
+  (EPL-2.0/GPL). Both canvases load only via `next/dynamic` on the diagram page.
 
 ## Layout
 
@@ -41,7 +45,8 @@ src/
                           settings/profile/
   app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, backlog/, board/, docs/
                           (tree layout, list, docs/[id] editor), adrs/, sprints/ (list,
-                          sprints/[sprintId]), and a "coming soon" [section] placeholder for
+                          sprints/[sprintId]), diagrams/ (grid, diagrams/[id] editor), and a
+                          "coming soon" [section] placeholder for
                           the rest (roadmap, …)
   app/api/auth/           Auth.js route handlers
   app/api/webhooks/github GitHub org webhook (GH-1…GH-3): HMAC-verified, logic in server/github/
@@ -65,7 +70,7 @@ src/
                           (lib/attachments/policy.ts), @user mentions (lib/mentions.ts),
                           plain-text rules per editor node (lib/rich-text-nodes/)
   features/               feature UI (shell/, issue/, planning/, sprints/, todos/, search/,
-                          docs/, editor/)
+                          docs/, editor/, diagrams/)
   features/editor/        shared Tiptap editor (client-only; variants `issue`, `comment`,
                           `doc`), its feature registry (extensions/) and the safe JSON
                           renderer with its node registry (renderers/)
@@ -122,6 +127,11 @@ e2e/                      Playwright smoke tests
     jsonb's wider text form). Search indexes the first 200 000 characters of `scene_text`.
   - `attachments.storage_key` and `diagrams.thumbnail_key` have CHECKs for the exact key
     layouts (`attachmentKey`, `diagramThumbnailKey`).
+  - Diagram templates are `templates` rows with `kind = 'diagram'` and
+    `subtype = '<whiteboard|flow>:<slug>'` (one built-in per subtype); `content` is a scene.
+    Docs embed diagrams with the `diagramEmbed` node; backlinks are found in the doc JSON
+    at read time (`diagramQueries.links`), so doc saves keep no diagram links in sync.
+    Whiteboard images stay disabled until diagram files get an R2 key layout.
   - `projects.default_assignee_id` (PRJ-3), `users.notify_email` (NTF-2, default off),
     `entity_type = 'attachment'`. That enum value is added in 0004 inside the migration
     transaction, so no later SQL migration may use `'attachment'` (default, index predicate,
