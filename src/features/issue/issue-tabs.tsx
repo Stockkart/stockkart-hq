@@ -99,6 +99,7 @@ function Comments({ issueId, comments, projectKeys, currentUserId }: IssueTabsPr
       >
         <LazyRichTextEditor
           key={composerKey}
+          variant="comment"
           initialContent={null}
           projectKeys={projectKeys}
           label="Write a comment"
@@ -209,6 +210,7 @@ function CommentItem({
         {editing ? (
           <div className="flex flex-col gap-2">
             <LazyRichTextEditor
+              variant="comment"
               initialContent={body}
               projectKeys={projectKeys}
               label="Edit comment"

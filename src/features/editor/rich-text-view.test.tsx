@@ -125,4 +125,18 @@ describe("RichTextView (S-8, ISS-7)", () => {
     expect(container.querySelector("figure code")).toHaveTextContent("graph TD; A-->B<script>");
     expect(container.querySelector("script")).toBeNull();
   });
+
+  it("renders only the children of node types no renderer is registered for", () => {
+    const { container } = render(
+      <RichTextView
+        projectKeys={["STK"]}
+        doc={doc(
+          { type: "constructor", content: [{ type: "text", text: "kept" }] },
+          { type: "futureNode", attrs: { html: "<b>x</b>" } },
+        )}
+      />,
+    );
+    expect(screen.getByText("kept")).toBeInTheDocument();
+    expect(container.querySelector("b")).toBeNull();
+  });
 });
