@@ -109,6 +109,7 @@ export function ComponentEditor({
                   value={component.name}
                   maxLength={COMPONENT_NAME_MAX}
                   className="w-48"
+                  disabled={pending}
                   validate={(next) => (next ? null : "Name is required")}
                   onCommit={(name) =>
                     run(
@@ -123,6 +124,7 @@ export function ComponentEditor({
                   value={component.githubRepo ?? ""}
                   placeholder="Owner/repo"
                   className="w-64"
+                  disabled={pending}
                   validate={checkRepo}
                   onCommit={(value) => {
                     const githubRepo = value || null;

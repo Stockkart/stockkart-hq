@@ -55,9 +55,16 @@ export function createTrashService(
             AND i.deleted_at IS NOT NULL AND ${recent(sql`i.deleted_at`)}
           FOR UPDATE
         ),
+        -- Share-locks the parent, so a delete (or restore) of it running now is ordered
+        -- against this restore and its outcome is the one seen here.
+        parent AS (
+          SELECT p.id, p.deleted_at FROM issues p JOIN target t ON p.id = t.parent_id
+          FOR SHARE OF p
+        ),
         parent_gone AS (
-          SELECT 1 FROM target t LEFT JOIN issues p ON p.id = t.parent_id
-          WHERE t.parent_id IS NOT NULL AND (p.id IS NULL OR p.deleted_at IS NOT NULL)
+          SELECT 1 FROM target t
+          WHERE t.parent_id IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM parent WHERE parent.deleted_at IS NULL)
         ),
         restored AS (
           UPDATE issues SET deleted_at = NULL,

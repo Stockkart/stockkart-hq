@@ -302,6 +302,7 @@ function StatusRow({
         value={status.name}
         maxLength={STATUS_NAME_MAX}
         className="w-48"
+        disabled={pending}
         validate={(next) => (next ? null : "Name is required")}
         onCommit={onRename}
       />

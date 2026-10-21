@@ -142,7 +142,7 @@ describe("IssueList bulk edit (ISS-12)", () => {
     const user = userEvent.setup();
     renderList();
     await user.click(screen.getByRole("checkbox", { name: "Select all shown issues" }));
-    const bar = screen.getByRole("toolbar", { name: "Bulk edit 3 issues" });
+    const bar = screen.getByRole("group", { name: "Bulk edit 3 issues" });
     await user.click(within(bar).getByRole("combobox", { name: "Set status of 3 issues" }));
     await user.click(screen.getByRole("option", { name: "Done" }));
     expect(bulkActions.bulkEditIssuesAction).toHaveBeenCalledWith({
@@ -160,7 +160,7 @@ describe("IssueList bulk edit (ISS-12)", () => {
     const user = userEvent.setup();
     renderList();
     await user.click(screen.getByRole("checkbox", { name: "Select STK-2" }));
-    const bar = screen.getByRole("toolbar", { name: "Bulk edit 1 issue" });
+    const bar = screen.getByRole("group", { name: "Bulk edit 1 issue" });
     await user.click(within(bar).getByRole("combobox", { name: "Set status of 1 issue" }));
     await user.click(screen.getByRole("option", { name: "Done" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Status not found"));
@@ -174,8 +174,8 @@ describe("IssueList bulk edit (ISS-12)", () => {
     await user.keyboard("x");
     expect(screen.getByRole("checkbox", { name: "Select STK-1" })).toBeChecked();
     await user.keyboard("jx");
-    expect(screen.getByRole("toolbar", { name: "Bulk edit 2 issues" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Bulk edit 2 issues" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Clear selection" }));
-    expect(screen.queryByRole("toolbar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: /Bulk edit/ })).not.toBeInTheDocument();
   });
 });

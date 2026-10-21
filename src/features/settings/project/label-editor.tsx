@@ -139,6 +139,7 @@ export function LabelEditor({
                   value={label.name}
                   maxLength={LABEL_MAX}
                   className="w-48"
+                  disabled={pending}
                   validate={checkName}
                   onCommit={(next) => {
                     const name = labelNameSchema.parse(next);

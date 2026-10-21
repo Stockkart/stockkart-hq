@@ -97,7 +97,7 @@ describeDb("round trips of the settings, trash and issue list pages (Postgres)",
         currentUserId: actor,
       }),
       s.issueQueries.getProjectMeta(projectId()),
-      s.savedViews.getView(actor, viewId),
+      s.savedViews.getView(actor, projectId(), viewId),
     ]);
     expect(trips()).toBe(1);
     expect(views.map((v) => v.id)).toEqual([viewId]);

@@ -17,7 +17,7 @@ import {
   type setStatusDefaultInput,
   type updateProjectInput,
 } from "@/lib/settings/schemas";
-import { WONT_DO_STATUS_NAME } from "@/lib/sprints/constants";
+import { SPRINT_ACTIONS, WONT_DO_STATUS_NAME } from "@/lib/sprints/constants";
 import { directRead, type Read } from "@/server/db/read-batch";
 import { components, projects, statuses, users } from "@/server/db/schema";
 import { type AppDatabase, type RunAtomic } from "@/server/db/types";
@@ -214,9 +214,11 @@ export function createProjectSettingsService(
     /**
      * Changes a status's category (§4.4). Its issues follow at once: entering `done` sets
      * `resolved_at`, leaving it clears it, as a status change would. Every category keeps at
-     * least one status, and a default status cannot become `done`.
+     * least one status, and a default status cannot become `done`. Each started sprint gets
+     * a `status_category_changed` note, so its burndown and velocity count the status by the
+     * category it had at the time (`burndown.ts`), not the new one.
      */
-    async setStatusCategory(_actorId: string, input: z.output<typeof setStatusCategoryInput>) {
+    async setStatusCategory(actorId: string, input: z.output<typeof setStatusCategoryInput>) {
       const status = await statusRow(input.statusId);
       if (status.category === input.category) return;
       const projectId = projectOfStatus(status.id);
@@ -224,7 +226,7 @@ export function createProjectSettingsService(
         workflowLock(projectId),
         sql`
           WITH s AS (
-            SELECT id, project_id, category AS old, is_default_for FROM statuses
+            SELECT id, project_id, name, category AS old, is_default_for FROM statuses
             WHERE id = ${status.id}::uuid FOR UPDATE
           ),
           allowed AS (
@@ -243,8 +245,18 @@ export function createProjectSettingsService(
             UPDATE issues SET resolved_at = CASE
                 WHEN ${input.category}::status_category = 'done'
                   THEN COALESCE(issues.resolved_at, now())
-                ELSE NULL END
+                ELSE NULL END,
+              updated_at = now()
             FROM changed WHERE issues.status_id = changed.id
+          ),
+          -- SPR-3/4: past sprints keep counting the status by its old category.
+          sprint_notes AS (
+            INSERT INTO activity (entity_type, entity_id, actor_id, action, meta)
+            SELECT 'sprint', sp.id, ${actorId}::uuid, ${SPRINT_ACTIONS.statusCategoryChanged},
+              jsonb_build_object('statusId', s.id, 'name', s.name, 'fromCategory', s.old,
+                'category', ${input.category}::text)
+            FROM sprints sp, s, changed
+            WHERE sp.project_id = s.project_id AND sp.state <> 'planned'
           )
           SELECT (SELECT count(*)::int FROM changed) AS n
         `,
@@ -406,7 +418,7 @@ export function createProjectSettingsService(
           ),
           sprint_notes AS (
             INSERT INTO activity (entity_type, entity_id, actor_id, action, meta)
-            SELECT 'sprint', sp.id, ${actorId}::uuid, 'status_deleted',
+            SELECT 'sprint', sp.id, ${actorId}::uuid, ${SPRINT_ACTIONS.statusDeleted},
               jsonb_build_object('statusId', s.id, 'name', s.name, 'category', s.category)
             FROM sprints sp, s
             WHERE sp.project_id = s.project_id AND sp.state <> 'planned'

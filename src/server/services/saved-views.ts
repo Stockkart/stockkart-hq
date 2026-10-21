@@ -131,8 +131,8 @@ export function createSavedViewService(
       }));
     },
 
-    /** A view the user may read (own, or shared), or null. */
-    async getView(userId: string, viewId: string): Promise<SavedViewItem | null> {
+    /** A view of this project the user may read (own, or shared), or null. */
+    async getView(userId: string, project: IdRef, viewId: string): Promise<SavedViewItem | null> {
       const [row] = await read(
         db
           .select({
@@ -148,6 +148,7 @@ export function createSavedViewService(
           .where(
             and(
               eq(savedViews.id, viewId),
+              eq(savedViews.projectId, project),
               or(eq(savedViews.userId, userId), eq(savedViews.shared, true)),
             ),
           )

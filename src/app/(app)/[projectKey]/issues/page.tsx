@@ -59,7 +59,7 @@ export default async function IssuesPage({ params, searchParams }: Props) {
     }),
     issueQueries.getProjectMeta(projectId),
     // Readable only when it is the user's own or shared (null otherwise).
-    viewId.success ? savedViewService.getView(session.user.id, viewId.data) : null,
+    viewId.success ? savedViewService.getView(session.user.id, projectId, viewId.data) : null,
   ]);
 
   return (

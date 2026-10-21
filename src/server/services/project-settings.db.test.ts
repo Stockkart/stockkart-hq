@@ -1,6 +1,8 @@
 import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { computeVelocity } from "@/lib/sprints/burndown";
+
 import {
   createComponentInput,
   setComponentRepoInput,
@@ -13,6 +15,7 @@ import {
   issues,
   labels,
   projects,
+  sprints,
   statuses,
 } from "@/server/db/schema";
 import { seed } from "@/server/db/seed";
@@ -361,6 +364,79 @@ describeDb("project settings (Postgres)", () => {
         queries.oneSprint(projectIdByKey("STK"), sprintId),
       );
       expect(data.statusKinds.get(shipped)).toBe("done");
+    });
+
+    it("keeps a closed sprint's velocity when a status changes category later", async () => {
+      const sprintService = createSprintService(db, { runAtomic: transactionRunner(db) });
+      const active = await db
+        .select({ id: sprints.id })
+        .from(sprints)
+        .where(eq(sprints.state, "active"));
+      for (const sprint of active) {
+        await sprintService.completeSprint(actor, { sprintId: sprint.id, carryTo: "backlog" });
+      }
+      const { id: approved } = await settings().createStatus(actor, {
+        projectKey: "STK",
+        name: "Approved",
+        category: "done",
+      });
+      const { id: sprintId } = await sprintService.createSprint(actor, {
+        projectKey: "STK",
+        name: "Sprint V",
+        goal: null,
+        startDate: "2026-07-01",
+        endDate: "2026-07-14",
+      });
+      const issue = await create("Approved work");
+      await issueService().updateIssueField(actor, {
+        issueId: issue.id,
+        field: "storyPoints",
+        value: 5,
+      });
+      await createPlanningService(db).moveIssueToSprint(actor, { issueId: issue.id, sprintId });
+      await sprintService.startSprint(actor, sprintId);
+      await issueService().updateIssueField(actor, {
+        issueId: issue.id,
+        field: "status",
+        value: approved,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await sprintService.completeSprint(actor, { sprintId, carryTo: "backlog" });
+
+      const velocity = async () => {
+        const queries = createSprintQueries(db);
+        const { timelines, data } = await queries.burndownInputs(
+          projectIdByKey("STK"),
+          queries.oneSprint(projectIdByKey("STK"), sprintId),
+        );
+        return computeVelocity(timelines, data)[0]?.completed;
+      };
+      expect(await velocity()).toBe(5);
+      await settings().setStatusCategory(actor, { statusId: approved, category: "in_progress" });
+      expect(await velocity()).toBe(5);
+    });
+
+    it("moves an issue that entered the status while the delete waited for it", async () => {
+      const { id: temp } = await settings().createStatus(actor, {
+        projectKey: "STK",
+        name: "Temp",
+        category: "in_progress",
+      });
+      const issue = await create("Racer");
+      const done = await statusId("Done");
+      let pending: Promise<{ moved: number }> | undefined;
+      // The move holds its key-share lock on the status until it commits; the delete
+      // (another connection) waits on it, then must see and move the issue.
+      await db.transaction(async (tx) => {
+        await tx.update(issues).set({ statusId: temp }).where(eq(issues.id, issue.id));
+        pending = settings().deleteStatus(actor, { statusId: temp, moveToStatusId: done });
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      });
+      expect(await pending).toEqual({ moved: 1 });
+      expect((await issueRow(issue.id)).statusId).toBe(done);
+      expect(
+        (await activityOf(issue.id)).filter((e) => e.field === "status" && e.fromValue === temp),
+      ).toHaveLength(1);
     });
   });
 

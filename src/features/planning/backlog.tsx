@@ -40,7 +40,7 @@ import {
 import { Select } from "@/components/ui/select";
 import { applyBulkChange, type BulkLookups } from "@/features/bulk/apply";
 import { BulkBar, type BulkOptions } from "@/features/bulk/bulk-bar";
-import { RowCheckbox } from "@/features/bulk/checkboxes";
+import { RowCheckbox, SelectAllCheckbox } from "@/features/bulk/checkboxes";
 import { selectRowProps, useRowSelection, useSelectShortcut } from "@/features/bulk/use-selection";
 import { callAction } from "@/features/issue/client-utils";
 import { priorityOptions, userOptions } from "@/features/issue/field-options";
@@ -333,9 +333,30 @@ export function Backlog({
       <p aria-live="polite" className="sr-only">
         {announcement}
       </p>
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between gap-2">
+        <label className="flex items-center gap-2 pl-3 text-sm text-muted-foreground">
+          <SelectAllCheckbox
+            label="Select all shown issues"
+            all={selection.allSelected}
+            some={selection.someSelected}
+            onChange={(all) => (all ? selection.selectAll() : selection.clear())}
+          />
+          <span aria-hidden="true">Select all</span>
+        </label>
         <CreateSprintButton context={context} defaults={sprintDefaults} onChange={onSprintChange} />
       </div>
+      {/* Before the sections, so it is a few Tab stops away, not one per row (§9.5). */}
+      <BulkBar
+        count={selection.selectedIds.length}
+        visibleCount={sections
+          .filter((section) => !collapsed.has(section.id))
+          .reduce((count, section) => count + section.issues.length, 0)}
+        options={bulkOptions}
+        pending={pending}
+        onApply={runBulk}
+        onSelectAll={selection.selectAll}
+        onClear={selection.clear}
+      />
       <DndContext id={dndId} sensors={sensors} collisionDetection={collision} onDragEnd={onDragEnd}>
         {sections.map((section) => {
           const isCollapsed = collapsed.has(section.id);
@@ -403,17 +424,6 @@ export function Backlog({
           );
         })}
       </DndContext>
-      <BulkBar
-        count={selection.selectedIds.length}
-        visibleCount={sections
-          .filter((section) => !collapsed.has(section.id))
-          .reduce((count, section) => count + section.issues.length, 0)}
-        options={bulkOptions}
-        pending={pending}
-        onApply={runBulk}
-        onSelectAll={selection.selectAll}
-        onClear={selection.clear}
-      />
     </div>
   );
 }

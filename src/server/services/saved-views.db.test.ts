@@ -54,7 +54,7 @@ describeDb("saved views (Postgres)", () => {
   it("never lets anyone else read, change or reorder a private view", async () => {
     const { id } = await save(ada, "Ada's private", false);
     expect((await service().listViews(bo, stk())).map((v) => v.id)).not.toContain(id);
-    expect(await service().getView(bo, id)).toBeNull();
+    expect(await service().getView(bo, stk(), id)).toBeNull();
     const notFound = { code: "not_found" };
     await expect(service().rename(bo, { viewId: id, name: "Mine now" })).rejects.toMatchObject(
       notFound,
@@ -71,7 +71,9 @@ describeDb("saved views (Postgres)", () => {
     await expect(service().remove(bo, id)).rejects.toMatchObject(notFound);
     const [row] = await db.select().from(savedViews).where(eq(savedViews.id, id));
     expect(row).toMatchObject({ name: "Ada's private", shared: false });
-    expect(await service().getView(ada, id)).toMatchObject({ id, mine: true });
+    expect(await service().getView(ada, stk(), id)).toMatchObject({ id, mine: true });
+    // Only within its own project.
+    expect(await service().getView(ada, projectIdByKey("NOPE"), id)).toBeNull();
   });
 
   it("shows shared views to everyone, read-only for non-owners", async () => {
@@ -111,7 +113,7 @@ describeDb("saved views (Postgres)", () => {
       code: "conflict",
     });
     await service().updateFilter(bo, { viewId: two, query: "status=bogus&q=outbox" });
-    expect((await service().getView(bo, two))?.filter).toEqual({ q: "outbox" });
+    expect((await service().getView(bo, stk(), two))?.filter).toEqual({ q: "outbox" });
 
     await service().remove(bo, one);
     expect(await mine()).toEqual(["Three", "Second"]);

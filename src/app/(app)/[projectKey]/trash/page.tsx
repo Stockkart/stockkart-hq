@@ -6,6 +6,7 @@ import { TrashList } from "@/features/trash/trash-list";
 import { TRASH_DAYS, type TrashItem } from "@/lib/trash/views";
 import { requirePageSession } from "@/server/auth/require-session";
 import { trashService } from "@/server/services";
+import { TRASH_LIST_LIMIT } from "@/server/services/trash";
 import { projectIdByKey } from "@/server/services/sql";
 
 interface Props {
@@ -45,6 +46,11 @@ export default async function TrashPage({ params }: Props) {
       <p className="text-sm text-muted-foreground">
         Issues and docs deleted in the last {TRASH_DAYS} days. Older ones are hidden here but kept.
       </p>
+      {trash.issues.length >= TRASH_LIST_LIMIT || trash.docs.length >= TRASH_LIST_LIMIT ? (
+        <p role="note" className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+          Showing the {TRASH_LIST_LIMIT} most recently deleted issues and docs of each kind.
+        </p>
+      ) : null}
       <TrashList projectKey={project.key} items={items} />
     </div>
   );

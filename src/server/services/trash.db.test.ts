@@ -8,6 +8,9 @@ import { createTestDatabase, createTestUser, describeDb, type TestDatabase } fro
 
 import { createDocService } from "./docs";
 import { createIssueService } from "./issues";
+import { createPlanningService } from "./planning";
+import { createSprintQueries } from "./sprint-queries";
+import { createSprintService } from "./sprints";
 import { projectIdByKey } from "./sql";
 import { createTrashService } from "./trash";
 
@@ -156,6 +159,33 @@ describeDb("trash (Postgres)", () => {
     });
     const [row] = await db.select().from(docs).where(eq(docs.id, child.id));
     expect(row).toMatchObject({ deletedAt: null, parentId: null });
+  });
+
+  it("hands the delete and restore to the burndown replay (SPR-3)", async () => {
+    const sprintService = createSprintService(db, { runAtomic: runAtomic() });
+    const { id: sprintId } = await sprintService.createSprint(actor, {
+      projectKey: "STK",
+      name: "Sprint T",
+      goal: null,
+      startDate: "2026-06-01",
+      endDate: "2026-06-14",
+    });
+    const issue = await create("In and out of the trash");
+    await createPlanningService(db).moveIssueToSprint(actor, { issueId: issue.id, sprintId });
+    await issueService().deleteIssue(actor, issue.id);
+    await trash().restoreIssue(actor, "STK", issue.id);
+    const queries = createSprintQueries(db);
+    const { data } = await queries.burndownInputs(
+      projectIdByKey("STK"),
+      queries.oneSprint(projectIdByKey("STK"), sprintId),
+    );
+    const trashed = data.changes.filter(
+      (change) => change.issueId === issue.id && change.field === "deleted",
+    );
+    expect(trashed.map((change) => [change.from, change.to]).sort()).toEqual([
+      ["false", "true"],
+      ["true", "false"],
+    ]);
   });
 
   it("only restores items of the given project", async () => {

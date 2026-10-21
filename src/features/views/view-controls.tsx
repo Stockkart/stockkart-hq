@@ -142,7 +142,8 @@ function SaveViewDialog({
           <DialogHeader>
             <DialogTitle>Save view</DialogTitle>
             <DialogDescription>
-              Saves the current filters and sort. It appears in the sidebar under {projectKey}.
+              Saves the current filters and sort of the {projectKey} issue list. Your views and the
+              shared ones are listed in the sidebar.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-1.5">

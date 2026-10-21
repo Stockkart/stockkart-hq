@@ -677,7 +677,8 @@ export function createIssueService(db: AppDatabase, options: IssueServiceOptions
       if (!row || row.removed === 0) throw notFound("Link");
     },
 
-    /** Soft delete (ISS-13 restore comes later). Children and links are kept. */
+    /** Soft delete; restorable from the trash for 30 days (ISS-13, `trash.ts`). Children and
+     * links are kept. */
     async deleteIssue(actorId: string, issueId: string): Promise<void> {
       const result = await db.execute(sql`
         WITH deleted AS (

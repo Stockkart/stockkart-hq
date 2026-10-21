@@ -17,6 +17,7 @@ export function InlineText({
   maxLength,
   placeholder,
   className,
+  disabled = false,
 }: {
   label: string;
   value: string;
@@ -25,6 +26,8 @@ export function InlineText({
   maxLength?: number;
   placeholder?: string;
   className?: string;
+  /** E.g. while the row itself is still being created. */
+  disabled?: boolean;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +54,7 @@ export function InlineText({
         maxLength={maxLength}
         placeholder={placeholder}
         autoComplete="off"
+        disabled={disabled}
         className="h-8"
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}

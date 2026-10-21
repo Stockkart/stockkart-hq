@@ -49,8 +49,8 @@ const plural = (count: number) => `${count} ${count === 1 ? "issue" : "issues"}`
 /**
  * ISS-12 bulk bar, shown while rows are selected: set status, priority, assignee or sprint,
  * add or remove a label, or delete, for every selected issue at once. Each picker applies
- * on pick (one deliberate choice); delete asks first. A toolbar, so it is one Tab stop
- * group with its own name.
+ * on pick (one deliberate choice); delete asks first. A named group placed BEFORE the rows,
+ * so keyboard users reach it in a few Tab stops (Shift+Tab from the list).
  */
 export function BulkBar({
   count,
@@ -78,9 +78,9 @@ export function BulkBar({
 
   return (
     <div
-      role="toolbar"
+      role="group"
       aria-label={`Bulk edit ${what}`}
-      className="sticky bottom-2 z-20 flex flex-wrap items-center gap-2 rounded-lg border bg-background p-2 text-sm shadow-md"
+      className="sticky top-2 z-20 flex flex-wrap items-center gap-2 rounded-lg border bg-background p-2 text-sm shadow-md"
     >
       <span className="px-1 font-medium tabular-nums" aria-live="polite">
         {what} selected

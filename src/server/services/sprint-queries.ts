@@ -51,7 +51,7 @@ const timelineRow = z.object({
 
 const changeSchema = z.object({
   at: z.number(),
-  field: z.enum(["sprint", "status", "storyPoints"]),
+  field: z.enum(["sprint", "status", "storyPoints", "deleted"]),
   from: z.string().nullable(),
   to: z.string().nullable(),
 });
@@ -66,6 +66,12 @@ const issueRow = z.object({
 });
 
 const statusRow = z.object({ id: z.string(), name: z.string(), category: z.string() });
+const kindChangeRow = z.object({
+  status_id: z.string(),
+  name: z.string(),
+  from_category: z.string(),
+  at_ms: z.number(),
+});
 
 /** Epoch milliseconds (floored), the same truncation for every instant compared. */
 const epochMs = (column: SQL) => sql`floor(extract(epoch FROM ${column}) * 1000)::float8`;
@@ -197,7 +203,7 @@ export function createSprintQueries(db: AppDatabase, { read = directRead }: Quer
       projectId: IdRef,
       targets: SprintTargets,
     ): Promise<{ timelines: SprintTimeline[]; data: BurndownData }> {
-      const [timelineResult, issueResult, statusResult] = await Promise.all([
+      const [timelineResult, issueResult, statusResult, kindChangeResult] = await Promise.all([
         read(
           db.execute(sql`
             SELECT s.id, s.name, s.start_date::text AS start_date, s.end_date::text AS end_date,
@@ -237,10 +243,16 @@ export function createSprintQueries(db: AppDatabase, { read = directRead }: Quer
               i.story_points,
               COALESCE((
                 SELECT json_agg(json_build_object('at', ${epochMs(sql`a.created_at`)},
-                  'field', a.field, 'from', a.from_value, 'to', a.to_value))
+                  'field', CASE WHEN a.action = 'updated' THEN a.field ELSE 'deleted' END,
+                  'from', CASE a.action WHEN 'updated' THEN a.from_value
+                    WHEN 'deleted' THEN 'false' ELSE 'true' END,
+                  'to', CASE a.action WHEN 'updated' THEN a.to_value
+                    WHEN 'deleted' THEN 'true' ELSE 'false' END))
                 FROM activity a
-                WHERE a.entity_type = 'issue' AND a.entity_id = i.id AND a.action = 'updated'
-                  AND a.field IN ('sprint', 'status', 'storyPoints')
+                WHERE a.entity_type = 'issue' AND a.entity_id = i.id
+                  AND ((a.action = 'updated' AND a.field IN ('sprint', 'status', 'storyPoints'))
+                    -- ISS-13: in the trash for a while, then restored.
+                    OR a.action IN ('deleted', 'restored'))
               ), '[]'::json) AS changes
             FROM issues i
             WHERE i.id IN (SELECT id FROM universe) AND i.project_id = ${projectId}
@@ -254,7 +266,18 @@ export function createSprintQueries(db: AppDatabase, { read = directRead }: Quer
             -- Statuses deleted in project settings (PRJ-3): history still names them.
             SELECT DISTINCT a.meta ->> 'statusId', a.meta ->> 'name', a.meta ->> 'category'
             FROM activity a JOIN sprints s ON s.id = a.entity_id
-            WHERE a.entity_type = 'sprint' AND a.action = 'status_deleted'
+            WHERE a.entity_type = 'sprint' AND a.action = ${SPRINT_ACTIONS.statusDeleted}
+              AND s.project_id = ${projectId}
+          `),
+        ),
+        // PRJ-3 category changes (one note per started sprint; the same instant for all).
+        read(
+          db.execute(sql`
+            SELECT DISTINCT a.meta ->> 'statusId' AS status_id, a.meta ->> 'name' AS name,
+              a.meta ->> 'fromCategory' AS from_category,
+              ${epochMs(sql`a.created_at`)} AS at_ms
+            FROM activity a JOIN sprints s ON s.id = a.entity_id
+            WHERE a.entity_type = 'sprint' AND a.action = ${SPRINT_ACTIONS.statusCategoryChanged}
               AND s.project_id = ${projectId}
           `),
         ),
@@ -300,6 +323,11 @@ export function createSprintQueries(db: AppDatabase, { read = directRead }: Quer
           statusKinds: new Map(
             rowsOf(statusResult, statusRow).map((row) => [row.id, statusKind(row)]),
           ),
+          statusKindChanges: rowsOf(kindChangeResult, kindChangeRow).map((row) => ({
+            statusId: row.status_id,
+            at: new Date(row.at_ms),
+            from: statusKind({ category: row.from_category, name: row.name }),
+          })),
         },
       };
     },

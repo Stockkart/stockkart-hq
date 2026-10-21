@@ -93,8 +93,15 @@ export function IssueList({
     });
   }
 
+  // Outside the early return, so "Deleted 3 issues" is still announced when none are left.
+  const live = (
+    <p aria-live="polite" className="sr-only">
+      {announcement}
+    </p>
+  );
+
   if (shown.length === 0) {
-    return hasActiveFilters(filters) ? (
+    const empty = hasActiveFilters(filters) ? (
       <section className="rounded-lg border border-dashed p-8 text-center">
         <h2 className="font-medium">No issues match these filters</h2>
         <p className="mt-1 text-sm text-muted-foreground">Change or clear the filters above.</p>
@@ -107,6 +114,12 @@ export function IssueList({
           the top bar to add the first one.
         </p>
       </section>
+    );
+    return (
+      <div>
+        {live}
+        {empty}
+      </div>
     );
   }
 
@@ -126,9 +139,17 @@ export function IssueList({
 
   return (
     <div ref={container} className="flex flex-col gap-2">
-      <p aria-live="polite" className="sr-only">
-        {announcement}
-      </p>
+      {live}
+      {/* Before the rows, so it is a few Tab stops away, not one per row (§9.5). */}
+      <BulkBar
+        count={selection.selectedIds.length}
+        visibleCount={shown.length}
+        options={bulkOptions}
+        pending={pending}
+        onApply={runBulk}
+        onSelectAll={selection.selectAll}
+        onClear={selection.clear}
+      />
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-sm">
           <caption className="sr-only">
@@ -244,15 +265,6 @@ export function IssueList({
           </tbody>
         </table>
       </div>
-      <BulkBar
-        count={selection.selectedIds.length}
-        visibleCount={shown.length}
-        options={bulkOptions}
-        pending={pending}
-        onApply={runBulk}
-        onSelectAll={selection.selectAll}
-        onClear={selection.clear}
-      />
     </div>
   );
 }

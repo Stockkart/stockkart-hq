@@ -163,7 +163,7 @@ describe("Backlog bulk edit (ISS-12)", () => {
     await user.keyboard("{Shift>}");
     await user.click(checkbox("STK-3"));
     await user.keyboard("{/Shift}");
-    const bar = screen.getByRole("toolbar", { name: "Bulk edit 3 issues" });
+    const bar = screen.getByRole("group", { name: "Bulk edit 3 issues" });
     expect(checkbox("STK-4")).not.toBeChecked();
     await user.click(within(bar).getByRole("combobox", { name: "Set priority of 3 issues" }));
     await user.click(screen.getByRole("option", { name: /^P0/ }));
@@ -183,7 +183,7 @@ describe("Backlog bulk edit (ISS-12)", () => {
     screen.getByRole("link", { name: /^STK-2:/ }).focus();
     await user.keyboard("x");
     expect(checkbox("STK-2")).toBeChecked();
-    const bar = screen.getByRole("toolbar", { name: "Bulk edit 1 issue" });
+    const bar = screen.getByRole("group", { name: "Bulk edit 1 issue" });
     await user.click(within(bar).getByRole("button", { name: "Delete" }));
     await user.click(await screen.findByRole("button", { name: "Delete 1 issue" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Nope"));

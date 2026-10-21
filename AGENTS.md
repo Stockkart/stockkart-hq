@@ -65,7 +65,11 @@ src/
                           (lib/attachments/policy.ts), @user mentions (lib/mentions.ts),
                           plain-text rules per editor node (lib/rich-text-nodes/)
   features/               feature UI (shell/, issue/, planning/, sprints/, todos/, search/,
-                          docs/, editor/)
+                          docs/, editor/, settings/project/ (PRJ-3), views/ (VW-3 saved
+                          views), bulk/ (ISS-12 selection + bulk bar), trash/ (ISS-13))
+  features/shell/shortcuts.ts  the one keyboard-shortcut registry (§9.5): handlers match
+                          keys with `matchesShortcut`, the `?` dialog lists it; add new
+                          shortcuts there
   features/editor/        shared Tiptap editor (client-only; variants `issue`, `comment`,
                           `doc`), its feature registry (extensions/) and the safe JSON
                           renderer with its node registry (renderers/)
@@ -150,7 +154,14 @@ e2e/                      Playwright smoke tests
   ISO dates) in the same statement as the change; the UI resolves names. The sprint
   burndown and velocity (SPR-3/4, `lib/sprints/burndown.ts`) replay the `sprint`, `status`
   and `storyPoints` rows, so every write of those fields must log them; sprint lifecycle
-  events use `entity_type = 'sprint'` (`sprint_started.meta` is the start snapshot).
+  events use `entity_type = 'sprint'` (`sprint_started.meta` is the start snapshot). They
+  also replay `deleted`/`restored` (trash, ISS-13), and the `status_deleted` /
+  `status_category_changed` notes the project settings write on every started sprint
+  (`SPRINT_ACTIONS`), so a workflow change never rewrites a past sprint.
+- Workflow writes (`services/project-settings.ts`) run under the per-project advisory lock
+  `hq.workflow:<projectId>` as a `RunAtomic`; keep the rules "one status per category" and
+  "one default per kind" there. "Won't Do" is recognised by name (velocity, GH-3), so it
+  cannot be renamed.
 - Rich text is stored as editor JSON (`RichTextDoc`, validated by `richTextDocSchema`) plus
   plain text. Render it with `RichTextView`; never render stored HTML.
 - Docs use optimistic locking (§7.4): a content save is `UPDATE … WHERE version = base`
