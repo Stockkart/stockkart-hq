@@ -24,7 +24,7 @@ describeDb("seed (Postgres)", () => {
       projectCreated: true,
       componentsCreated: 5,
       statusesCreated: 7,
-      templatesUpserted: 17,
+      templatesUpserted: 22,
     });
 
     const second = await seed(db);
@@ -82,5 +82,29 @@ describeDb("seed (Postgres)", () => {
       .map((node) => node.content?.[0]?.text);
     // Mirrors engineering-handbook/decisions/0000-template.md.
     expect(headings).toEqual(["Status", "Context", "Decision", "Consequences", "Evidence (paths)"]);
+
+    // DGM-3 / §6.3: the five diagram templates, once each after the second run, refreshed
+    // in place (same ids).
+    const diagramTemplates = await db
+      .select({ id: templates.id, subtype: templates.subtype })
+      .from(templates)
+      .where(eq(templates.kind, "diagram"))
+      .orderBy(asc(templates.subtype));
+    expect(diagramTemplates.map((row) => row.subtype)).toEqual([
+      "flow:auth",
+      "flow:outbox",
+      "flow:request",
+      "whiteboard:c4_container",
+      "whiteboard:system_context",
+    ]);
+    expect(second.templatesUpserted).toBe(22);
+    const third = await seed(db);
+    expect(third.templatesUpserted).toBe(22);
+    const again = await db
+      .select({ id: templates.id, subtype: templates.subtype })
+      .from(templates)
+      .where(eq(templates.kind, "diagram"))
+      .orderBy(asc(templates.subtype));
+    expect(again).toEqual(diagramTemplates);
   });
 });

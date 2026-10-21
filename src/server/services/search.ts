@@ -1,6 +1,8 @@
 import { and, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { DIAGRAM_KIND_LABELS, DIAGRAM_KINDS } from "@/lib/diagrams/constants";
+import { diagramPath } from "@/lib/diagrams/links";
 import { docPath } from "@/lib/docs/views";
 import { formatIssueKey, issuePath, parseIssueKey } from "@/lib/issues/keys";
 import {
@@ -16,7 +18,7 @@ import { type AppDatabase } from "@/server/db/types";
 import { rowsOf } from "./sql";
 
 /**
- * SRCH-1/2 global search over issues, docs and comments with Postgres full-text search
+ * SRCH-1/2 global search over issues, docs, diagrams and comments with Postgres full-text search
  * (`websearch_to_tsquery`, so "quoted phrases", `or` and `-word` work), ranked with
  * `ts_rank` over the GIN-indexed generated `search` columns. Soft-deleted rows, and comments
  * on deleted issues or docs, never appear.
@@ -139,6 +141,37 @@ export function createSearchService(db: AppDatabase) {
     }));
   }
 
+  /** Diagrams by title and labels (`scene_text`); the kind is the hit's context (§5.7). */
+  async function searchDiagrams(query: string): Promise<SearchHit[]> {
+    const result = await db.execute(sql`
+      WITH q AS (SELECT websearch_to_tsquery('english', ${query}) AS query)
+      SELECT g.id::text AS id, g.title, g.kind::text AS kind, p.key AS project_key,
+        CASE WHEN g.scene_text <> '' THEN ${headline("left(g.scene_text, 20000)")} END AS snippet
+      FROM q, diagrams g JOIN projects p ON p.id = g.project_id
+      WHERE g.deleted_at IS NULL AND g.search @@ q.query AND ${indexable}
+      ORDER BY ts_rank(g.search, q.query) DESC, g.updated_at DESC
+      LIMIT ${SEARCH_GROUP_LIMIT}
+    `);
+    const rows = rowsOf(
+      result,
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        kind: z.enum(DIAGRAM_KINDS),
+        project_key: z.string(),
+        snippet: z.string().nullable(),
+      }),
+    );
+    return rows.map((row) => ({
+      kind: "diagram",
+      id: row.id,
+      href: diagramPath(row.project_key, row.id),
+      title: row.title,
+      context: DIAGRAM_KIND_LABELS[row.kind],
+      snippet: snippetOf(row.snippet),
+    }));
+  }
+
   async function searchComments(query: string): Promise<SearchHit[]> {
     // A comment is shown only while the issue or doc it belongs to is live too.
     const result = await db.execute(sql`
@@ -206,13 +239,20 @@ export function createSearchService(db: AppDatabase) {
     /** `query` is already trimmed and length-checked by `searchInput`. */
     async search(query: string): Promise<SearchResults> {
       if (!query) return EMPTY_RESULTS;
-      const [jump, issueHits, docHits, commentHits] = await Promise.all([
+      const [jump, issueHits, docHits, diagramHits, commentHits] = await Promise.all([
         jumpTo(query),
         searchIssues(query),
         searchDocs(query),
+        searchDiagrams(query),
         searchComments(query),
       ]);
-      return { jump, issues: issueHits, docs: docHits, comments: commentHits };
+      return {
+        jump,
+        issues: issueHits,
+        docs: docHits,
+        diagrams: diagramHits,
+        comments: commentHits,
+      };
     },
   };
 }

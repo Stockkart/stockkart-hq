@@ -25,6 +25,9 @@ export const SPRINTS = "/[projectKey]/sprints";
 export const SPRINT_PAGE = "/[projectKey]/sprints/[sprintId]";
 /** The signed-in user's profile (GitHub username, GH-4). */
 export const PROFILE = "/settings/profile";
+/** DGM-*: the diagram grid and one diagram's editor (title, versions, Linked panel). */
+export const DIAGRAMS = "/[projectKey]/diagrams";
+export const DIAGRAM_PAGE = "/[projectKey]/diagrams/[id]";
 
 /** Every page that lists or shows issue fields. */
 export const ISSUE_VIEWS = [ISSUE_LIST, ISSUE_PAGE, BACKLOG, BOARD, MY_WORK] as const;

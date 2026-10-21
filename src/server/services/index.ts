@@ -1,6 +1,9 @@
 import { db, read, runAtomic } from "@/server/db/client";
+import { storage } from "@/server/storage";
 
 import { createCommentService } from "./comments";
+import { createDiagramQueries } from "./diagram-queries";
+import { createDiagramService } from "./diagrams";
 import { createDocQueries } from "./doc-queries";
 import { createDocService } from "./docs";
 import { createFileQueries } from "./files";
@@ -36,3 +39,5 @@ export const githubQueries = createGithubQueries(db, { read });
 export const profileService = createProfileService(db, { read });
 export const fileQueries = createFileQueries(db, { read });
 export const notificationService = createNotificationService(db);
+export const diagramService = createDiagramService(db, { runAtomic, read, storage });
+export const diagramQueries = createDiagramQueries(db, { read });
