@@ -57,6 +57,17 @@ describe("shouldIgnoreShortcut (SPEC §9.5)", () => {
         return button;
       },
     ],
+    [
+      "the Excalidraw whiteboard (its own ? help and tool keys)",
+      () => {
+        const board = document.createElement("div");
+        board.className = "excalidraw";
+        const canvas = document.createElement("canvas");
+        board.append(canvas);
+        document.body.append(board);
+        return canvas;
+      },
+    ],
   ])("ignores keys typed in %s", (_label, make) => {
     const target = make();
     if (!target.isConnected) document.body.append(target);
