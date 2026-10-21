@@ -1,6 +1,7 @@
 import { mergeRegistries } from "@/lib/registry";
 
 import { calloutRenderers, mermaidRenderers, tableRenderers } from "./doc-blocks";
+import { mentionRenderers } from "./mentions";
 import { type NodeRenderer, type NodeRenderers } from "./types";
 
 /**
@@ -13,6 +14,7 @@ const RENDERERS: readonly NodeRenderers[] = [
   tableRenderers,
   calloutRenderers,
   mermaidRenderers,
+  mentionRenderers,
   // P1 slices add one line each, e.g. mentionRenderers, imageRenderers, diagramEmbedRenderers.
 ];
 

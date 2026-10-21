@@ -13,15 +13,20 @@ describe("editor feature registry", () => {
       "callout",
       "table",
       "mermaid",
+      "mention",
     ]);
-    expect(featuresFor("issue")).toEqual([]);
-    expect(featuresFor("comment")).toEqual([]);
+    // @mentions (ISS-7, DOC-9) are in every editor.
+    expect(featuresFor("issue").map((feature) => feature.name)).toEqual(["mention"]);
+    expect(featuresFor("comment").map((feature) => feature.name)).toEqual(["mention"]);
     expect(featureExtensions({ variant: "doc", projectKeys: [] }).map((e) => e.name)).toEqual([
       "callout",
       "tableKit",
       "mermaid",
+      "mention",
     ]);
-    expect(featureExtensions({ variant: "issue", projectKeys: [] })).toEqual([]);
+    expect(featureExtensions({ variant: "issue", projectKeys: [] }).map((e) => e.name)).toEqual([
+      "mention",
+    ]);
   });
 
   it("builds the same doc toolbar groups as before the registry", () => {
@@ -33,26 +38,26 @@ describe("editor feature registry", () => {
   });
 
   it("adds a new feature from one registry entry", () => {
-    const mention: EditorFeature = {
-      name: "mention",
+    const sample: EditorFeature = {
+      name: "sample",
       variants: ["issue", "comment", "doc"],
       extensions: ({ projectKeys }) => [
-        Node.create({ name: `mention${projectKeys.length}`, inline: true, group: "inline" }),
+        Node.create({ name: `sample${projectKeys.length}`, inline: true, group: "inline" }),
       ],
       insertButtons: [
-        { label: "Mention", icon: AtSign, isActive: () => false, run: () => undefined },
+        { label: "Sample", icon: AtSign, isActive: () => false, run: () => undefined },
       ],
     };
-    const features = [...EDITOR_FEATURES, mention];
-    expect(featureExtensions({ variant: "comment", projectKeys: ["STK"] }, features)).toHaveLength(
-      1,
-    );
-    expect(labels(featureToolbarGroups("comment", features))).toEqual([["Mention"]]);
+    const features = [...EDITOR_FEATURES, sample];
+    expect(
+      featureExtensions({ variant: "comment", projectKeys: ["STK"] }, features).map((e) => e.name),
+    ).toEqual(["mention", "sample1"]);
+    expect(labels(featureToolbarGroups("comment", features))).toEqual([["Sample"]]);
     expect(labels(featureToolbarGroups("doc", features))[0]).toEqual([
       "Callout",
       "Insert table",
       "Mermaid diagram",
-      "Mention",
+      "Sample",
     ]);
   });
 });
