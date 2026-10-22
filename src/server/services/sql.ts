@@ -112,6 +112,58 @@ export function mentionSyncStatement(input: Parameters<typeof mentionSyncCtes>[0
   return sql`WITH ${mentionSyncCtes(input)} SELECT 1 AS synced`;
 }
 
+/**
+ * The @user counterpart of `mentionSyncCtes` (ISS-7, DOC-9): makes the entity's `mention`
+ * links with `to_type = 'user'` match `userIds` (see `extractUserMentionIds`). The CTE names
+ * differ from the issue ones, so both can sit in one statement, and the same rules apply
+ * (inline only into the statement that creates the entity; `userMentionSyncStatement`
+ * after an edit).
+ *
+ *   user_mention_targets  the mentioned users that exist
+ *   user_mention_removed  links to users no longer mentioned
+ *   user_mention_added    links to newly mentioned users, RETURNING `user_id`, so the
+ *                         caller notifies only people who were not mentioned before (NTF-1)
+ */
+export function userMentionSyncCtes(input: {
+  fromType: EntityType;
+  fromId: string;
+  userIds: readonly string[];
+  actorId: string | null;
+  gate: SQL;
+}): SQL {
+  const ids = JSON.stringify(input.userIds);
+  return sql`
+    user_mention_targets AS (
+      SELECT u.id
+      FROM users u
+      WHERE u.id IN (SELECT value::uuid FROM jsonb_array_elements_text(${ids}::jsonb))
+    ),
+    user_mention_removed AS (
+      DELETE FROM entity_links
+      WHERE from_type = ${input.fromType}::entity_type AND from_id = ${input.fromId}::uuid
+        AND to_type = 'user' AND origin = 'mention'
+        AND to_id NOT IN (SELECT id FROM user_mention_targets)
+        AND ${input.gate}
+    ),
+    user_mention_added AS (
+      INSERT INTO entity_links (from_type, from_id, to_type, to_id, origin, created_by)
+      SELECT ${input.fromType}::entity_type, ${input.fromId}::uuid, 'user', id, 'mention',
+        ${input.actorId}::uuid
+      FROM user_mention_targets
+      WHERE ${input.gate}
+      ON CONFLICT DO NOTHING
+      RETURNING to_id AS user_id
+    )`;
+}
+
+/** `userMentionSyncCtes` as a statement of its own; its rows are the newly mentioned users. */
+export function userMentionSyncStatement(input: Parameters<typeof userMentionSyncCtes>[0]): SQL {
+  return sql`WITH ${userMentionSyncCtes(input)} SELECT user_id FROM user_mention_added`;
+}
+
+/** Row shape of `userMentionSyncStatement` (parse with `rowsOf`). */
+export const userMentionAddedRow = z.object({ user_id: z.string() });
+
 /** Issue references in a document's text, ignoring code (ISS-7). */
 export function docRefs(doc: RichTextDoc | null, projectKeys: readonly string[]): IssueRef[] {
   return doc ? extractIssueRefs(extractPlainText(doc, { skipCode: true }), projectKeys) : [];

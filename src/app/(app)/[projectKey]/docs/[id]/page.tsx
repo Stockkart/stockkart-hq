@@ -2,12 +2,15 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 
+import { AttachmentsPanel } from "@/features/attachments/attachments-panel";
+import { AttachmentUploadProvider } from "@/features/attachments/upload-context";
 import { DocEditor } from "@/features/docs/doc-editor";
 import { docTree } from "@/features/docs/doc-route";
 import { requireProject, resolveProjectKey } from "@/features/issue/project-route";
 import { requirePageSession } from "@/server/auth/require-session";
-import { docQueries, issueQueries } from "@/server/services";
+import { docQueries, fileQueries, issueQueries } from "@/server/services";
 import { projectIdByKey } from "@/server/services/sql";
+import { storageConfigured } from "@/server/storage";
 
 interface Props {
   params: Promise<{ projectKey: string; id: string }>;
@@ -23,7 +26,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 /** §5.5 doc editor at `/STK/docs/<id>`. */
 export default async function DocPage({ params }: Props) {
   // Layouts and pages render in parallel, so each page checks the session itself too.
-  await requirePageSession();
+  const session = await requirePageSession();
   const { projectKey, id } = await params;
   const parsed = docId.safeParse(id);
   if (!parsed.success) notFound();
@@ -33,7 +36,7 @@ export default async function DocPage({ params }: Props) {
   // ONE round trip for the page and the docs layout: every query takes the project by key
   // and the doc by its id, so none waits for another. Rows for a doc that turns out not to
   // exist (or to be in another project) are simply not rendered: the page 404s.
-  const [, doc, ancestors, linkedIssues, versions, users, projectKeys, adrs, tree] =
+  const [, doc, ancestors, linkedIssues, versions, users, projectKeys, adrs, tree, attachments] =
     await Promise.all([
       requireProject(key),
       docQueries.getDoc(projectId, docUuid),
@@ -44,21 +47,36 @@ export default async function DocPage({ params }: Props) {
       issueQueries.listProjectKeys(),
       docQueries.supersedeOptions(projectId, docUuid),
       docTree(key),
+      // ISS-9 attachments panel; same batch.
+      fileQueries.listAttachments("doc", docUuid),
     ]);
   if (!doc) notFound();
+  const storageReady = storageConfigured();
+  const target = { entityType: "doc", entityId: doc.id } as const;
 
   return (
-    <DocEditor
-      // A different doc is a different editor (fresh autosave state and version).
-      key={doc.id}
-      doc={doc}
-      ancestors={ancestors}
-      linkedIssues={linkedIssues}
-      versions={versions}
-      users={users}
-      projectKeys={projectKeys}
-      adrs={adrs}
-      childCount={tree.filter((item) => item.parentId === doc.id).length}
-    />
+    // Files pasted or dropped into the doc attach to it (ISS-9).
+    <AttachmentUploadProvider target={target} storageReady={storageReady}>
+      <DocEditor
+        // A different doc is a different editor (fresh autosave state and version).
+        key={doc.id}
+        doc={doc}
+        ancestors={ancestors}
+        linkedIssues={linkedIssues}
+        versions={versions}
+        users={users}
+        projectKeys={projectKeys}
+        adrs={adrs}
+        childCount={tree.filter((item) => item.parentId === doc.id).length}
+        attachmentsPanel={
+          <AttachmentsPanel
+            target={target}
+            attachments={attachments}
+            currentUserId={session.user.id}
+            storageReady={storageReady}
+          />
+        }
+      />
+    </AttachmentUploadProvider>
   );
 }

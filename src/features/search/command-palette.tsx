@@ -9,6 +9,7 @@ import {
   FileText,
   type LucideIcon,
   MessageSquare,
+  Network,
   Plus,
   Search,
 } from "lucide-react";
@@ -18,6 +19,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { NewAdrDialog, NewDocDialog } from "@/features/docs/doc-dialogs";
 import { openQuickCreate } from "@/features/issue/quick-create-events";
+import { matchesShortcut } from "@/features/shell/shortcuts";
 import { type IssueType } from "@/lib/issues/constants";
 import { issuePathForKey, parseIssueKey, PROJECT_KEY_PATTERN } from "@/lib/issues/keys";
 import {
@@ -49,6 +51,7 @@ interface Group {
 const HIT_ICONS: Record<SearchHit["kind"], LucideIcon> = {
   issue: CircleDot,
   doc: FileText,
+  diagram: Network,
   comment: MessageSquare,
 };
 
@@ -72,6 +75,7 @@ function staticActions(projectKey: string): Option[] {
     go("Go to Issues", `/${projectKey}/issues`),
     go("Go to Docs", `/${projectKey}/docs`),
     go("Go to ADRs", `/${projectKey}/adrs`),
+    go("Go to Diagrams", `/${projectKey}/diagrams`),
     go("Go to My Work", "/my-work"),
     go("Go to Todos", "/todos"),
   ];
@@ -116,7 +120,7 @@ export function CommandPalette({ defaultProjectKey }: { defaultProjectKey: strin
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key.toLowerCase() !== "k" || !(event.metaKey || event.ctrlKey)) return;
+      if (!matchesShortcut(event, "search") || !(event.metaKey || event.ctrlKey)) return;
       if (event.altKey || event.shiftKey) return;
       event.preventDefault();
       toggleRef.current();
@@ -195,6 +199,7 @@ export function CommandPalette({ defaultProjectKey }: { defaultProjectKey: strin
   const hitGroups: [string, string, SearchHit[]][] = [
     ["issues", "Issues", data.issues],
     ["docs", "Docs", data.docs],
+    ["diagrams", "Diagrams", data.diagrams],
     ["comments", "Comments", data.comments],
   ];
   for (const [id, label, hits] of hitGroups) {
@@ -308,8 +313,8 @@ export function CommandPalette({ defaultProjectKey }: { defaultProjectKey: strin
         <DialogContent className="gap-0 p-0 sm:max-w-xl">
           <DialogTitle className="sr-only">Search or jump to</DialogTitle>
           <DialogDescription className="sr-only">
-            Type to search issues, docs and comments, or an issue key such as STK-12. Use the arrow
-            keys to choose and Enter to open.
+            Type to search issues, docs, diagrams and comments, or an issue key such as STK-12. Use
+            the arrow keys to choose and Enter to open.
           </DialogDescription>
           <div className="flex items-center gap-2 border-b px-3">
             <Search aria-hidden="true" className="size-4 text-muted-foreground" />

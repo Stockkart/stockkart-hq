@@ -44,8 +44,22 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 const metaSchema = z
-  .object({ name: z.string().optional(), relation: z.enum(LINK_RELATIONS).optional() })
+  .object({
+    name: z.string().optional(),
+    relation: z.enum(LINK_RELATIONS).optional(),
+    /** Why a settings change or a restore touched the issue (PRJ-3, ISS-13). */
+    reason: z.string().optional(),
+    /** The name of a status or component deleted in project settings. */
+    fromName: z.string().optional(),
+  })
   .catch({});
+
+const REASON_NOTES: Record<string, string> = {
+  status_deleted: "its status was deleted in project settings",
+  component_deleted: "the component was deleted in project settings",
+  label_deleted: "the label was deleted in project settings",
+  parent_deleted: "restored from the trash while its parent is deleted",
+};
 
 /** GH-3 activity: written by the webhook with `actor_id` null and this meta. */
 const githubMetaSchema = z.object({
@@ -107,10 +121,24 @@ export function describeActivity(entry: ActivityView, lookups: ActivityLookups):
       return { verb: "created the issue", from: null, to: null };
     case "deleted":
       return { verb: "deleted the issue", from: null, to: null };
+    case "restored":
+      return { verb: "restored the issue from the trash", from: null, to: null };
     case "label_added":
       return { verb: "added label", from: null, to: meta.name ?? null };
     case "label_removed":
-      return { verb: "removed label", from: meta.name ?? null, to: null };
+      return {
+        verb: "removed label",
+        from: meta.name ?? null,
+        to: null,
+        note:
+          meta.reason && Object.hasOwn(REASON_NOTES, meta.reason)
+            ? REASON_NOTES[meta.reason]
+            : undefined,
+      };
+    case "attachment_added":
+      return { verb: "attached", from: null, to: meta.name ?? "a file" };
+    case "attachment_removed":
+      return { verb: "removed attachment", from: meta.name ?? "a file", to: null };
     case "link_added":
     case "link_removed": {
       const other = entry.action === "link_added" ? entry.toValue : entry.fromValue;
@@ -123,10 +151,19 @@ export function describeActivity(entry: ActivityView, lookups: ActivityLookups):
       const field = entry.field ?? "";
       const label = FIELD_LABELS[field] ?? field;
       if (field === "description") return { verb: "updated the description", from: null, to: null };
+      // A status or component deleted since: its name was recorded with the change.
+      const deletedName =
+        meta.fromName && meta.reason && Object.hasOwn(REASON_NOTES, meta.reason)
+          ? `${meta.fromName} (deleted)`
+          : null;
       return {
         verb: `changed ${label}`,
-        from: display(field, entry.fromValue, lookups) ?? "none",
+        from: deletedName ?? display(field, entry.fromValue, lookups) ?? "none",
         to: display(field, entry.toValue, lookups) ?? "none",
+        note:
+          meta.reason && Object.hasOwn(REASON_NOTES, meta.reason)
+            ? REASON_NOTES[meta.reason]
+            : undefined,
       };
     }
     default:

@@ -3,7 +3,7 @@
 import { Copy, History, RefreshCw, Save, Trash2, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useState } from "react";
+import { type ReactNode, useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { matchesQuery, Select } from "@/components/ui/select";
 import { LazyRichTextEditor } from "@/features/editor/lazy-rich-text-editor";
 import { callAction } from "@/features/issue/client-utils";
 import { userOptions } from "@/features/issue/field-options";
+import { withoutPendingUploads } from "@/lib/attachments/nodes";
 import { splitAdrTitle } from "@/lib/docs/adr";
 import {
   ADR_STATUS_LABELS,
@@ -59,6 +60,8 @@ export interface DocEditorProps {
   linkedIssues: LinkedIssueView[];
   versions: DocVersionView[];
   childCount: number;
+  /** ISS-9 attachments panel, shown below the editor. */
+  attachmentsPanel?: ReactNode;
 }
 
 /** Issue references that count as mentions; a change means the Linked issues panel changed. */
@@ -84,7 +87,14 @@ async function saveRequest(docId: string, request: SaveRequest): Promise<SaveRes
   return { status: "conflict", latest: data.latest };
 }
 
-function SaveIndicator({ state, onRetry }: { state: SaverState; onRetry: () => void }) {
+/** "Saved · vN" and friends; shared with the diagram editor (DGM-4). */
+export function SaveIndicator({
+  state,
+  onRetry,
+}: {
+  state: SaverState<unknown>;
+  onRetry: () => void;
+}) {
   const text: Record<SaverState["status"], string> = {
     saved: `Saved · v${state.version}`,
     dirty: "Unsaved changes",
@@ -116,7 +126,8 @@ export function ConflictBanner({
   onKeepMine,
   onCopyMine,
 }: {
-  conflict: ConflictInfo;
+  /** Docs and diagrams (DGM-4) share the banner; only these fields are shown. */
+  conflict: ConflictInfo<unknown>;
   onReload: () => void;
   onKeepMine: () => void;
   onCopyMine: () => void;
@@ -159,6 +170,7 @@ export function DocEditor({
   linkedIssues,
   versions,
   childCount,
+  attachmentsPanel,
 }: DocEditorProps) {
   const router = useRouter();
   const isAdr = doc.type === "adr";
@@ -375,8 +387,11 @@ export function DocEditor({
           label="Document"
           placeholder="Write the doc. Mention issues as STK-123."
           className="min-h-[60vh]"
-          onChange={(content) => saver.change({ content })}
+          // An upload placeholder is never saved; the finished image triggers its own change.
+          onChange={(content) => saver.change({ content: withoutPendingUploads(content) })}
         />
+
+        {attachmentsPanel}
       </div>
 
       <DocSidePanel

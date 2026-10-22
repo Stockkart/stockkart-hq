@@ -27,6 +27,7 @@ import {
 
 import { createCommentService } from "./comments";
 import { createDocQueries } from "./doc-queries";
+import { createFileQueries } from "./files";
 import { createGithubService } from "./github";
 import { createGithubQueries } from "./github-queries";
 import { createIssueQueries } from "./issue-queries";
@@ -412,8 +413,9 @@ describeDb("GitHub webhook (Postgres)", () => {
       issueQueries.listSubtaskParents(projectId, issueId),
       createDocQueries(db, options).docsLinkingTo(issueId),
       createGithubQueries(db, options).listDevelopment(issueId),
+      createFileQueries(db, options).listAttachments("issue", issueId),
     ]);
     expect(batches).toBe(1);
-    expect(results.at(-1)).toMatchObject({ branches: [{ name: `${issue.key.toLowerCase()}-x` }] });
+    expect(results.at(-2)).toMatchObject({ branches: [{ name: `${issue.key.toLowerCase()}-x` }] });
   });
 });

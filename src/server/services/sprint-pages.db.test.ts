@@ -5,9 +5,11 @@ import { createBatchedRead, type Read } from "@/server/db/read-batch";
 import { seed } from "@/server/db/seed";
 import { type AppDatabase, transactionRunner } from "@/server/db/types";
 import { createTestDatabase, createTestUser, describeDb, type TestDatabase } from "@/test/db";
+import { appLayoutReads } from "@/test/page-reads";
 
 import { createCommentService } from "./comments";
 import { createDocQueries } from "./doc-queries";
+import { createFileQueries } from "./files";
 import { createGithubQueries } from "./github-queries";
 import { createIssueQueries } from "./issue-queries";
 import { createIssueService } from "./issues";
@@ -15,6 +17,7 @@ import { createPlanningQueries } from "./planning-queries";
 import { createPlanningService } from "./planning";
 import { createSprintQueries } from "./sprint-queries";
 import { createSprintService } from "./sprints";
+import { createWatcherService } from "./watchers";
 import { issueIdByNumber, projectIdByKey } from "./sql";
 
 /**
@@ -51,12 +54,13 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
       commentService: createCommentService(db, { runAtomic: transactionRunner(db), read }),
       docQueries: createDocQueries(db, { read }),
       githubQueries: createGithubQueries(db, { read }),
+      fileQueries: createFileQueries(db, { read }),
+      watcherService: createWatcherService(db, { read }),
     };
   }
 
-  /** The app layout's reads (quick-create templates and sprint options). */
-  const layout = (s: ReturnType<typeof services>) =>
-    [s.issueQueries.issueTemplates(), s.sprintQueries.openSprintOptionsByProject()] as const;
+  /** The app layout's reads (templates, sprint options, sidebar views, the bell's count). */
+  const layout = (read: Read) => appLayoutReads(db, read, actor);
 
   beforeAll(async () => {
     testDb = await createTestDatabase();
@@ -96,7 +100,7 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
     const { read, trips } = counted();
     const s = services(read);
     await Promise.all([
-      ...layout(s),
+      ...layout(read),
       s.issueQueries.getProject("STK"),
       s.planningQueries.listIssues(projectId(), { ...options, scope: "planning" }),
       s.issueQueries.getProjectMeta(projectId()),
@@ -108,8 +112,8 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
   it.each(["board_sprint", "board"] as const)("board (%s): one round trip", async (scope) => {
     const { read, trips } = counted();
     const s = services(read);
-    const [, , , issues] = await Promise.all([
-      ...layout(s),
+    const [, , , , , issues] = await Promise.all([
+      ...layout(read),
       s.issueQueries.getProject("STK"),
       s.planningQueries.listIssues(projectId(), { ...options, scope }),
       s.issueQueries.getProjectMeta(projectId()),
@@ -123,7 +127,7 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
     const { read, trips } = counted();
     const s = services(read);
     await Promise.all([
-      ...layout(s),
+      ...layout(read),
       s.issueQueries.getProject("STK"),
       s.sprintQueries.listSprints(projectId()),
       s.sprintQueries.burndownInputs(
@@ -137,8 +141,8 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
   it("sprint page: one round trip", async () => {
     const { read, trips } = counted();
     const s = services(read);
-    const [, , , , inputs, issues] = await Promise.all([
-      ...layout(s),
+    const [, , , , , , inputs, issues] = await Promise.all([
+      ...layout(read),
       s.issueQueries.getProject("STK"),
       s.sprintQueries.listSprints(projectId()),
       s.sprintQueries.burndownInputs(projectId(), s.sprintQueries.oneSprint(projectId(), sprintId)),
@@ -149,12 +153,12 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
     expect(issues).toHaveLength(1);
   });
 
-  it("issue page (Sprint field and Development panel): one round trip", async () => {
+  it("issue page (Sprint field, Development, watchers, attachments): one round trip", async () => {
     const { read, trips } = counted();
     const s = services(read);
     const issueId = issueIdByNumber(projectId(), issueNumber);
-    const [, , , issue, meta] = await Promise.all([
-      ...layout(s),
+    const [, , , , , issue, meta] = await Promise.all([
+      ...layout(read),
       s.issueQueries.getProject("STK"),
       s.issueQueries.getIssue(projectId(), issueNumber),
       s.issueQueries.getProjectMeta(projectId()),
@@ -167,6 +171,8 @@ describeDb("round trips of the sprint-related pages (Postgres)", () => {
       s.issueQueries.listSubtaskParents(projectId(), issueId),
       s.docQueries.docsLinkingTo(issueId),
       s.githubQueries.listDevelopment(issueId),
+      s.watcherService.list(issueId),
+      s.fileQueries.listAttachments("issue", issueId),
     ]);
     expect(trips()).toBe(1);
     expect(issue?.sprintId).toBe(sprintId);

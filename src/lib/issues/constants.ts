@@ -72,7 +72,9 @@ export const LINK_RELATION_LABELS: Record<LinkRelation, string> = {
 
 /** `entity_links` / `comments` / `activity` polymorphic targets (SPEC §8). `user` is the
  * target of @mentions (ISS-7, DOC-9, MY-1). `sprint` is the subject of the sprint
- * lifecycle activity (SPR-1/2: `sprint_started` holds the burndown's start snapshot). */
+ * lifecycle activity (SPR-1/2: `sprint_started` holds the burndown's start snapshot).
+ * `attachment` is the subject of ISS-9 activity and notifications (added in migration 0004;
+ * Postgres enum values can only be appended, so keep new values at the end). */
 export const ENTITY_TYPES = [
   "issue",
   "doc",
@@ -81,6 +83,7 @@ export const ENTITY_TYPES = [
   "comment",
   "user",
   "sprint",
+  "attachment",
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 

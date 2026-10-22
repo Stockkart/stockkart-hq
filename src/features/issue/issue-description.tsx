@@ -2,10 +2,12 @@
 
 import { Pencil } from "lucide-react";
 import { useRef, useState, useTransition } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { LazyRichTextEditor } from "@/features/editor/lazy-rich-text-editor";
 import { RichTextView } from "@/features/editor/rich-text-view";
+import { hasPendingUploads, UPLOADS_RUNNING_MESSAGE } from "@/lib/attachments/nodes";
 import { isEmptyDoc, type RichTextDoc } from "@/lib/rich-text";
 import { updateIssueFieldAction } from "@/server/actions/issues";
 
@@ -40,6 +42,10 @@ export function IssueDescription({ issueId, description, projectKeys }: IssueDes
   }
 
   function save() {
+    if (hasPendingUploads(draft)) {
+      toast.error(UPLOADS_RUNNING_MESSAGE);
+      return;
+    }
     const next = draft && !isEmptyDoc(draft) ? draft : null;
     startTransition(async () => {
       const result = await callAction(() =>

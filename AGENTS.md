@@ -28,7 +28,13 @@ comments and commit bodies.
   `fractional-indexing` is CC0-1.0 (public domain dedication), accepted explicitly.
   DOMPurify is dual-licensed MPL-2.0 OR Apache-2.0; we use it under Apache-2.0. Recharts is
   MIT (its d3 parts via `victory-vendor` are ISC). mermaid stays
-  on 11.x while CI runs Node 20 (12.x needs Node 22).
+  on 11.x while CI runs Node 20 (12.x needs Node 22). `@aws-sdk/client-s3` and
+  `@aws-sdk/s3-request-presigner` (R2) are Apache-2.0; AWS SDK releases after early 2027
+  need Node 22, so they too stay pinned until CI drops Node 20.
+  Diagrams: `@excalidraw/excalidraw`, `@xyflow/react` and `@dagrejs/dagre` are MIT
+  (Excalidraw pulls in `pako` (MIT AND Zlib), `fractional-indexing` 3 (CC0-1.0) and old
+  Radix packages with React 18 peer ranges, which work on React 19). elkjs was not used
+  (EPL-2.0/GPL). Both canvases load only via `next/dynamic` on the diagram page.
 
 ## Layout
 
@@ -36,29 +42,44 @@ comments and commit bodies.
 src/
   app/(auth)/login/       login page + client form
   app/(app)/              signed-in app shell (layout calls requirePageSession); my-work/, todos/,
-                          settings/profile/
+                          notifications/, settings/profile/
   app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, backlog/, board/, docs/
                           (tree layout, list, docs/[id] editor), adrs/, sprints/ (list,
-                          sprints/[sprintId]), and a "coming soon" [section] placeholder for
+                          sprints/[sprintId]), diagrams/ (grid, diagrams/[id] editor), and a
+                          "coming soon" [section] placeholder for
                           the rest (roadmap, …)
   app/api/auth/           Auth.js route handlers
   app/api/webhooks/github GitHub org webhook (GH-1…GH-3): HMAC-verified, logic in server/github/
+  app/api/files/          authed file downloads (S-5): [id] (attachments) and
+                          thumbnail/diagram/[id]; 302 to a presigned R2 URL (≤ 5 min)
   proxy.ts                default-deny gate (Next.js 16 name for middleware.ts)
   env.ts                  Zod-validated server env (throws on import if invalid)
   server/auth/            Auth.js config, inventory-api client, rate limit, session policy
   server/actions/         server actions ("use server"), each starting with requireSession()
-  server/services/        DB logic as factories (createIssueService(db) …); index.ts wires db
+  server/services/        DB logic as factories (createIssueService(db) …); index.ts wires db;
+                          notifications.ts: notify() and the in-statement notification
+                          CTEs (NTF-1); watchers.ts (ISS-11); mentions.ts (MY-1)
+  server/storage/         private R2 bucket (S-5): presigned upload/download, key layout,
+                          fail-closed StorageNotConfigured; index.ts wires env
   server/db/              Drizzle schema, client, seed, AppDatabase type
   server/import/          handbook import (IMP-1…3), driven by scripts/import-handbook.ts
   server/github/          webhook: signature check, Zod payloads, pure event → plan rules
                           (services/github.ts applies a plan in ONE statement, deduped by
                           delivery id; never add a webhook write outside that statement)
   lib/                    isomorphic code: constants, Zod input schemas, keys, rich text,
-                          markdown → editor JSON (lib/markdown)
+                          markdown → editor JSON (lib/markdown), upload policy
+                          (lib/attachments/policy.ts), @user mentions (lib/mentions.ts),
+                          plain-text rules per editor node (lib/rich-text-nodes/)
   features/               feature UI (shell/, issue/, planning/, sprints/, todos/, search/,
-                          docs/, editor/)
-  features/editor/        shared Tiptap editor (client-only; `variant="doc"` adds tables,
-                          callouts and Mermaid blocks) and the safe JSON renderer
+                          docs/, editor/, notifications/, diagrams/, settings/project/ (PRJ-3), views/
+                          (VW-3 saved views), bulk/ (ISS-12 selection + bulk bar), trash/
+                          (ISS-13))
+  features/shell/shortcuts.ts  the one keyboard-shortcut registry (§9.5): handlers match
+                          keys with `matchesShortcut`, the `?` dialog lists it; add new
+                          shortcuts there
+  features/editor/        shared Tiptap editor (client-only; variants `issue`, `comment`,
+                          `doc`), its feature registry (extensions/) and the safe JSON
+                          renderer with its node registry (renderers/)
   components/ui/          shadcn/ui components (owned code, edit freely)
   test/                   test fakes and the DB-test helpers
 drizzle/                  generated SQL migrations (committed)
@@ -91,6 +112,52 @@ e2e/                      Playwright smoke tests
   `recent_views` for MY-1 …), plus `entity_type = 'user'` for @mentions and
   `docs.source_path` for re-runnable imports. Phase 1 slices must not need a migration;
   later phases add their own tables.
+- Migration `0004_p1_foundation` holds the schema of the P1 slices, so **they add no
+  migration** (talk to the owner first if one seems needed):
+  - `watchers` (issue_id, user_id; PK both; ISS-11) and `notifications` (recipient
+    `user_id`, `type` enum, entity_type/entity_id, `actor_id`, `meta`, `read_at`; NTF-1).
+    `notifications.dedupe_key` is unique and nullable: write `<event>:<userId>` and
+    `ON CONFLICT DO NOTHING` so retries never duplicate. Only `read_at` changes, so no
+    `updated_at`. Prefer writing them in the statement of the change itself:
+    `notificationsInsert` (a CTE body; drops the actor, dedupes),
+    `userMentionNotifyCtes`/`userMentionNotifyStatement` (the @mention sync plus a bell entry
+    for exactly the newly mentioned users) and `watcherStatusNotifications`. Otherwise call
+    `notifySafely(notificationService.notify, …)` after your write: it logs and swallows a
+    failure, so a notification never fails the user's action. Watchers are added by the
+    writes that make someone reporter, assignee or commenter (ISS-11). A mention's event
+    is its entity (`mention:<type>:<id>`), so removing someone and adding them back (e.g.
+    while a doc autosaves) does not notify them twice; this is deliberate. The bell's
+    unread count comes with the app layout's batch and does not poll: it is current after
+    a full page load, a mutation that refreshes the page, or opening the bell, but not
+    after a client-side navigation (layouts do not re-render then). Do not "fix" that
+    with polling, which would keep Neon's compute awake.
+  - `saved_views` (VW-3): user, project, name (unique per user and project), `filter` jsonb
+    (the URL filter shape), `shared`, fractional `position`.
+  - `attachments` (ISS-9): entity_type `issue|comment|doc`, `storage_key` (unique),
+    filename, mime, `size_bytes` (CHECK 1 B…10 MB), width/height, uploader, `status`
+    `pending|ready`, soft delete. Serve only `ready`, undeleted rows, via `/api/files/[id]`.
+  - `diagrams` (DGM-1…7) and `diagram_versions` (DGM-4): like docs (optimistic `version`,
+    fractional `position`, `scene_text` → generated `search` + GIN, soft delete), plus
+    `kind` `whiteboard|flow`, `thumbnail_key`, `template_id`. CHECK
+    `octet_length(scene::text) < 2 MB` (`DIAGRAM_SCENE_MAX_BYTES`) on both tables; validate
+    input as `JSON.stringify(scene)` ≤ `DIAGRAM_SCENE_INPUT_MAX_BYTES` (1.5 MB, headroom for
+    jsonb's wider text form). Search indexes the first 200 000 characters of `scene_text`.
+  - `attachments.storage_key` and `diagrams.thumbnail_key` have CHECKs for the exact key
+    layouts (`attachmentKey`, `diagramThumbnailKey`).
+  - Diagram templates are `templates` rows with `kind = 'diagram'` and
+    `subtype = '<whiteboard|flow>:<slug>'` (one built-in per subtype); `content` is a scene.
+    Docs embed diagrams with the `diagramEmbed` node; backlinks are found in the doc JSON
+    at read time (`diagramQueries.links`), so doc saves keep no diagram links in sync.
+    Whiteboard images stay disabled until diagram files get an R2 key layout.
+  - `projects.default_assignee_id` (PRJ-3), `users.notify_email` (NTF-2, default off),
+    `entity_type = 'attachment'`. That enum value is added in 0004 inside the migration
+    transaction, so no later SQL migration may use `'attachment'` (default, index predicate,
+    CHECK, backfill) until 0004 is applied everywhere on its own; a fresh database that
+    applies both at once would fail. App queries may use it freely.
+- @user mentions: `extractUserMentionIds(doc)` (`lib/mentions.ts`) reads `mention` nodes;
+  `userMentionSyncCtes` / `userMentionSyncStatement` (`services/sql.ts`) keep the
+  `to_type = 'user'` mention links in sync, like the issue-key ones, and RETURN the newly
+  mentioned users so only they are notified.
 - Shared vocabularies (issue types, statuses, doc types …) live in `src/lib/**/constants.ts`
   and feed both the `pgEnum`s and the Zod schemas. Adding an enum value needs a migration.
 - Soft delete: tables with `deleted_at` are never hard-deleted by the app; every read
@@ -110,13 +177,66 @@ e2e/                      Playwright smoke tests
   ISO dates) in the same statement as the change; the UI resolves names. The sprint
   burndown and velocity (SPR-3/4, `lib/sprints/burndown.ts`) replay the `sprint`, `status`
   and `storyPoints` rows, so every write of those fields must log them; sprint lifecycle
-  events use `entity_type = 'sprint'` (`sprint_started.meta` is the start snapshot).
+  events use `entity_type = 'sprint'` (`sprint_started.meta` is the start snapshot). They
+  also replay `deleted`/`restored` (trash, ISS-13), and the `status_deleted` /
+  `status_category_changed` notes the project settings write on every started sprint
+  (`SPRINT_ACTIONS`), so a workflow change never rewrites a past sprint.
+- Workflow writes (`services/project-settings.ts`) run under the per-project advisory lock
+  `hq.workflow:<projectId>` as a `RunAtomic`; keep the rules "one status per category" and
+  "one default per kind" there. "Won't Do" is recognised by name (velocity, GH-3), so it
+  cannot be renamed.
 - Rich text is stored as editor JSON (`RichTextDoc`, validated by `richTextDocSchema`) plus
   plain text. Render it with `RichTextView`; never render stored HTML.
 - Docs use optimistic locking (§7.4): a content save is `UPDATE … WHERE version = base`
   (`saveDoc` in `services/docs.ts`); losing returns the winner's copy, never overwrites.
   Tree moves and deletes take a per-project advisory lock in the same transaction, so the
   cycle check sees the tree as it is. Mermaid SVG is inserted only after DOMPurify (S-8).
+
+## File storage (R2)
+
+- Use only `@/server/storage` (server-only; it imports `@/env`). Never build an R2 or
+  public URL yourself, and never make the bucket or an object public (S-5).
+- Keys come from `attachmentKey(filename)` / `diagramThumbnailKey(id)`; every storage call
+  refuses any other key (`isAppKey`), so `backups/` and `tmp/` (the workflow's) are never
+  signed or touched by the app, even from a bad DB row.
+- Pick the stored type with `classifyUpload(mime, filename).contentType` and pass exactly
+  that to `presignUpload`/`putObject` (anything else is refused). Size limit 10 MB
+  (`MAX_ATTACHMENT_BYTES`). The client's mime type and name are untrusted.
+- Upload flow: insert a `pending` attachment row → `presignUpload` → the browser PUTs to
+  R2 → a server action `headObject`s it, checks size and type, and sets `ready`. A signed
+  PUT stays usable for its 5 minutes, so the uploader could replace the object with another
+  of the same type and size until then; do not treat the bytes as immutable before that.
+- Catch `StorageNotConfigured` and show `STORAGE_NOT_CONFIGURED_MESSAGE`. Tests inject a
+  transport (`createStorage(config, () => fakeTransport)`); presigning is local and needs
+  no network.
+- Attachments (ISS-9) are implemented in `services/attachments.ts` (start / confirm /
+  cancel / soft delete by the uploader / comment adoption / pending purge) and
+  `actions/attachments.ts`. Downloads and the panel only see `ready` files of a live
+  parent (`liveAttachmentParent`). UI: `features/attachments/` (panel, upload client,
+  image downscaling); editor nodes `image` / `fileAttachment` via the registries. Wrap an
+  editor in `AttachmentUploadProvider` (target entity + `storageReady`) to enable paste and
+  drop; a new comment's files go to its issue (`draft`: no page refresh) and move onto the
+  comment once it is posted. Saving is blocked while an upload placeholder is in the doc
+  (`hasPendingUploads`); doc autosave strips placeholders (`withoutPendingUploads`).
+
+## Adding an editor node
+
+The editor, the plain-text extractor and the read-only renderer each have a registry, so
+a feature adds files of its own plus ONE line per registry (no edits to the shared files):
+
+1. `src/features/editor/extensions/<feature>.ts`: export an `EditorFeature` (`name`,
+   `variants` among `issue`/`comment`/`doc`, `extensions(context)`, optional
+   `insertButtons` / `toolbarGroups`), and add it to `EDITOR_FEATURES` in
+   `extensions/index.ts`. Client-only code (node views, suggestion popups) lives next to it.
+2. `src/lib/rich-text-nodes/<feature>.ts`: export `PlainTextRules` for the node types
+   (`block`, `code`, `text(node)` for text held in attrs) and add them to `RULES` in
+   `rich-text-nodes/index.ts`, so search and `STK-123` extraction see the node.
+3. `src/features/editor/renderers/<feature>.tsx`: export `NodeRenderers` (React elements
+   only, validate every attr, no "use client") and add them to `RENDERERS` in
+   `renderers/index.ts`. Unregistered types render only their children.
+4. Test the three pieces next to their files. The existing doc blocks (`doc-blocks.ts[x]`
+   in each folder: callout, table, Mermaid) are the reference. Registering a node type or
+   feature name twice throws at load (`mergeRegistries`), so a merge collision fails tests.
 
 ## Adding a server action
 

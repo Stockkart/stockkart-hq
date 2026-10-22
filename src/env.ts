@@ -54,11 +54,26 @@ export const envSchema = z.object({
     .url()
     .optional()
     .or(z.literal("").transform(() => undefined)),
-  // Later phases (attachments, backups). Optional for now.
-  R2_ACCOUNT_ID: optionalString,
+  // Cloudflare R2 (attachments, diagram thumbnails; the backup workflow uses GitHub secrets).
+  // All optional: without the full set, `storageConfigured()` is false and every storage
+  // call throws `StorageNotConfigured` (fail closed). Formats are checked only when set.
+  R2_ACCOUNT_ID: optionalString.pipe(
+    z
+      .string()
+      .regex(/^[0-9a-f]{32}$/, "R2_ACCOUNT_ID must be the 32-character Cloudflare account id")
+      .optional(),
+  ),
   R2_ACCESS_KEY_ID: optionalString,
   R2_SECRET_ACCESS_KEY: optionalString,
-  R2_BUCKET: optionalString,
+  R2_BUCKET: optionalString.pipe(
+    z
+      .string()
+      .regex(
+        /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/,
+        "R2_BUCKET must be 3–63 lowercase letters, digits or hyphens",
+      )
+      .optional(),
+  ),
   // GH-1 webhook HMAC secret (`openssl rand -hex 32`). Optional so the app starts without
   // it, but the webhook then FAILS CLOSED: it answers 503 and accepts nothing.
   GITHUB_WEBHOOK_SECRET: optionalString,

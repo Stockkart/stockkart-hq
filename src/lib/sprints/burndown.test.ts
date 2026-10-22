@@ -334,3 +334,82 @@ describe("computeVelocity (SPR-4)", () => {
     ]);
   });
 });
+
+describe("burndown after workflow changes and restores (PRJ-3, ISS-13)", () => {
+  it("counts a status by the category it had at the time", () => {
+    const closed = timeline({ closedAt: at(5, 18) });
+    // "review" was open during the sprint and became done-category on June 8.
+    const kinds = new Map<string, StatusKind>([...statusKinds, ["review", "done"]]);
+    const before: BurndownData = {
+      issues: [issue("a", { statusId: "review", points: 5 })],
+      changes: [],
+      statusKinds: kinds,
+      statusKindChanges: [{ statusId: "review", at: at(8), from: "open" }],
+    };
+    expect(computeVelocity([closed], before)[0]?.completed).toBe(0);
+    expect(remainingByDay(computeBurndown(closed, before, AFTER))).toEqual([5, 5, 5, 5, 5]);
+    // Without the note, today's category would rewrite the closed sprint.
+    const rewritten = { ...before, statusKindChanges: [] };
+    expect(computeVelocity([closed], rewritten)[0]?.completed).toBe(5);
+  });
+
+  it("leaves out the days an issue spent in the trash, after a restore", () => {
+    const result = computeBurndown(
+      timeline(),
+      data(
+        [issue("a", { points: 4 }), issue("b", { points: 2 })],
+        [
+          change("a", at(2), "deleted", "false", "true"),
+          change("a", at(4), "deleted", "true", "false"),
+        ],
+      ),
+      AFTER,
+    );
+    expect(remainingByDay(result)).toEqual([6, 2, 2, 6, 6]);
+  });
+
+  it("counts a deleted (never restored) issue until its delete, and repeated cycles", () => {
+    const deletedAt = at(3);
+    const once = computeBurndown(
+      timeline(),
+      data(
+        [issue("a", { points: 4, deletedAt }), issue("b", { points: 2 })],
+        [change("a", deletedAt, "deleted", "false", "true")],
+      ),
+      AFTER,
+    );
+    expect(remainingByDay(once)).toEqual([6, 6, 2, 2, 2]);
+
+    const twice = computeBurndown(
+      timeline(),
+      data(
+        [issue("a", { points: 4, deletedAt: at(5) })],
+        [
+          change("a", at(2), "deleted", "false", "true"),
+          change("a", at(3), "deleted", "true", "false"),
+          change("a", at(5), "deleted", "false", "true"),
+        ],
+      ),
+      AFTER,
+    );
+    expect(remainingByDay(twice)).toEqual([4, 0, 4, 4, 0]);
+  });
+
+  it("follows chained category changes day by day", () => {
+    // "review" (today: open) was open, became done on June 2, open again on June 4.
+    const result = computeBurndown(
+      timeline(),
+      {
+        issues: [issue("a", { statusId: "review", points: 5 })],
+        changes: [],
+        statusKinds: new Map<string, StatusKind>([...statusKinds, ["review", "open"]]),
+        statusKindChanges: [
+          { statusId: "review", at: at(2), from: "open" },
+          { statusId: "review", at: at(4), from: "done" },
+        ],
+      },
+      AFTER,
+    );
+    expect(remainingByDay(result)).toEqual([5, 0, 0, 5, 5]);
+  });
+});

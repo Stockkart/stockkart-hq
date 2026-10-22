@@ -2,12 +2,18 @@ import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { type CommentView } from "@/lib/issues/views";
+import { extractUserMentionIds } from "@/lib/mentions";
 import { extractPlainText, type RichTextDoc } from "@/lib/rich-text";
 import { comments, projects, users } from "@/server/db/schema";
 import { directRead, type Read } from "@/server/db/read-batch";
 import { type AppDatabase, type RunAtomic } from "@/server/db/types";
 
 import { forbidden, notFound } from "./errors";
+import {
+  notificationsInsert,
+  userMentionNotifyCtes,
+  userMentionNotifyStatement,
+} from "./notifications";
 import { docRefs, type IdRef, mentionSyncCtes, mentionSyncStatement, rowsOf } from "./sql";
 
 /**
@@ -49,22 +55,52 @@ export function createCommentService(
       const id = crypto.randomUUID();
       const text = extractPlainText(input.body);
       const refs = docRefs(input.body, await projectKeys());
-      // One statement: the comment is new, so nobody else can be syncing its mentions.
+      const created = sql`EXISTS (SELECT 1 FROM created)`;
+      // One statement: the comment is new, so nobody else can be syncing its mentions. The
+      // commenter starts watching the issue (ISS-11); the @mentioned users and the issue's
+      // other watchers are notified with it (NTF-1). A watcher who is also mentioned gets
+      // the mention only. Watchers added by this statement (the commenter) are not visible
+      // to it, and the actor is never notified anyway.
       const result = await db.execute(sql`
         WITH created AS (
           INSERT INTO comments (id, entity_type, entity_id, author_id, body, body_text)
           SELECT ${id}::uuid, 'issue', i.id, ${actorId}::uuid, ${JSON.stringify(input.body)}::jsonb,
             ${text}
           FROM issues i WHERE i.id = ${input.issueId}::uuid AND i.deleted_at IS NULL
-          RETURNING id
+          RETURNING id, entity_id
         ),
-        ${mentionSyncCtes({
-          fromType: "comment",
-          fromId: id,
-          refs,
-          actorId,
-          gate: sql`EXISTS (SELECT 1 FROM created)`,
-        })}
+        ${mentionSyncCtes({ fromType: "comment", fromId: id, refs, actorId, gate: created })},
+        ${userMentionNotifyCtes(
+          {
+            fromType: "comment",
+            fromId: id,
+            userIds: extractUserMentionIds(input.body),
+            actorId,
+            gate: created,
+          },
+          {
+            type: sql`'mentioned'`,
+            entityType: sql`'issue'`,
+            entityId: sql`${input.issueId}::uuid`,
+            meta: sql`jsonb_build_object('commentId', ${id}::text)`,
+          },
+        )},
+        commenter_watch AS (
+          INSERT INTO watchers (issue_id, user_id)
+          SELECT entity_id, ${actorId}::uuid FROM created
+          ON CONFLICT DO NOTHING
+        ),
+        watchers_notified AS (
+          ${notificationsInsert({
+            actorId,
+            source: sql`
+              SELECT w.user_id, 'comment_on_watched'::text AS type, 'issue'::text AS entity_type,
+                c.entity_id, 'comment:' || c.id::text AS event_key,
+                jsonb_build_object('commentId', c.id::text) AS meta
+              FROM created c JOIN watchers w ON w.issue_id = c.entity_id
+              WHERE w.user_id NOT IN (SELECT user_id FROM user_mention_added)`,
+          })}
+        )
         SELECT id::text FROM created
       `);
       if (rowsOf(result, z.object({ id: z.string() })).length === 0) throw notFound("Issue");
@@ -92,6 +128,24 @@ export function createCommentService(
           actorId,
           gate: ownLiveComment(input.commentId, actorId),
         }),
+        // NTF-1: only users newly mentioned by this edit are notified, in the same batch.
+        userMentionNotifyStatement(
+          {
+            fromType: "comment",
+            fromId: input.commentId,
+            userIds: extractUserMentionIds(input.body),
+            actorId,
+            gate: ownLiveComment(input.commentId, actorId),
+          },
+          {
+            type: sql`(SELECT CASE WHEN entity_type = 'doc' THEN 'mentioned_in_doc'
+              ELSE 'mentioned' END FROM comments WHERE id = ${input.commentId}::uuid)`,
+            entityType: sql`(SELECT entity_type::text FROM comments
+              WHERE id = ${input.commentId}::uuid)`,
+            entityId: sql`(SELECT entity_id FROM comments WHERE id = ${input.commentId}::uuid)`,
+            meta: sql`jsonb_build_object('commentId', ${input.commentId}::text)`,
+          },
+        ),
       ]);
       if (rowsOf(result, z.object({ id: z.string() })).length === 0) {
         await explainMiss(input.commentId);

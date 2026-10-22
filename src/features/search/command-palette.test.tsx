@@ -52,6 +52,16 @@ const results: SearchResults = {
       snippet: null,
     },
   ],
+  diagrams: [
+    {
+      kind: "diagram",
+      id: "g1",
+      href: "/STK/diagrams/g1",
+      title: "Email outbox flow",
+      context: "Flow",
+      snippet: null,
+    },
+  ],
   comments: [],
 };
 
@@ -128,6 +138,7 @@ describe("CommandPalette (SRCH-1/2, §5.7)", () => {
     expect(screen.getByRole("group", { name: "Docs" })).toHaveTextContent(
       "ADR-0008 Scheduled outbox dispatch",
     );
+    expect(screen.getByRole("group", { name: "Diagrams" })).toHaveTextContent("Email outbox flow");
     // Stored markup is shown as text: no element is created from it.
     const issue = screen.getByRole("option", { name: /STK-45/ });
     expect(issue).toHaveTextContent("<script>alert(1)</script> the outbox runs twice");
@@ -174,7 +185,7 @@ describe("CommandPalette (SRCH-1/2, §5.7)", () => {
   it("opens the New ADR dialog and creates the ADR in the current project", async () => {
     searchAction.mockResolvedValue({
       ok: true,
-      data: { jump: null, issues: [], docs: [], comments: [] },
+      data: { jump: null, issues: [], docs: [], diagrams: [], comments: [] },
     });
     docActions.createAdrAction.mockResolvedValue({
       ok: true,
@@ -195,7 +206,7 @@ describe("CommandPalette (SRCH-1/2, §5.7)", () => {
   it("opens the New doc dialog from the New doc action", async () => {
     searchAction.mockResolvedValue({
       ok: true,
-      data: { jump: null, issues: [], docs: [], comments: [] },
+      data: { jump: null, issues: [], docs: [], diagrams: [], comments: [] },
     });
     const { user } = await openPalette();
     await user.keyboard("new doc{Enter}");
@@ -205,7 +216,7 @@ describe("CommandPalette (SRCH-1/2, §5.7)", () => {
   it("opens quick create as a bug from the Create bug action", async () => {
     searchAction.mockResolvedValue({
       ok: true,
-      data: { jump: null, issues: [], docs: [], comments: [] },
+      data: { jump: null, issues: [], docs: [], diagrams: [], comments: [] },
     });
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

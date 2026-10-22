@@ -2,51 +2,49 @@
 
 import { Extension } from "@tiptap/core";
 import { TaskItem, TaskList } from "@tiptap/extension-list";
-import { TableKit } from "@tiptap/extension-table";
 import { Placeholder } from "@tiptap/extensions";
 import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import {
   Bold,
   Code,
-  Columns3,
   Heading1,
   Heading2,
   Heading3,
-  Info,
   Italic,
   Link as LinkIcon,
   List,
   ListChecks,
   ListOrdered,
-  type LucideIcon,
   Quote,
-  Rows3,
   SquareCode,
   Strikethrough,
-  Table,
-  TableCellsSplit,
-  Workflow,
-  X,
 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { richTextDocSchema, type RichTextDoc } from "@/lib/rich-text";
 import { cn } from "@/lib/utils";
 
-import { Callout } from "./callout-node";
+import {
+  type EditorVariant,
+  featureExtensions,
+  featureToolbarGroups,
+  type ToolbarButton,
+  type ToolbarContext,
+} from "./extensions";
 import { IssueRefHighlight } from "./issue-ref-highlight";
-import { MermaidBlock } from "./mermaid-node";
 import { isSafeHref } from "./safe-href";
 
 /**
  * The shared rich-text editor (DOC-1 subset for issues and comments). Built on Tiptap's MIT
- * packages; docs (Phase 1 slice 3) extend it with more node types such as Mermaid blocks by
- * adding extensions here. Content is ProseMirror JSON (`RichTextDoc`); the editor never
- * emits or accepts HTML.
+ * packages. Content is ProseMirror JSON (`RichTextDoc`); the editor never emits or accepts
+ * HTML.
  *
- * `variant="doc"` (DOC-1, DOC-7) adds headings 1–2, links, callouts, tables and Mermaid
- * blocks; issues and comments keep the smaller `basic` toolbar.
+ * The core (marks, headings, lists, quotes, code blocks, links, `STK-123` chips, shortcuts)
+ * lives here. Further node types and behaviours are features in `extensions/` (callouts,
+ * tables and Mermaid blocks for `variant="doc"`, DOC-1, DOC-7), registered once in
+ * `extensions/index.ts`: add a node there, not here. Issues and comments keep the smaller
+ * basic toolbar.
  *
  * Client-only: load it through `LazyRichTextEditor` (next/dynamic, ssr: false).
  */
@@ -66,22 +64,11 @@ export interface RichTextEditorProps {
   placeholder?: string;
   autoFocus?: boolean;
   className?: string;
-  /** `doc` adds the doc blocks and toolbar (DOC-1). Fixed for the editor's lifetime. */
-  variant?: "basic" | "doc";
-}
-
-interface ToolbarContext {
-  /** Opens the link form (doc variant). */
-  openLink: () => void;
-}
-
-interface ToolbarButton {
-  label: string;
-  icon: LucideIcon;
-  isActive: (editor: Editor) => boolean;
-  /** Shown as aria-disabled and ignored, e.g. table actions outside a table. */
-  isDisabled?: (editor: Editor) => boolean;
-  run: (editor: Editor, context: ToolbarContext) => void;
+  /**
+   * Which registered features load (`extensions/index.ts`); `doc` also gets the doc toolbar
+   * (DOC-1). Fixed for the editor's lifetime. Defaults to `issue`.
+   */
+  variant?: EditorVariant;
 }
 
 const MARK_BUTTONS: ToolbarButton[] = [
@@ -151,10 +138,9 @@ const BLOCK_BUTTONS: ToolbarButton[] = [
   },
 ];
 
-const TOOLBAR: ToolbarButton[][] = [MARK_BUTTONS, [HEADING_3, ...BLOCK_BUTTONS]];
+const BASIC_TOOLBAR: ToolbarButton[][] = [MARK_BUTTONS, [HEADING_3, ...BLOCK_BUTTONS]];
 
-const notInTable = (e: Editor) => !e.isActive("table");
-
+/** The doc editor's core groups; registered features add theirs after these. */
 const DOC_TOOLBAR: ToolbarButton[][] = [
   [
     ...MARK_BUTTONS,
@@ -181,57 +167,6 @@ const DOC_TOOLBAR: ToolbarButton[][] = [
     { ...HEADING_3, label: "Heading 3" },
     ...BLOCK_BUTTONS,
   ],
-  [
-    {
-      label: "Callout",
-      icon: Info,
-      isActive: (e) => e.isActive("callout"),
-      run: (e) => e.chain().focus().toggleCallout().run(),
-    },
-    {
-      label: "Insert table",
-      icon: Table,
-      isActive: () => false,
-      isDisabled: (e) => e.isActive("table"),
-      run: (e) => e.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run(),
-    },
-    {
-      label: "Mermaid diagram",
-      icon: Workflow,
-      isActive: (e) => e.isActive("mermaid"),
-      run: (e) => e.chain().focus().insertMermaid().run(),
-    },
-  ],
-  [
-    {
-      label: "Add row below",
-      icon: Rows3,
-      isActive: () => false,
-      isDisabled: notInTable,
-      run: (e) => e.chain().focus().addRowAfter().run(),
-    },
-    {
-      label: "Add column right",
-      icon: Columns3,
-      isActive: () => false,
-      isDisabled: notInTable,
-      run: (e) => e.chain().focus().addColumnAfter().run(),
-    },
-    {
-      label: "Delete row",
-      icon: TableCellsSplit,
-      isActive: () => false,
-      isDisabled: notInTable,
-      run: (e) => e.chain().focus().deleteRow().run(),
-    },
-    {
-      label: "Delete table",
-      icon: X,
-      isActive: () => false,
-      isDisabled: notInTable,
-      run: (e) => e.chain().focus().deleteTable().run(),
-    },
-  ],
 ];
 
 /** Position of each button in Tab/arrow order, by [group][index]. */
@@ -244,8 +179,25 @@ function positionsOf(groups: ToolbarButton[][]): number[][] {
   );
 }
 
-const TOOLBAR_POSITIONS = positionsOf(TOOLBAR);
-const DOC_TOOLBAR_POSITIONS = positionsOf(DOC_TOOLBAR);
+interface ToolbarLayout {
+  groups: ToolbarButton[][];
+  positions: number[][];
+}
+
+/** A variant's toolbar: its core groups plus the registered features' groups. */
+function toolbarFor(variant: EditorVariant): ToolbarLayout {
+  const groups = [
+    ...(variant === "doc" ? DOC_TOOLBAR : BASIC_TOOLBAR),
+    ...featureToolbarGroups(variant),
+  ];
+  return { groups, positions: positionsOf(groups) };
+}
+
+const TOOLBARS: Record<EditorVariant, ToolbarLayout> = {
+  issue: toolbarFor("issue"),
+  comment: toolbarFor("comment"),
+  doc: toolbarFor("doc"),
+};
 
 function Toolbar({
   editor,
@@ -427,7 +379,7 @@ export function RichTextEditor({
   placeholder = "Write something…",
   autoFocus = false,
   className,
-  variant = "basic",
+  variant = "issue",
 }: RichTextEditorProps) {
   // Callbacks change on every render; the editor is created once, so read them via refs.
   const callbacks = useRef({ onChange, onSubmit, onCancel });
@@ -436,7 +388,8 @@ export function RichTextEditor({
   });
   const [linkOpen, setLinkOpen] = useState(false);
   // The variant is fixed when the editor is created (extensions cannot change later).
-  const [isDoc] = useState(variant === "doc");
+  const [fixedVariant] = useState(variant);
+  const toolbar = TOOLBARS[fixedVariant];
 
   const editor = useEditor({
     // Rendered only on the client (next/dynamic, ssr: false); this avoids a hydration pass.
@@ -459,9 +412,8 @@ export function RichTextEditor({
       TaskItem.configure({ nested: true }),
       Placeholder.configure({ placeholder }),
       IssueRefHighlight.configure({ projectKeys }),
-      ...(isDoc
-        ? [TableKit.configure({ table: { resizable: false } }), Callout, MermaidBlock]
-        : []),
+      // Registered features for this variant (extensions/index.ts).
+      ...featureExtensions({ variant: fixedVariant, projectKeys }),
       Extension.create({
         name: "editorShortcuts",
         addKeyboardShortcuts() {
@@ -506,8 +458,8 @@ export function RichTextEditor({
       {editor ? (
         <Toolbar
           editor={editor}
-          groups={isDoc ? DOC_TOOLBAR : TOOLBAR}
-          positions={isDoc ? DOC_TOOLBAR_POSITIONS : TOOLBAR_POSITIONS}
+          groups={toolbar.groups}
+          positions={toolbar.positions}
           context={context}
         />
       ) : null}

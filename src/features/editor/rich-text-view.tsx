@@ -5,12 +5,15 @@ import { issuePath, splitIssueRefs } from "@/lib/issues/keys";
 import { type RichTextMark, type RichTextNode } from "@/lib/rich-text";
 import { cn } from "@/lib/utils";
 
+import { NODE_RENDERERS } from "./renderers";
 import { isSafeHref } from "./safe-href";
 
 /**
  * Read-only rendering of stored rich text as React elements (S-8): no HTML string is ever
  * produced or injected, unknown node types render only their children, and links keep only
  * http(s)/mailto targets. `STK-123` in text becomes a chip linking to the issue (ISS-7).
+ * Core nodes are rendered here; nodes added by editor extensions come from the registry in
+ * `renderers/index.ts`.
  *
  * Works in server and client components.
  */
@@ -144,44 +147,15 @@ function renderNode(
       return <hr key={key} />;
     case "hardBreak":
       return <br key={key} />;
-    // Doc blocks (DOC-1, DOC-7), e.g. in the template preview.
-    case "table":
-      return (
-        <table key={key}>
-          <tbody>{children}</tbody>
-        </table>
-      );
-    case "tableRow":
-      return <tr key={key}>{children}</tr>;
-    case "tableHeader":
-      return <th key={key}>{children}</th>;
-    case "tableCell":
-      return <td key={key}>{children}</td>;
-    case "callout":
-      return (
-        <aside
-          key={key}
-          role="note"
-          data-type="callout"
-          data-tone={node.attrs?.tone === "warning" ? "warning" : "info"}
-        >
-          {children}
-        </aside>
-      );
-    case "mermaid": {
-      // The read-only view shows the diagram source; the doc editor renders it live.
-      const source = node.attrs?.source;
-      return (
-        <figure key={key}>
-          <figcaption className="text-xs text-muted-foreground">Mermaid diagram</figcaption>
-          <pre>
-            <code>{typeof source === "string" ? source : ""}</code>
-          </pre>
-        </figure>
+    default: {
+      // Node types added by editor extensions (tables, callouts, Mermaid, …): renderers/.
+      const render = NODE_RENDERERS.get(node.type);
+      return render ? (
+        render({ node, index: key, children, projectKeys })
+      ) : (
+        <Fragment key={key}>{children}</Fragment>
       );
     }
-    default:
-      return <Fragment key={key}>{children}</Fragment>;
   }
 }
 

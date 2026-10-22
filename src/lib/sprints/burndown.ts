@@ -11,7 +11,10 @@ import { type Burndown, type BurndownPoint, type VelocityBar } from "./views";
  * undone (newest first, restoring each change's `from` value); sprint membership is
  * replayed the same way (see `isMember`), with the start snapshot
  * (`sprint_started.meta.memberIds`) as the fallback for issues without sprint changes. An
- * issue counts only while it exists (created, not yet deleted).
+ * issue counts only while it exists (created, and not in the trash at that instant: its
+ * `deleted` / `restored` rows are replayed too, ISS-13). A status counts by its category at
+ * that instant (`statusKindChanges`, PRJ-3), so a later workflow change never rewrites a
+ * past sprint.
  *
  * For each sprint day the state at the end of that day (UTC) is used; the day the sprint
  * was closed uses the instant just before closing, so the open issues carried out by the
@@ -34,7 +37,8 @@ export interface BurndownIssue {
   points: number | null;
 }
 
-export type TrackedField = "sprint" | "status" | "storyPoints";
+/** `deleted`: a `deleted` (from "false") or `restored` (from "true") activity row. */
+export type TrackedField = "sprint" | "status" | "storyPoints" | "deleted";
 
 /** One `activity` row of an issue field change (raw text values, as stored). */
 export interface IssueChange {
@@ -64,8 +68,16 @@ export interface SprintTimeline {
 export interface BurndownData {
   issues: readonly BurndownIssue[];
   changes: readonly IssueChange[];
-  /** Every status id of the project → how it counts (see `statusKind`). */
+  /** Every status id of the project → how it counts now (see `statusKind`). */
   statusKinds: ReadonlyMap<string, StatusKind>;
+  /** PRJ-3 category changes: before `at`, the status counted as `from`. */
+  statusKindChanges?: readonly StatusKindChange[];
+}
+
+export interface StatusKindChange {
+  statusId: string;
+  at: Date;
+  from: StatusKind;
 }
 
 interface Totals {
@@ -99,16 +111,38 @@ function evaluator(timeline: SprintTimeline, data: BurndownData) {
   }
   const { sprintId, startedAt } = timeline;
   const snapshot = timeline.snapshotIssueIds ? new Set(timeline.snapshotIssueIds) : null;
+  // Each status's category changes, oldest first.
+  const kindChanges = new Map<string, StatusKindChange[]>();
+  for (const change of data.statusKindChanges ?? []) {
+    const list = kindChanges.get(change.statusId) ?? [];
+    list.push(change);
+    kindChanges.set(change.statusId, list);
+  }
+  for (const list of kindChanges.values()) list.sort((a, b) => a.at.getTime() - b.at.getTime());
+
+  /** How a status counted at `at`: the `from` of its first later change, else today's. */
+  function kindAt(statusId: string, at: number): StatusKind {
+    const later = kindChanges.get(statusId)?.find((change) => change.at.getTime() > at);
+    return later?.from ?? data.statusKinds.get(statusId) ?? "open";
+  }
 
   function stateAt(issue: BurndownIssue, at: number) {
     let status = issue.statusId;
     let points = issue.points;
+    let deleted = issue.deletedAt !== null;
+    let replayedDeletes = false;
     for (const change of byIssue.get(issue.id) ?? []) {
       if (change.at.getTime() <= at) break;
       if (change.field === "status" && change.from !== null) status = change.from;
       else if (change.field === "storyPoints") points = parsePoints(change.from);
+      else if (change.field === "deleted") {
+        deleted = change.from === "true";
+        replayedDeletes = true;
+      }
     }
-    return { status, points };
+    // Without delete/restore rows after `at`, the soft-delete time decides (as before).
+    if (!replayedDeletes) deleted = issue.deletedAt !== null && issue.deletedAt.getTime() <= at;
+    return { status, points, deleted };
   }
 
   /**
@@ -140,11 +174,11 @@ function evaluator(timeline: SprintTimeline, data: BurndownData) {
     const totals: Totals = { remaining: 0, completed: 0, scope: 0 };
     for (const issue of data.issues) {
       if (issue.createdAt.getTime() > at) continue;
-      if (issue.deletedAt && issue.deletedAt.getTime() <= at) continue;
-      if (!isMember(issue, at)) continue;
       const state = stateAt(issue, at);
+      if (state.deleted) continue;
+      if (!isMember(issue, at)) continue;
       const points = state.points ?? 0;
-      const kind = data.statusKinds.get(state.status) ?? "open";
+      const kind = kindAt(state.status, at);
       if (kind === "open") totals.remaining += points;
       else if (kind === "done") totals.completed += points;
     }

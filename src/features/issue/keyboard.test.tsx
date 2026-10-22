@@ -57,10 +57,35 @@ describe("shouldIgnoreShortcut (SPEC §9.5)", () => {
         return button;
       },
     ],
+    [
+      "the Excalidraw whiteboard (its own ? help and tool keys)",
+      () => {
+        const board = document.createElement("div");
+        board.className = "excalidraw";
+        const canvas = document.createElement("canvas");
+        board.append(canvas);
+        document.body.append(board);
+        return canvas;
+      },
+    ],
   ])("ignores keys typed in %s", (_label, make) => {
     const target = make();
     if (!target.isConnected) document.body.append(target);
     expect(keyOn(target)).toBe(true);
+  });
+
+  it.each(["text", "search", "number"])("ignores keys in an input of type %s", (type) => {
+    const input = document.createElement("input");
+    input.type = type;
+    document.body.append(input);
+    expect(keyOn(input)).toBe(true);
+  });
+
+  it.each(["checkbox", "radio"])("lets keys through on a focused %s (no text)", (type) => {
+    const input = document.createElement("input");
+    input.type = type;
+    document.body.append(input);
+    expect(keyOn(input)).toBe(false);
   });
 
   it.each([{ metaKey: true }, { ctrlKey: true }, { altKey: true }, { isComposing: true }])(

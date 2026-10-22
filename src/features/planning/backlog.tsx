@@ -38,6 +38,10 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Select } from "@/components/ui/select";
+import { applyBulkChange, type BulkLookups } from "@/features/bulk/apply";
+import { BulkBar, type BulkOptions } from "@/features/bulk/bulk-bar";
+import { RowCheckbox, SelectAllCheckbox } from "@/features/bulk/checkboxes";
+import { selectRowProps, useRowSelection, useSelectShortcut } from "@/features/bulk/use-selection";
 import { callAction } from "@/features/issue/client-utils";
 import { priorityOptions, userOptions } from "@/features/issue/field-options";
 import { IssueTypeIcon } from "@/features/issue/issue-badges";
@@ -48,6 +52,7 @@ import {
   type SprintContext,
 } from "@/features/sprints/sprint-actions";
 import { applySprintChange, issueMoveOf, type SprintChange } from "@/features/sprints/sprint-state";
+import { type BulkChange } from "@/lib/issues/bulk";
 import { PRIORITIES } from "@/lib/issues/constants";
 import { type BacklogGroup } from "@/lib/issues/filters";
 import { type NamedOption, type PlanningIssue } from "@/lib/issues/views";
@@ -67,6 +72,7 @@ import {
 import { formatDateRange } from "@/lib/sprints/dates";
 import { type SprintSummary } from "@/lib/sprints/views";
 import { cn } from "@/lib/utils";
+import { bulkEditIssuesAction } from "@/server/actions/bulk";
 import { updateIssueFieldAction } from "@/server/actions/issues";
 import { moveIssueAction } from "@/server/actions/planning";
 import { moveIssueToSprintAction } from "@/server/actions/sprints";
@@ -86,6 +92,8 @@ interface BacklogProps {
   users: NamedOption[];
   /** Filters hide rows; a drag then only reorders among the visible ones (still correct). */
   filtered: boolean;
+  /** ISS-12 bulk bar pickers (the page's project options). */
+  bulkOptions: BulkOptions;
 }
 
 /** Optimistic state of the whole page: the ranked issues and the sprints. */
@@ -97,9 +105,17 @@ interface PlanningState {
 type PlanningUpdate =
   /** `afterId` undefined: keep the rank. `sprintId` undefined: keep the sprint. */
   | { kind: "move"; id: string; afterId?: string | null; sprintId?: string | null }
-  | { kind: "sprint"; change: SprintChange };
+  | { kind: "sprint"; change: SprintChange }
+  /** ISS-12: one bulk change to the selected issues. */
+  | { kind: "bulk"; ids: ReadonlySet<string>; change: BulkChange };
 
-function reduce(state: PlanningState, update: PlanningUpdate): PlanningState {
+function reduce(state: PlanningState, update: PlanningUpdate, lookups: BulkLookups): PlanningState {
+  if (update.kind === "bulk") {
+    return {
+      sprints: state.sprints,
+      issues: applyBulkChange(state.issues, update.ids, update.change, lookups),
+    };
+  }
   if (update.kind === "move") {
     const moved =
       update.afterId === undefined
@@ -162,12 +178,13 @@ export function Backlog({
   group,
   users,
   filtered,
+  bulkOptions,
 }: BacklogProps) {
   const [state, applyUpdate] = useOptimistic<PlanningState, PlanningUpdate>(
     { issues, sprints },
-    reduce,
+    (current, update) => reduce(current, update, bulkOptions),
   );
-  const [, startTransition] = useTransition();
+  const [pending, startTransition] = useTransition();
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set());
   const [announcement, setAnnouncement] = useState("");
   // A row moved by the menu to another section remounts there and takes focus on mount;
@@ -184,6 +201,13 @@ export function Backlog({
   );
 
   const sections = planningSections(state.issues, state.sprints, group);
+  // ISS-12: rows in collapsed sections are not visible, so they are not selectable.
+  const selection = useRowSelection(
+    sections
+      .filter((section) => !collapsed.has(section.id))
+      .flatMap((section) => section.issues.map((issue) => issue.id)),
+  );
+  useSelectShortcut(container, (id) => selection.toggle(id));
   const fullIds = state.issues.map((issue) => issue.id);
   const keyOf = new Map(state.issues.map((issue) => [issue.id, issue.key]));
   const sectionOf = (issueId: string) =>
@@ -227,6 +251,18 @@ export function Backlog({
           ? `Moved ${keyOf.get(id)} to ${label}`
           : `Could not move ${keyOf.get(id) ?? "the issue"}`,
       );
+    });
+  }
+
+  function runBulk(change: BulkChange, description: string) {
+    const ids = selection.selectedIds;
+    startTransition(async () => {
+      applyUpdate({ kind: "bulk", ids: new Set(ids), change });
+      const result = await callAction(() =>
+        bulkEditIssuesAction({ projectKey, issueIds: ids, change }),
+      );
+      setAnnouncement(result ? description : "The bulk edit was not saved");
+      if (result && change.kind === "delete") selection.clear();
     });
   }
 
@@ -297,9 +333,30 @@ export function Backlog({
       <p aria-live="polite" className="sr-only">
         {announcement}
       </p>
-      <div className="flex items-center justify-end">
+      <div className="flex items-center justify-between gap-2">
+        <label className="flex items-center gap-2 pl-3 text-sm text-muted-foreground">
+          <SelectAllCheckbox
+            label="Select all shown issues"
+            all={selection.allSelected}
+            some={selection.someSelected}
+            onChange={(all) => (all ? selection.selectAll() : selection.clear())}
+          />
+          <span aria-hidden="true">Select all</span>
+        </label>
         <CreateSprintButton context={context} defaults={sprintDefaults} onChange={onSprintChange} />
       </div>
+      {/* Before the sections, so it is a few Tab stops away, not one per row (§9.5). */}
+      <BulkBar
+        count={selection.selectedIds.length}
+        visibleCount={sections
+          .filter((section) => !collapsed.has(section.id))
+          .reduce((count, section) => count + section.issues.length, 0)}
+        options={bulkOptions}
+        pending={pending}
+        onApply={runBulk}
+        onSelectAll={selection.selectAll}
+        onClear={selection.clear}
+      />
       <DndContext id={dndId} sensors={sensors} collisionDetection={collision} onDragEnd={onDragEnd}>
         {sections.map((section) => {
           const isCollapsed = collapsed.has(section.id);
@@ -346,6 +403,8 @@ export function Backlog({
                     issue={issue}
                     projectKey={projectKey}
                     users={users}
+                    selected={selection.isSelected(issue.id)}
+                    onSelect={(range) => selection.toggle(issue.id, range)}
                     available={availableMoves(index, ids.length)}
                     onMove={(kind) => onMenuMove(ids, issue.id, kind)}
                     takeFocus={focus?.id === issue.id && focus.container === section.container}
@@ -468,6 +527,8 @@ function BacklogRow({
   issue,
   projectKey,
   users,
+  selected,
+  onSelect,
   available,
   onMove,
   takeFocus,
@@ -478,6 +539,9 @@ function BacklogRow({
   issue: PlanningIssue;
   projectKey: string;
   users: NamedOption[];
+  /** ISS-12 bulk selection. */
+  selected: boolean;
+  onSelect: (range: boolean) => void;
   available: Record<MoveKind, boolean>;
   onMove: (kind: MoveKind) => void;
   takeFocus: boolean;
@@ -535,6 +599,7 @@ function BacklogRow({
     <li
       ref={setNodeRef}
       {...NAV_ITEM}
+      {...selectRowProps(issue.id)}
       style={{
         transform: CSS.Transform.toString(transform),
         transition: transition,
@@ -542,8 +607,15 @@ function BacklogRow({
       className={cn(
         "flex items-center gap-2 bg-background px-2 py-1.5 text-sm focus-within:bg-muted/60 hover:bg-muted/40",
         isDragging && "relative z-10 shadow-md",
+        selected && "bg-primary/5",
       )}
     >
+      <RowCheckbox
+        label={`Select ${issue.key}`}
+        checked={selected}
+        onToggle={onSelect}
+        className="ml-1"
+      />
       <button
         type="button"
         ref={setActivatorNodeRef}

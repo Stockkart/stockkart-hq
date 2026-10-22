@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
 import { GithubLoginForm } from "@/features/settings/github-login-form";
+import { NotificationSettings } from "@/features/settings/notification-settings";
 import { requirePageSession } from "@/server/auth/require-session";
-import { profileService } from "@/server/services";
+import { notificationQueries, profileService } from "@/server/services";
 
 export const metadata: Metadata = { title: "Profile" };
 
@@ -11,8 +12,11 @@ export const metadata: Metadata = { title: "Profile" };
 export default async function ProfilePage() {
   // Layouts and pages render in parallel, so each page checks the session itself too.
   const session = await requirePageSession();
-  // Scoped to the session user; one read, batched with the layout's.
-  const profile = await profileService.get(session.user.id);
+  // Scoped to the session user; batched with the layout's reads (one round trip).
+  const [profile, notifyEmail] = await Promise.all([
+    profileService.get(session.user.id),
+    notificationQueries.notifyEmail(session.user.id),
+  ]);
   if (!profile) redirect("/login");
 
   return (
@@ -30,6 +34,7 @@ export default async function ProfilePage() {
         <dd>{profile.email}</dd>
       </dl>
       <GithubLoginForm initialLogin={profile.githubLogin} />
+      <NotificationSettings initialNotifyEmail={notifyEmail} />
     </div>
   );
 }

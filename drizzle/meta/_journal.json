@@ -29,6 +29,13 @@
       "when": 1792524361590,
       "tag": "0003_github_integration",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792614827755,
+      "tag": "0004_p1_foundation",
+      "breakpoints": true
     }
   ]
 }

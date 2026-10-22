@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { PLAIN_TEXT_RULES } from "@/lib/rich-text-nodes";
+
 /**
  * Rich text as stored in Postgres (`issues.description`, `comments.body`, `docs.content`):
  * the editor's ProseMirror/Tiptap JSON document (SPEC §7.3). Plain text for search is always
@@ -91,7 +93,8 @@ export function emptyDoc(): RichTextDoc {
   return { type: "doc", content: [{ type: "paragraph" }] };
 }
 
-/** Nodes rendered as their own line(s) in plain text. */
+/** Core nodes rendered as their own line(s) in plain text. Nodes added by editor extensions
+ * (callouts, tables, Mermaid, …) register their rules in `@/lib/rich-text-nodes`. */
 const BLOCK_TYPES = new Set([
   "paragraph",
   "heading",
@@ -103,25 +106,12 @@ const BLOCK_TYPES = new Set([
   "orderedList",
   "taskList",
   "horizontalRule",
-  // Doc blocks (DOC-1, DOC-7). Each table cell is its own line.
-  "callout",
-  "table",
-  "tableRow",
-  "tableCell",
-  "tableHeader",
-  "mermaid",
 ]);
-
-/** The source of a Mermaid block (DOC-7), stored as `attrs.source`, not as child text. */
-function mermaidSource(node: RichTextNode): string {
-  const source = node.attrs?.source;
-  return typeof source === "string" ? source : "";
-}
 
 /** Plain text for search and `STK-123` extraction: one line per block. With `skipCode`,
  * inline code and code blocks are left out (references there are not mentions, matching
- * the renderer, which shows no chip inside code). Mermaid source counts as code: it is
- * searchable, but `STK-1` inside a diagram is not a mention. */
+ * the renderer, which shows no chip inside code). Registered nodes marked `code` (Mermaid
+ * source) are searchable, but `STK-1` inside them is not a mention. */
 export function extractPlainText(doc: RichTextNode, options: { skipCode?: boolean } = {}): string {
   const lines: string[] = [];
   let current = "";
@@ -139,10 +129,11 @@ export function extractPlainText(doc: RichTextNode, options: { skipCode?: boolea
       current += "\n";
       return;
     }
-    if (options.skipCode && (node.type === "codeBlock" || node.type === "mermaid")) return;
-    const isBlock = BLOCK_TYPES.has(node.type);
+    const rule = PLAIN_TEXT_RULES.get(node.type);
+    if (options.skipCode && (node.type === "codeBlock" || rule?.code)) return;
+    const isBlock = BLOCK_TYPES.has(node.type) || rule?.block === true;
     if (isBlock) flush();
-    if (node.type === "mermaid") current += mermaidSource(node);
+    if (rule?.text) current += rule.text(node);
     for (const child of node.content ?? []) visit(child);
     if (isBlock) flush();
   };

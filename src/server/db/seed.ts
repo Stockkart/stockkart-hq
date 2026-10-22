@@ -1,8 +1,11 @@
 import { eq, sql } from "drizzle-orm";
+import { z } from "zod";
 
 import { type StatusCategory, type StatusDefaultFor } from "@/lib/issues/constants";
+import { BUILT_IN_DIAGRAM_TEMPLATES } from "@/lib/templates/diagram-templates";
 import { BUILT_IN_DOC_TEMPLATES } from "@/lib/templates/doc-templates";
 import { BUILT_IN_ISSUE_TEMPLATES } from "@/lib/templates/issue-templates";
+import { rowsOf } from "@/server/services/sql";
 
 import { components, projects, statuses, templates } from "./schema";
 import { type AppDatabase } from "./types";
@@ -112,6 +115,20 @@ export async function seed(db: AppDatabase): Promise<SeedSummary> {
       })
       .returning({ id: templates.id });
     templatesUpserted += rows.length;
+  }
+  // DGM-3 / §6.3: the content is a scene, not rich text, so these go in as raw jsonb (the
+  // Drizzle column is typed for doc/issue templates). Same upsert key as above.
+  for (const template of BUILT_IN_DIAGRAM_TEMPLATES) {
+    const result = await db.execute(sql`
+      INSERT INTO templates (kind, subtype, name, description, content, built_in)
+      VALUES ('diagram', ${template.subtype}, ${template.name}, ${template.description},
+        ${JSON.stringify(template.content)}::jsonb, TRUE)
+      ON CONFLICT (kind, subtype) WHERE built_in DO UPDATE
+        SET name = EXCLUDED.name, description = EXCLUDED.description,
+          content = EXCLUDED.content, updated_at = now()
+      RETURNING id::text
+    `);
+    templatesUpserted += rowsOf(result, z.object({ id: z.string() })).length;
   }
 
   return {
