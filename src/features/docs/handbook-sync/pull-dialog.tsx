@@ -45,7 +45,7 @@ export function PullDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   docId: string;
-  /** "Keep HQ version": continue in the publish dialog (which asks to overwrite). */
+  /** "Keep HQ version": the caller replaces this dialog with the publish dialog. */
   onKeepHq: () => void;
 }) {
   const router = useRouter();
@@ -124,14 +124,7 @@ export function PullDialog({
             </Button>
           </DialogClose>
           {preview?.state === "both_changed" ? (
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                onOpenChange(false);
-                onKeepHq();
-              }}
-            >
+            <Button type="button" variant="outline" onClick={onKeepHq}>
               Keep HQ version
             </Button>
           ) : null}

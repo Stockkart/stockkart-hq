@@ -287,8 +287,9 @@ describeDb("docs UX (Postgres)", () => {
     const issueQueries = createIssueQueries(db, { read });
     const projectId = projectIdByKey("STK");
     // Exactly the reads `docs/[id]/page.tsx` starts (plus the app layout's).
+    const layout = appLayoutReads(db, read, actor);
     const results = await Promise.all([
-      ...appLayoutReads(db, read, actor),
+      ...layout,
       issueQueries.getProject("STK"),
       docQueries.getDoc(projectId, adr.id),
       docQueries.ancestors(adr.id),
@@ -304,5 +305,10 @@ describeDb("docs UX (Postgres)", () => {
     ]);
     expect(flushes).toBe(1);
     expect(results.at(-1)).toEqual([]);
+    // DOC-14 sync state rides on `getDoc` (no read of its own on the merged page).
+    expect(results[layout.length + 1]).toMatchObject({
+      id: adr.id,
+      handbook: { docId: adr.id, status: "not_in_handbook" },
+    });
   });
 });

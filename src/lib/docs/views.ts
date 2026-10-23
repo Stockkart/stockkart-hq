@@ -1,3 +1,4 @@
+import { type HandbookDocSync } from "@/lib/handbook/views";
 import { type ChildIssue } from "@/lib/issues/views";
 import { type RichTextDoc } from "@/lib/rich-text";
 
@@ -39,6 +40,11 @@ export interface DocDetail {
   adrNumber: number | null;
   adrStatus: AdrStatus | null;
   adrSupersededBy: DocRef | null;
+  /**
+   * DOC-14 stored handbook sync state (no GitHub call), read by `getDoc` in the same query;
+   * null for the importer's group pages, which are not files.
+   */
+  handbook: HandbookDocSync | null;
 }
 
 export interface DocVersionView {

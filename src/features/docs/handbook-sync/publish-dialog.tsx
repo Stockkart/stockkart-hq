@@ -25,11 +25,16 @@ import { LineDiffView } from "../diff/line-diff-view";
 
 import { PublicRepoWarning } from "./public-repo-warning";
 
+export const SAVE_FIRST_MESSAGE =
+  "Save first: your latest changes are not saved yet, and only the saved version is published.";
+
 /**
  * DOC-14 "Publish to handbook" for one doc: path editor (validated), the Markdown that would
  * be committed, the diff against the repo file when it exists, the public-repo warning and
  * the secret-scan block (no override). Opening it asks GitHub through a server action; the
- * page itself never does.
+ * page itself never does. The server exports the doc's SAVED version only; `prepare` (the
+ * doc page's flush) saves pending edits before the preview, and a save that did not land
+ * blocks the dialog with "Save first".
  */
 export function PublishDialog({
   open,
@@ -37,18 +42,22 @@ export function PublishDialog({
   projectKey,
   docId,
   initialPath,
+  prepare,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projectKey: string;
   docId: string;
   initialPath: string;
+  /** Saves pending edits; false if they could not all be saved. */
+  prepare?: () => Promise<boolean>;
 }) {
   const router = useRouter();
   const ids = { path: useId(), error: useId(), ack: useId(), overwrite: useId(), special: useId() };
   const [path, setPath] = useState(initialPath);
   const [preview, setPreview] = useState<PublishPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [unsaved, setUnsaved] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
   const [overwrite, setOverwrite] = useState(false);
   const [special, setSpecial] = useState(false);
@@ -77,6 +86,7 @@ export function PublishDialog({
   }
 
   function load(nextPath: string) {
+    if (unsaved) return;
     const parsed = handbookPathInput.safeParse(nextPath);
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Invalid path");
@@ -85,14 +95,27 @@ export function PublishDialog({
     request(parsed.data);
   }
 
-  // Mounted per opening (see HandbookActions), so this runs once per dialog.
+  // Mounted per opening (see the doc actions), so this runs once per dialog: pending edits
+  // are saved first, so the preview (and the publish) is of what the person sees.
   useEffect(() => {
-    request(initialPath);
+    if (!prepare) {
+      request(initialPath);
+      return;
+    }
+    startLoading(async () => {
+      if (await prepare()) {
+        request(initialPath);
+      } else {
+        setUnsaved(true);
+        setError(SAVE_FIRST_MESSAGE);
+      }
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const stale = preview !== null && preview.path !== path.trim();
   const blocked =
+    unsaved ||
     !preview ||
     stale ||
     preview.secret !== null ||
@@ -155,7 +178,7 @@ export function PublishDialog({
               onChange={(event) => setPath(event.target.value)}
             />
           </div>
-          <Button type="submit" variant="outline" disabled={loading}>
+          <Button type="submit" variant="outline" disabled={loading || unsaved}>
             {loading ? "Checking…" : "Check path"}
           </Button>
         </form>

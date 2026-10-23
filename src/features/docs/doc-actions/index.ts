@@ -1,3 +1,8 @@
+import {
+  pullFromHandbookAction,
+  publishToHandbookAction,
+} from "../handbook-sync/handbook-doc-actions";
+
 import { deleteAction } from "./delete";
 import { copyMarkdownAction, downloadMarkdownAction } from "./export-actions";
 import { openSuccessorAction, supersedeAction } from "./supersede";
@@ -14,6 +19,8 @@ export const DOC_ACTIONS: readonly DocAction[] = uniqueById([
   copyMarkdownAction,
   supersedeAction,
   openSuccessorAction,
+  publishToHandbookAction,
+  pullFromHandbookAction,
   // A new action adds one line here.
   deleteAction,
 ]);
@@ -31,12 +38,13 @@ function uniqueById(actions: DocAction[]): readonly DocAction[] {
 export function visibleDocActions(
   context: DocActionContext,
   actions: readonly DocAction[] = DOC_ACTIONS,
-): { action: DocAction; label: string }[] {
+): { action: DocAction; label: string; disabledReason: string | null }[] {
   return actions
     .filter((action) => action.visible?.(context) ?? true)
     .map((action) => ({
       action,
       label: typeof action.label === "function" ? action.label(context) : action.label,
+      disabledReason: action.disabledReason?.(context) ?? null,
     }));
 }
 

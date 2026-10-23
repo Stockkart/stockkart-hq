@@ -21,6 +21,13 @@ export interface DocActionContext {
   current: () => { title: string; content: RichTextDoc | null };
   /** Saves pending edits first (edit mode); false if they could not all be saved. */
   flush: () => Promise<boolean>;
+  /**
+   * Leaves edit mode the way "Done" does (save what is pending, then read mode); false if
+   * the person chose to stay. Resolves true at once in read mode.
+   */
+  toReadMode: () => Promise<boolean>;
+  /** DOC-14: whether the handbook GitHub App is configured (from env; no request). */
+  handbookConfigured: boolean;
   navigate: (href: string) => void;
   /** Starts a file download from an HQ route (the browser keeps the page). */
   download: (href: string) => void;
@@ -43,6 +50,8 @@ export interface DocAction {
   label: string | ((context: DocActionContext) => string);
   /** Hidden when false (e.g. ADR-only actions). */
   visible?: (context: DocActionContext) => boolean;
+  /** Shown but not selectable, with this reason, when it returns a string. */
+  disabledReason?: (context: DocActionContext) => string | null;
   destructive?: boolean;
   /** Either runs at once … */
   run?: (context: DocActionContext) => void | Promise<void>;

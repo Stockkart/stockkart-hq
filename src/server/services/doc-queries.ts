@@ -20,6 +20,8 @@ import {
   docs,
   docVersions,
   entityLinks,
+  handbookPublicationDocs,
+  handbookPublications,
   issues,
   projects,
   statuses,
@@ -29,6 +31,12 @@ import {
 import { directRead } from "@/server/db/read-batch";
 import { type AppDatabase } from "@/server/db/types";
 
+import {
+  docSyncOf,
+  handbookSyncColumns,
+  openPublicationDocOn,
+  openPublicationOn,
+} from "./handbook-queries";
 import { type QueryOptions } from "./issue-queries";
 import { type IdRef, rowsOf } from "./sql";
 
@@ -85,6 +93,8 @@ export function createDocQueries(db: AppDatabase, { read = directRead }: QueryOp
             updatedByName: editor.name,
             successorId: successor.id,
             successorTitle: successor.title,
+            // DOC-14 badge and actions: stored sync state, same query (no extra read).
+            ...handbookSyncColumns,
           })
           .from(docs)
           .innerJoin(projects, eq(projects.id, docs.projectId))
@@ -93,6 +103,8 @@ export function createDocQueries(db: AppDatabase, { read = directRead }: QueryOp
             successor,
             and(eq(successor.id, docs.adrSupersededBy), isNull(successor.deletedAt)),
           )
+          .leftJoin(handbookPublicationDocs, openPublicationDocOn)
+          .leftJoin(handbookPublications, openPublicationOn)
           .where(and(eq(docs.id, docId), eq(docs.projectId, projectId), isNull(docs.deletedAt)))
           .limit(1),
       );
@@ -105,6 +117,7 @@ export function createDocQueries(db: AppDatabase, { read = directRead }: QueryOp
           row.successorId && row.successorTitle !== null
             ? { id: row.successorId, title: row.successorTitle }
             : null,
+        handbook: docSyncOf({ ...row, ...row.doc }),
       };
     },
 

@@ -83,6 +83,8 @@ export interface DocScreenProps {
   versions: DocVersionView[];
   /** The project's page tree (the Pages drawer). */
   tree: DocTreeItem[];
+  /** DOC-14: the handbook GitHub App is configured (env only; the sync state is `doc.handbook`). */
+  handbookConfigured?: boolean;
   /** ISS-9 attachments panel. */
   attachmentsPanel?: ReactNode;
   /** DOC-11 / DOC-13 comment threads. */
@@ -139,6 +141,7 @@ export function DocScreen({
   linkedIssues,
   versions,
   tree,
+  handbookConfigured = false,
   attachmentsPanel,
   comments,
 }: DocScreenProps) {
@@ -324,8 +327,18 @@ export function DocScreen({
     return "restored";
   }
 
+  // The latest SAVED version on this page (autosaves land without a page refresh), so the
+  // handbook badge turns "Changed in HQ" as soon as an edit is saved.
+  const savedVersion = Math.max(
+    doc.version,
+    editing ? (saverState?.version ?? 0) : 0,
+    shown.version,
+  );
+  const savedDoc: DocDetail =
+    savedVersion === doc.version ? doc : { ...doc, version: savedVersion };
+
   const actionContext: DocActionContext = {
-    doc: { ...doc, title: current().title },
+    doc: { ...savedDoc, title: current().title },
     ancestors,
     supersedes,
     childCount: tree.filter((item) => item.parentId === doc.id).length,
@@ -340,6 +353,8 @@ export function DocScreen({
       const state = await controller.flush();
       return state.status === "saved";
     },
+    toReadMode: async () => (editing ? (await done()) !== null : true),
+    handbookConfigured,
     navigate: (href) => router.push(href),
     download: (href) => {
       const link = document.createElement("a");
@@ -432,7 +447,7 @@ export function DocScreen({
               </li>
             </ol>
           </nav>
-          <DocHeaderBadges doc={doc} />
+          <DocHeaderBadges doc={savedDoc} />
 
           <div className="ml-auto flex flex-wrap items-center gap-1">
             {editing ? (

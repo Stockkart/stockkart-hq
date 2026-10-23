@@ -42,6 +42,12 @@ vi.mock("@/server/actions/attachments", () => ({
   deleteAttachmentAction: vi.fn(),
 }));
 vi.mock("@/server/actions/search", () => ({ searchAction: vi.fn() }));
+vi.mock("@/server/actions/handbook", () => ({
+  handbookPublishPreviewAction: vi.fn(),
+  handbookPublishAction: vi.fn(),
+  handbookPullPreviewAction: vi.fn(),
+  handbookPullApplyAction: vi.fn(),
+}));
 // The Tiptap editor is not loaded in jsdom: a labelled textarea stands in for it.
 vi.mock("@/features/editor/lazy-rich-text-editor", () => ({
   LazyRichTextEditor: ({

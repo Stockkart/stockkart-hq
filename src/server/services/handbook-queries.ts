@@ -17,6 +17,32 @@ import { type IdRef } from "./sql";
  * doc page and the settings tab stay at one round trip (README "Performance").
  */
 
+/**
+ * The sync columns and the doc's open publication (at most one, by the partial unique
+ * index, so the joins never multiply rows). Shared with `docQueries.getDoc`, which reads
+ * them in the doc page's own query (one round trip).
+ */
+export const handbookSyncColumns = {
+  sourcePath: docs.sourcePath,
+  handbookPath: docs.handbookPath,
+  editedInHq: sql<boolean>`${docs.updatedBy} IS NOT NULL`,
+  handbookBlobSha: docs.handbookBlobSha,
+  handbookSyncedVersion: docs.handbookSyncedVersion,
+  handbookSyncedAt: docs.handbookSyncedAt,
+  handbookRemoteSha: docs.handbookRemoteSha,
+  handbookRemoteSeenAt: docs.handbookRemoteSeenAt,
+  openPublicationId: handbookPublications.id,
+  prNumber: handbookPublications.prNumber,
+  prUrl: handbookPublications.prUrl,
+};
+
+/** Left-join conditions for `handbookSyncColumns`: the doc's open publication row, then it. */
+export const openPublicationDocOn = and(
+  eq(handbookPublicationDocs.docId, docs.id),
+  eq(handbookPublicationDocs.open, true),
+);
+export const openPublicationOn = eq(handbookPublications.id, handbookPublicationDocs.publicationId);
+
 /** The columns every sync view needs, with the doc's open publication (at most one). */
 function syncSelect(db: AppDatabase) {
   return db
@@ -26,27 +52,11 @@ function syncSelect(db: AppDatabase) {
       type: docs.type,
       adrNumber: docs.adrNumber,
       version: docs.version,
-      sourcePath: docs.sourcePath,
-      handbookPath: docs.handbookPath,
-      editedInHq: sql<boolean>`${docs.updatedBy} IS NOT NULL`,
-      handbookBlobSha: docs.handbookBlobSha,
-      handbookSyncedVersion: docs.handbookSyncedVersion,
-      handbookSyncedAt: docs.handbookSyncedAt,
-      handbookRemoteSha: docs.handbookRemoteSha,
-      handbookRemoteSeenAt: docs.handbookRemoteSeenAt,
-      openPublicationId: handbookPublications.id,
-      prNumber: handbookPublications.prNumber,
-      prUrl: handbookPublications.prUrl,
+      ...handbookSyncColumns,
     })
     .from(docs)
-    .leftJoin(
-      handbookPublicationDocs,
-      and(eq(handbookPublicationDocs.docId, docs.id), eq(handbookPublicationDocs.open, true)),
-    )
-    .leftJoin(
-      handbookPublications,
-      eq(handbookPublications.id, handbookPublicationDocs.publicationId),
-    );
+    .leftJoin(handbookPublicationDocs, openPublicationDocOn)
+    .leftJoin(handbookPublications, openPublicationOn);
 }
 
 interface SyncRow {
@@ -89,21 +99,28 @@ export function toDocSync(row: SyncRow): HandbookDocSync {
   };
 }
 
+/** A row's sync view, or null for an import group page (not a file). */
+export function docSyncOf(row: SyncRow): HandbookDocSync | null {
+  return isImportGroup(row) ? null : toDocSync(row);
+}
+
 export function createHandbookQueries(db: AppDatabase, { read = directRead }: QueryOptions = {}) {
   const run: Read = read;
   const live = (projectId: IdRef, extra?: SQL) =>
     and(eq(docs.projectId, projectId), isNull(docs.deletedAt), extra);
 
   return {
-    /** The doc page's badge and actions (same batch as the page's other reads). */
+    /**
+     * One doc's sync state on its own. The doc page does not use it: `docQueries.getDoc`
+     * reads the same columns in its query (`DocDetail.handbook`).
+     */
     async docSync(projectId: IdRef, docId: string): Promise<HandbookDocSync | null> {
       const [row] = await run(
         syncSelect(db)
           .where(live(projectId, eq(docs.id, docId)))
           .limit(1),
       );
-      if (!row || isImportGroup(row)) return null;
-      return toDocSync(row);
+      return row ? docSyncOf(row) : null;
     },
 
     /** Settings → Handbook: every live doc that is (or can become) a handbook file. */

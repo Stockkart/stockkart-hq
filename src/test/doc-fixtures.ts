@@ -28,6 +28,7 @@ export function docDetail(patch: Partial<DocDetail> = {}): DocDetail {
     adrNumber: null,
     adrStatus: null,
     adrSupersededBy: null,
+    handbook: null,
     ...patch,
   };
 }

@@ -39,6 +39,12 @@ vi.mock("@/server/actions/attachments", () => ({
   deleteAttachmentAction: vi.fn(),
 }));
 vi.mock("@/server/actions/search", () => ({ searchAction: vi.fn() }));
+vi.mock("@/server/actions/handbook", () => ({
+  handbookPublishPreviewAction: vi.fn(),
+  handbookPublishAction: vi.fn(),
+  handbookPullPreviewAction: vi.fn(),
+  handbookPullApplyAction: vi.fn(),
+}));
 vi.mock("@/features/editor/lazy-rich-text-editor", () => ({
   LazyRichTextEditor: ({ label }: { label: string; onChange?: (doc: RichTextDoc) => void }) => (
     <label>
@@ -99,7 +105,9 @@ describe("registries", () => {
   it("have unique ids (a second registration throws at load)", () => {
     const ids = DOC_ACTIONS.map((action) => action.id);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(DOC_HEADER_BADGES.map((badge) => badge.id)).toEqual(["adr-status"]);
+    expect(DOC_HEADER_BADGES.map((badge) => badge.id)).toEqual(["adr-status", "handbook-sync"]);
+    // The handbook sync slice's two entries sit right above Delete.
+    expect(ids.slice(-3)).toEqual(["handbook-publish", "handbook-pull", "delete"]);
   });
 });
 

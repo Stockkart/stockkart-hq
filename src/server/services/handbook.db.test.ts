@@ -886,11 +886,14 @@ describeDb("handbook sync (Postgres)", () => {
     }
     const stk = projectIdByKey("STK");
 
+    // Exactly the reads the merged `docs/[id]/page.tsx` starts (plus the app layout's): the
+    // sync state comes with `getDoc` (`doc.handbook`), no read of its own.
     const page = counted();
     const docQueries = createDocQueries(db, { read: page.read });
     const issueQueries = createIssueQueries(db, { read: page.read });
+    const layout = appLayoutReads(db, page.read, actor);
     const results = await Promise.all([
-      ...appLayoutReads(db, page.read, actor),
+      ...layout,
       issueQueries.getProject("STK"),
       docQueries.getDoc(stk, doc.id),
       docQueries.ancestors(doc.id),
@@ -904,10 +907,13 @@ describeDb("handbook sync (Postgres)", () => {
       createCommentService(db, { runAtomic: transactionRunner(db), read: page.read }).listForDoc(
         doc.id,
       ),
-      createHandbookQueries(db, { read: page.read }).docSync(stk, doc.id),
+      docQueries.supersedes(doc.id),
     ]);
     expect(page.trips()).toBe(1);
-    expect(results.at(-1)).toMatchObject({ docId: doc.id, status: "not_in_handbook" });
+    expect(results[layout.length + 1]).toMatchObject({
+      id: doc.id,
+      handbook: { docId: doc.id, status: "not_in_handbook" },
+    });
 
     const settings = counted();
     const handbook = createHandbookQueries(db, { read: settings.read });
@@ -922,5 +928,38 @@ describeDb("handbook sync (Postgres)", () => {
     expect(settings.trips()).toBe(1);
     expect(docsList.map((item) => item.docId)).toContain(doc.id);
     expect(publications.length).toBeGreaterThan(0);
+  });
+
+  /** The doc page's badge: what `getDoc` says (the merged page reads nothing else). */
+  const badge = async (id: string) =>
+    (await createDocQueries(db).getDoc(projectIdByKey("STK"), id))?.handbook?.status;
+
+  it("docs UX seams: restoring a version is a new version, so it is Changed in HQ", async () => {
+    const created = await docService().createDoc(actor, {
+      projectKey: "STK",
+      title: "Restorable",
+      type: "page",
+    });
+    const v2 = await docService().saveDoc(actor, {
+      docId: created.id,
+      baseVersion: created.version,
+      content: rt.doc(rt.paragraph("First wording.")),
+      snapshot: true,
+    });
+    if (v2.status !== "saved") throw new Error("save conflicted");
+    const v3 = await edit(created.id, v2.version, "Second wording.");
+    await publish([created.id]);
+    await merge(created.id);
+    expect(await badge(created.id)).toBe("in_sync");
+
+    const restored = await docService().restoreVersion(actor, {
+      docId: created.id,
+      version: v2.version,
+      baseVersion: v3.version,
+    });
+    expect(restored).toMatchObject({ status: "saved", version: v3.version + 1 });
+    expect(await badge(created.id)).toBe("changed_in_hq");
+    const next = await publishService().preview(actor, { docId: created.id });
+    expect(next.markdown).toContain("First wording.");
   });
 });

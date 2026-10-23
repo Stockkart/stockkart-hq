@@ -6,10 +6,9 @@ import { AttachmentsPanel } from "@/features/attachments/attachments-panel";
 import { AttachmentUploadProvider } from "@/features/attachments/upload-context";
 import { docTree } from "@/features/docs/doc-route";
 import { DocScreen } from "@/features/docs/doc-screen";
-import { HandbookDocBar } from "@/features/docs/handbook-sync/handbook-doc-bar";
-import { loadHandbookDocSync } from "@/features/docs/handbook-sync/load";
 import { requireProject, resolveProjectKey } from "@/features/issue/project-route";
 import { requirePageSession } from "@/server/auth/require-session";
+import { handbookConfigured } from "@/server/handbook";
 import { commentService, docQueries, fileQueries, issueQueries } from "@/server/services";
 import { projectIdByKey } from "@/server/services/sql";
 import { storageConfigured } from "@/server/storage";
@@ -51,9 +50,9 @@ export default async function DocPage({ params }: Props) {
     attachments,
     threads,
     supersedes,
-    handbook,
   ] = await Promise.all([
     requireProject(key),
+    // The doc, with its DOC-14 handbook sync state in the same query (`doc.handbook`).
     docQueries.getDoc(projectId, docUuid),
     docQueries.ancestors(docUuid),
     docQueries.linkedIssues(docUuid),
@@ -68,8 +67,6 @@ export default async function DocPage({ params }: Props) {
     commentService.listForDoc(docUuid),
     // ADR-3 "Supersedes ADR-0007" banner; same batch.
     docQueries.supersedes(docUuid),
-    // DOC-14 handbook sync state (stored only, no GitHub call); same batch.
-    loadHandbookDocSync(projectId, docUuid),
   ]);
   if (!doc) notFound();
   const storageReady = storageConfigured();
@@ -78,8 +75,6 @@ export default async function DocPage({ params }: Props) {
   return (
     // Files pasted or dropped into the doc attach to it (ISS-9).
     <AttachmentUploadProvider target={target} storageReady={storageReady}>
-      {/* DOC-14: temporary mount until the docs-UX header slots exist (AGENTS.md). */}
-      <HandbookDocBar projectKey={doc.projectKey} sync={handbook.sync} config={handbook.config} />
       <DocScreen
         // A different doc is a different page state (mode, panels, the copy shown).
         key={doc.id}
@@ -92,6 +87,8 @@ export default async function DocPage({ params }: Props) {
         adrs={adrs}
         supersedes={supersedes}
         tree={tree}
+        // DOC-14: from env only (no request); the sync state itself is `doc.handbook`.
+        handbookConfigured={handbookConfigured()}
         comments={{
           threads,
           currentUser: { id: session.user.id, name: session.user.name ?? "You" },

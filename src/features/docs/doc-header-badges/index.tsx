@@ -3,6 +3,7 @@ import { type DocDetail } from "@/lib/docs/views";
 import { cn } from "@/lib/utils";
 
 import { type DocHeaderBadge } from "../doc-actions/types";
+import { HandbookHeaderBadge } from "../handbook-sync/handbook-header-badge";
 
 /**
  * The doc header's status slot, next to the breadcrumb. To add a badge (e.g. the handbook
@@ -30,6 +31,7 @@ function AdrStatusBadge({ doc }: { doc: DocDetail }) {
 
 export const DOC_HEADER_BADGES: readonly DocHeaderBadge[] = uniqueById([
   { id: "adr-status", Badge: AdrStatusBadge },
+  { id: "handbook-sync", Badge: HandbookHeaderBadge },
   // A new badge adds one line here.
 ]);
 

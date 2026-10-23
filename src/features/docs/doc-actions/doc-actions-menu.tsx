@@ -23,9 +23,10 @@ export function DocActionsMenu({
     <>
       <ActionMenu
         label={`More actions for ${context.doc.title}`}
-        actions={items.map(({ action, label }) => ({
+        actions={items.map(({ action, label, disabledReason }) => ({
           label,
           destructive: action.destructive,
+          disabledReason: disabledReason ?? undefined,
           onSelect: () => {
             if (action.dialog) setOpen(action);
             else void action.run?.(context);

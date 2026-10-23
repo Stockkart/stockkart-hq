@@ -52,6 +52,21 @@ export function canPull(status: HandbookSyncStatus): boolean {
   return status === "changed_in_handbook" || status === "both_changed";
 }
 
+/**
+ * The stored status as of a newer saved `version` than the one it was read at (an autosave
+ * on the open page, before any refresh): a save since then means HQ changed, so "In sync"
+ * becomes "Changed in HQ" and "Changed in handbook" becomes "Both changed". Pure.
+ */
+export function statusAtVersion(
+  sync: { status: HandbookSyncStatus; version: number },
+  version: number,
+): HandbookSyncStatus {
+  if (version <= sync.version) return sync.status;
+  if (sync.status === "in_sync") return "changed_in_hq";
+  if (sync.status === "changed_in_handbook") return "both_changed";
+  return sync.status;
+}
+
 /** `abc1234` for activity text and labels. */
 export function shortSha(sha: string): string {
   return sha.slice(0, 7);
