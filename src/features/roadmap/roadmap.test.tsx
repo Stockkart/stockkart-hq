@@ -143,8 +143,18 @@ describe("Roadmap (RDM-1)", () => {
   });
 
   it("saves unsaved nudges when Enter opens the date editor, which shows them", async () => {
+    // Keep the save in flight: the optimistic dates only live while the transition is
+    // pending. With an instantly resolving mock the bar (and the keyed editor) snaps back
+    // to the unchanged props before the dialog is queried, which made this test flaky.
+    let finishSave: (value: { ok: true; data: object }) => void = () => undefined;
+    issueActions.updateIssueFieldAction.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishSave = resolve;
+        }),
+    );
     const user = userEvent.setup();
-    render(<Roadmap {...props} epics={[epic(30)]} dependencies={[]} />);
+    const { rerender } = render(<Roadmap {...props} epics={[epic(30)]} dependencies={[]} />);
     bar("STK-30").focus();
     await user.keyboard("{ArrowRight}{Enter}");
     expect(issueActions.updateIssueFieldAction).toHaveBeenCalledWith({
@@ -155,6 +165,23 @@ describe("Roadmap (RDM-1)", () => {
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByLabelText("Start date")).toHaveValue("2026-06-02");
     expect(within(dialog).getByLabelText("Due date")).toHaveValue("2026-06-15");
+
+    // The save lands and the server re-renders with the new dates (as revalidation does):
+    // the editor keeps showing them.
+    rerender(
+      <Roadmap
+        {...props}
+        epics={[epic(30, { startDate: "2026-06-02", dueDate: "2026-06-15" })]}
+        dependencies={[]}
+      />,
+    );
+    finishSave({ ok: true, data: {} });
+    await waitFor(() =>
+      expect(within(screen.getByRole("dialog")).getByLabelText("Start date")).toHaveValue(
+        "2026-06-02",
+      ),
+    );
+    expect(within(screen.getByRole("dialog")).getByLabelText("Due date")).toHaveValue("2026-06-15");
   });
 
   it("resizes from an edge, and the next click on the bar still opens the editor", async () => {
