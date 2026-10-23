@@ -934,6 +934,34 @@ describeDb("handbook sync (Postgres)", () => {
   const badge = async (id: string) =>
     (await createDocQueries(db).getDoc(projectIdByKey("STK"), id))?.handbook?.status;
 
+  it("docs UX seams: superseding an ADR moves its version, so it is Changed in HQ", async () => {
+    const old = await docService().createAdr(actor, { projectKey: "STK", title: "Use cron" });
+    await publish([old.id]);
+    await merge(old.id);
+    expect(await badge(old.id)).toBe("in_sync");
+    const [before] = await db
+      .select({ version: docs.version })
+      .from(docs)
+      .where(eq(docs.id, old.id));
+
+    const successor = await docService().supersedeAdr(actor, {
+      docId: old.id,
+      title: "Use a queue",
+    });
+    const [after] = await db
+      .select({ version: docs.version, adrStatus: docs.adrStatus })
+      .from(docs)
+      .where(eq(docs.id, old.id));
+    expect(after).toEqual({ version: (before?.version ?? 0) + 1, adrStatus: "superseded" });
+    expect(await badge(old.id)).toBe("changed_in_hq");
+    expect(await status(old.id)).toBe("changed_in_hq");
+    // The export now says so, which is what a publish would send (the saved version).
+    const next = await publishService().preview(actor, { docId: old.id });
+    expect(next.markdown).toMatch(/Superseded/);
+    // The new ADR was never published.
+    expect(await badge(successor.id)).toBe("not_in_handbook");
+  });
+
   it("docs UX seams: restoring a version is a new version, so it is Changed in HQ", async () => {
     const created = await docService().createDoc(actor, {
       projectKey: "STK",

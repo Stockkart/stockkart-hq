@@ -624,8 +624,11 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
           before: {
             ctes: sql`
               superseded AS (
+                -- The status is part of the doc's Markdown export (ADR "Status"), so the
+                -- version moves: the handbook badge says "Changed in HQ" (DOC-14) and an
+                -- editor open on the old version gets the conflict banner, not an undo.
                 UPDATE docs SET adr_status = 'superseded', adr_superseded_by = ${id}::uuid,
-                  updated_by = ${actorId}::uuid, updated_at = now()
+                  version = version + 1, updated_by = ${actorId}::uuid, updated_at = now()
                 WHERE id = ${old.id}::uuid AND type = 'adr' AND deleted_at IS NULL
                   AND adr_status IS DISTINCT FROM 'superseded'
                   -- The insert's parent check too, so a parent deleted meanwhile refuses
