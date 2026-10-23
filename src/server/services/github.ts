@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 
+import { GIT_NULL_SHA } from "@/lib/handbook/constants";
 import { type AppDatabase } from "@/server/db/types";
 import { type DeliveryPlan } from "@/server/github/plan";
 
@@ -22,6 +23,8 @@ export interface DeliveryResult {
   updated: number;
   /** Issues moved to the done status (GH-3). */
   moved: number;
+  /** DOC-14: handbook publications and docs whose sync state changed. */
+  handbook?: number;
 }
 
 const resultRow = z.object({
@@ -29,6 +32,7 @@ const resultRow = z.object({
   linked: z.number(),
   updated: z.number(),
   moved: z.number(),
+  handbook: z.number(),
 });
 
 /**
@@ -51,6 +55,9 @@ const resultRow = z.object({
  *                    merged PR closes, move each one not yet in a done-category status to
  *                    the project's done status, and log it
  *   moved_notified   tell the moved issues' watchers (NTF-1), deduped by the activity row
+ *   hb_*             DOC-14, handbook repo only (`plan.handbook`): a merged / closed `hq/…`
+ *                    publication PR (merged → its docs synced to the recorded blobs), or a
+ *                    push to the default branch marking the touched docs' remote state
  *
  * The lock is taken by `locked` (SELECT … FOR NO KEY UPDATE) as in `updateIssueField`: a
  * concurrent status change commits first and `locked` sees its result, so "already done" is
@@ -90,6 +97,9 @@ export function createGithubService(db: AppDatabase) {
         mergedBy: plan.closes?.mergedBy ?? null,
       });
       const fresh = sql`EXISTS (SELECT 1 FROM delivery)`;
+      // DOC-14 handbook repo deliveries (empty for every other repo).
+      const hbPr = plan.handbook?.pullRequest ?? null;
+      const hbPaths = JSON.stringify(plan.handbook?.paths ?? []);
 
       const result = await db.execute(sql`
         WITH delivery AS (
@@ -217,6 +227,85 @@ export function createGithubService(db: AppDatabase) {
         moved_notified AS (
           -- NTF-1: the watchers of each moved issue; no actor, so the bell says "GitHub".
           ${watcherStatusNotifications(null, sql`moved_activity`, sql`'{"source":"github"}'::jsonb`)}
+        ),
+        hb_merged AS (
+          -- DOC-14: HQ's publication PR merged into the handbook's default branch. Matched
+          -- by branch (unique, hq/...) and number. Also a publication recorded failed whose
+          -- PR was opened anyway (a timed-out request): it gets the PR from the payload.
+          -- A redelivery or a late event is a no-op (merged / closed rows do not match).
+          UPDATE handbook_publications SET state = 'merged',
+            merged_at = COALESCE(${hbPr?.mergedAt ?? null}::timestamptz, now()),
+            pr_number = ${hbPr?.number ?? null}::int, pr_url = ${hbPr?.url ?? null}::text,
+            error_code = NULL, updated_at = now()
+          WHERE ${hbPr?.outcome === "merged"}::boolean AND ${fresh}
+            AND state IN ('open', 'failed') AND branch = ${hbPr?.branch ?? null}::text
+            AND (pr_number IS NULL OR pr_number = ${hbPr?.number ?? null}::int)
+          RETURNING id, pr_number, merged_at
+        ),
+        hb_closed AS (
+          UPDATE handbook_publications SET state = 'closed',
+            pr_number = ${hbPr?.number ?? null}::int, pr_url = ${hbPr?.url ?? null}::text,
+            error_code = NULL, updated_at = now()
+          WHERE ${hbPr?.outcome === "closed"}::boolean AND ${fresh}
+            AND state IN ('open', 'failed') AND branch = ${hbPr?.branch ?? null}::text
+            AND (pr_number IS NULL OR pr_number = ${hbPr?.number ?? null}::int)
+          RETURNING id
+        ),
+        hb_synced AS (
+          -- The merged files are what HQ exported: blob, version and time in ONE update. The
+          -- handbook side is that blob too, unless someone else pushed to the PR branch (not
+          -- a clean one-commit PR: blob unknown) or a later push already marked the file
+          -- (GitHub does not order deliveries; keep the newer marker).
+          UPDATE docs SET handbook_blob_sha = pd.blob_sha,
+            handbook_synced_version = pd.doc_version, handbook_synced_at = now(),
+            handbook_remote_sha = CASE
+              WHEN NOT ${hbPr?.cleanMerge ?? false}::boolean THEN NULL
+              WHEN docs.handbook_remote_seen_at > m.merged_at THEN docs.handbook_remote_sha
+              ELSE pd.blob_sha END,
+            handbook_remote_seen_at = CASE
+              WHEN ${hbPr?.cleanMerge ?? false}::boolean
+                AND docs.handbook_remote_seen_at > m.merged_at THEN docs.handbook_remote_seen_at
+              ELSE now() END
+          FROM handbook_publication_docs pd JOIN hb_merged m ON m.id = pd.publication_id
+          WHERE docs.id = pd.doc_id AND pd.blob_sha IS NOT NULL AND docs.deleted_at IS NULL
+            AND pd.doc_version <= docs.version
+            -- An older publication landing late never moves the sync back.
+            AND (docs.handbook_synced_version IS NULL
+              OR pd.doc_version >= docs.handbook_synced_version)
+          RETURNING docs.id, m.pr_number
+        ),
+        hb_synced_activity AS (
+          INSERT INTO activity (entity_type, entity_id, actor_id, action, field, to_value, meta)
+          SELECT 'doc', id, NULL, 'handbook_merged', 'handbook', pr_number::text, ${meta}::jsonb
+          FROM hb_synced
+        ),
+        hb_paths AS (
+          SELECT r.path, r.removed, r.branches
+          FROM jsonb_to_recordset(${hbPaths}::jsonb) AS r(path text, removed boolean, branches jsonb)
+          WHERE ${fresh}
+        ),
+        hb_marked AS (
+          -- DOC-14: a push to the handbook's default branch touched these files. Which doc
+          -- owns a file is coalesce(handbook_path, source_path) (the unique index). NULL sha =
+          -- "changed, blob unknown"; the null object id = removed. HQ's own publication
+          -- landing (every commit names its branch) is left to hb_synced.
+          UPDATE docs SET handbook_remote_sha = CASE WHEN r.removed THEN ${GIT_NULL_SHA}::text END,
+            handbook_remote_seen_at = now()
+          FROM hb_paths r
+          WHERE docs.deleted_at IS NULL
+            AND lower(coalesce(docs.handbook_path, docs.source_path)) = lower(r.path)
+            AND NOT EXISTS (
+              SELECT 1 FROM handbook_publication_docs pd
+              JOIN handbook_publications p ON p.id = pd.publication_id
+              WHERE pd.doc_id = docs.id AND lower(pd.path) = lower(r.path)
+                AND r.branches @> to_jsonb(p.branch)
+                -- Only while it can still be landing: open, or merged within the hour (the
+                -- push and the pull_request event arrive in either order). An old branch
+                -- named in a later commit message hides nothing.
+                AND (p.state = 'open'
+                  OR (p.state = 'merged' AND p.merged_at > now() - interval '1 hour'))
+            )
+          RETURNING docs.id
         )
         SELECT
           (SELECT count(*) FROM delivery)::int AS fresh,
@@ -224,7 +313,9 @@ export function createGithubService(db: AppDatabase) {
             + (SELECT count(*) FROM linked_prs WHERE inserted))::int AS linked,
           ((SELECT count(*) FROM linked_prs WHERE NOT inserted)
             + (SELECT count(*) FROM pr_updated))::int AS updated,
-          (SELECT count(*) FROM moved)::int AS moved
+          (SELECT count(*) FROM moved)::int AS moved,
+          ((SELECT count(*) FROM hb_merged) + (SELECT count(*) FROM hb_closed)
+            + (SELECT count(*) FROM hb_synced) + (SELECT count(*) FROM hb_marked))::int AS handbook
       `);
       const [row] = rowsOf(result, resultRow);
       if (!row) throw new Error("applyDelivery returned no row");
@@ -233,6 +324,7 @@ export function createGithubService(db: AppDatabase) {
         linked: row.linked,
         updated: row.updated,
         moved: row.moved,
+        handbook: row.handbook,
       };
     },
   };

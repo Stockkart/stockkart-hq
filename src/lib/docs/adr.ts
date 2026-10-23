@@ -9,6 +9,11 @@ export function formatAdrNumber(number: number): string {
   return String(number).padStart(4, "0");
 }
 
+/** `11` → `ADR-0011` (banners, menus); "this ADR" without a number. */
+export function adrLabel(number: number | null): string {
+  return number === null ? "this ADR" : `ADR-${formatAdrNumber(number)}`;
+}
+
 /** The doc title of an ADR: `0011. Delete completed startup migrations`. */
 export function adrTitle(number: number, title: string): string {
   return `${formatAdrNumber(number)}. ${title}`;

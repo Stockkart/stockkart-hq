@@ -175,3 +175,63 @@ describe("DocAutosaver edge cases", () => {
     expect(saver.current.version).toBe(5);
   });
 });
+
+describe("DocAutosaver.flush (the doc page's Done)", () => {
+  it("saves pending changes at once, without waiting for the debounce", async () => {
+    const { saver, requests } = setup([savedAs(5)]);
+    saver.change({ content: doc("typed") });
+    const state = await saver.flush();
+    expect(requests).toHaveLength(1);
+    expect(state).toMatchObject({ status: "saved", version: 5 });
+    expect(saver.hasUnsavedChanges).toBe(false);
+  });
+
+  it("waits for a save in flight, then saves what was typed meanwhile", async () => {
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const requests: SaveRequest[] = [];
+    const saver = new DocAutosaver(
+      { version: 4, content: doc("start"), title: "Title" },
+      {
+        onState: () => {},
+        save: async (request) => {
+          requests.push(request);
+          // The first save is held until `release`.
+          if (requests.length === 1) await held;
+          return { status: "saved", version: request.baseVersion + 1 };
+        },
+      },
+    );
+    saver.change({ content: doc("one") });
+    saver.saveNow();
+    saver.change({ content: doc("two") });
+    const flushed = saver.flush();
+    release();
+    const state = await flushed;
+    expect(requests.map((request) => request.content)).toEqual([doc("one"), doc("two")]);
+    expect(state).toMatchObject({ status: "saved", version: 6 });
+  });
+
+  it("resolves with the conflict or error so the page can warn", async () => {
+    const conflicted = setup([
+      () => ({
+        status: "conflict",
+        latest: { version: 9, title: "T", content: doc("theirs"), updatedByName: "Bo" },
+      }),
+    ]);
+    conflicted.saver.change({ content: doc("mine") });
+    expect((await conflicted.saver.flush()).status).toBe("conflict");
+
+    const failed = setup([() => ({ status: "failed", message: "Offline" })]);
+    failed.saver.change({ content: doc("mine") });
+    expect(await failed.saver.flush()).toMatchObject({ status: "error", error: "Offline" });
+  });
+
+  it("does nothing when everything is saved", async () => {
+    const { saver, save } = setup([]);
+    expect(await saver.flush()).toMatchObject({ status: "saved", version: 4 });
+    expect(save).not.toHaveBeenCalled();
+  });
+});

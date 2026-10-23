@@ -2,86 +2,45 @@
 
 import { Plus, X } from "lucide-react";
 import Link from "next/link";
-import { type ReactNode, useId, useState, useTransition } from "react";
+import { useId, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
 import { IssueTypeIcon, StatusBadge } from "@/features/issue/issue-badges";
 import { callAction, RelativeTime } from "@/features/issue/client-utils";
 import { searchIssueOptions } from "@/features/search/issue-picker-search";
-import { type DocVersionView, type LinkedIssueView } from "@/lib/docs/views";
+import { type LinkedIssueView } from "@/lib/docs/views";
 import { issuePathForKey } from "@/lib/issues/keys";
 import { linkDocIssueAction, unlinkDocIssueAction } from "@/server/actions/docs";
 
-interface DocSidePanelProps {
-  docId: string;
-  projectKey: string;
-  linkedIssues: LinkedIssueView[];
-  versions: DocVersionView[];
-  createdAt: Date;
-  updatedAt: Date;
-  updatedByName: string | null;
-  /** Shown first (the DOC-11/DOC-13 comments panel). */
-  before?: ReactNode;
-}
+/**
+ * §5.5 side-panel sections of the doc page (`doc-panels.tsx` shows one at a time): Linked
+ * issues (DOC-9) and Details. History lives in `history/`, comments in `comments/`.
+ */
 
-/** §5.5 side panel: Linked issues (DOC-9), version history (read-only) and details. */
-export function DocSidePanel({
-  docId,
-  projectKey,
-  linkedIssues,
-  versions,
+export function DocDetails({
   createdAt,
   updatedAt,
   updatedByName,
-  before,
-}: DocSidePanelProps) {
+}: {
+  createdAt: Date;
+  updatedAt: Date;
+  updatedByName: string | null;
+}) {
   return (
-    <aside className="flex flex-col gap-6 xl:sticky xl:top-6 xl:self-start xl:border-l xl:pl-6">
-      {before}
-      <LinkedIssues docId={docId} projectKey={projectKey} links={linkedIssues} />
-      <section aria-labelledby="doc-versions-heading" className="flex flex-col gap-2">
-        <h2 id="doc-versions-heading" className="text-sm font-semibold">
-          History
-        </h2>
-        {versions.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No versions yet.</p>
-        ) : (
-          <ol className="flex flex-col gap-1 text-sm">
-            {versions.map((version) => (
-              <li key={version.version} className="flex items-baseline justify-between gap-2">
-                <span className="font-mono text-xs">v{version.version}</span>
-                <span className="min-w-0 flex-1 truncate text-muted-foreground">
-                  {version.authorName ?? "Import"}
-                </span>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  <RelativeTime date={version.createdAt} />
-                </span>
-              </li>
-            ))}
-          </ol>
-        )}
-        <p className="text-xs text-muted-foreground">
-          Kept on “Save version” and at most every 10 minutes while editing.
-        </p>
-      </section>
-      <section aria-labelledby="doc-details-heading" className="flex flex-col gap-1 text-sm">
-        <h2 id="doc-details-heading" className="text-sm font-semibold">
-          Details
-        </h2>
-        <p className="text-muted-foreground">
-          Updated <RelativeTime date={updatedAt} />
-          {updatedByName ? ` by ${updatedByName}` : ""}
-        </p>
-        <p className="text-muted-foreground">
-          Created <RelativeTime date={createdAt} />
-        </p>
-      </section>
-    </aside>
+    <section aria-label="Details" className="flex flex-col gap-1 text-sm">
+      <p className="text-muted-foreground">
+        Updated <RelativeTime date={updatedAt} />
+        {updatedByName ? ` by ${updatedByName}` : ""}
+      </p>
+      <p className="text-muted-foreground">
+        Created <RelativeTime date={createdAt} />
+      </p>
+    </section>
   );
 }
 
-function LinkedIssues({
+export function LinkedIssues({
   docId,
   projectKey,
   links,

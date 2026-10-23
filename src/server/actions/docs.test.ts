@@ -18,8 +18,10 @@ const docService = vi.hoisted(() => ({
   deleteDoc: vi.fn(),
   linkIssue: vi.fn(),
   unlinkIssue: vi.fn(),
+  restoreVersion: vi.fn(),
+  supersedeAdr: vi.fn(),
 }));
-const docQueries = vi.hoisted(() => ({ docTemplates: vi.fn() }));
+const docQueries = vi.hoisted(() => ({ docTemplates: vi.fn(), getVersion: vi.fn() }));
 vi.mock("@/server/services", () => ({ docService, docQueries }));
 
 const actions = await import("./docs");
@@ -33,7 +35,10 @@ const session: Session = {
 const doc = { type: "doc", content: [{ type: "paragraph" }] };
 
 /** One valid input per action, so every action is exercised in each test below. */
-const validInputs: [Exclude<keyof typeof actions, "loadDocTemplatesAction">, unknown][] = [
+const validInputs: [
+  Exclude<keyof typeof actions, "loadDocTemplatesAction" | "loadDocVersionAction">,
+  unknown,
+][] = [
   ["createDocAction", { projectKey: "STK", title: "Runbook" }],
   ["createAdrAction", { projectKey: "STK", title: "Use Postgres" }],
   ["saveDocAction", { docId: ID, baseVersion: 3, content: doc }],
@@ -43,6 +48,8 @@ const validInputs: [Exclude<keyof typeof actions, "loadDocTemplatesAction">, unk
   ["deleteDocAction", { docId: ID }],
   ["linkDocIssueAction", { docId: ID, issueKey: "STK-1" }],
   ["unlinkDocIssueAction", { docId: ID, linkId: ID }],
+  ["restoreDocVersionAction", { docId: ID, version: 2, baseVersion: 5 }],
+  ["supersedeAdrAction", { docId: ID, title: "Use a queue" }],
 ];
 
 const allMocks = () => Object.values(docService);
@@ -120,5 +127,43 @@ describe("doc server actions", () => {
     expect(docQueries.docTemplates).not.toHaveBeenCalled();
     authMock.mockResolvedValue(session);
     await expect(actions.loadDocTemplatesAction()).resolves.toEqual({ ok: true, data: [] });
+  });
+
+  it("loads one version only with a session, and reports a missing one", async () => {
+    authMock.mockResolvedValue(null);
+    await expect(actions.loadDocVersionAction({ docId: ID, version: 1 })).rejects.toBeInstanceOf(
+      UnauthorizedError,
+    );
+    expect(docQueries.getVersion).not.toHaveBeenCalled();
+    authMock.mockResolvedValue(session);
+    await expect(actions.loadDocVersionAction({ docId: ID, version: 0 })).resolves.toMatchObject({
+      ok: false,
+    });
+    docQueries.getVersion.mockReset().mockResolvedValue(null);
+    await expect(actions.loadDocVersionAction({ docId: ID, version: 3 })).resolves.toEqual({
+      ok: false,
+      error: "Version 3 not found",
+    });
+    expect(docQueries.getVersion).toHaveBeenCalledWith(ID, 3);
+    // A read: nothing is revalidated.
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("restores and supersedes with refreshed doc pages", async () => {
+    authMock.mockResolvedValue(session);
+    docService.restoreVersion.mockResolvedValue({ status: "saved", version: 6 });
+    await expect(
+      actions.restoreDocVersionAction({ docId: ID, version: 2, baseVersion: 5 }),
+    ).resolves.toEqual({ ok: true, data: { status: "saved", version: 6 } });
+    expect(docService.restoreVersion).toHaveBeenCalledWith(ID, {
+      docId: ID,
+      version: 2,
+      baseVersion: 5,
+    });
+    expect(revalidatePath).toHaveBeenCalled();
+    await expect(actions.supersedeAdrAction({ docId: ID, title: "  " })).resolves.toMatchObject({
+      ok: false,
+    });
+    expect(docService.supersedeAdr).not.toHaveBeenCalled();
   });
 });

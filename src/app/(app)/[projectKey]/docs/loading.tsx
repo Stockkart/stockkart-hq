@@ -1,6 +1,6 @@
 import { SimplePageSkeleton } from "@/features/shell/page-skeletons";
 
-/** Docs list shell inside the docs layout (the tree stays). */
+/** Docs index shell (tree and list) while it loads. */
 export default function Loading() {
   return <SimplePageSkeleton label="docs" />;
 }

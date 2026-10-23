@@ -11,6 +11,7 @@ const LABELS: Record<SettingsTab, string> = {
   labels: "Labels",
   components: "Components",
   import: "Import",
+  handbook: "Handbook",
 };
 
 /**

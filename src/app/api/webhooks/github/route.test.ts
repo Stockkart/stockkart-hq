@@ -2,9 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { pushPayload, TEST_WEBHOOK_SECRET, webhookRequest } from "@/test/github-fixtures";
 
-const env = vi.hoisted((): { GITHUB_WEBHOOK_SECRET: string | undefined } => ({
-  GITHUB_WEBHOOK_SECRET: undefined,
-}));
+const env = vi.hoisted(
+  (): { GITHUB_WEBHOOK_SECRET: string | undefined; HANDBOOK_REPO: string } => ({
+    GITHUB_WEBHOOK_SECRET: undefined,
+    HANDBOOK_REPO: "Stockkart/engineering-handbook",
+  }),
+);
 vi.mock("@/env", () => ({ env }));
 const githubService = vi.hoisted(() => ({ applyDelivery: vi.fn() }));
 vi.mock("@/server/services", () => ({ githubService }));

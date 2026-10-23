@@ -1,3 +1,4 @@
+import { type HandbookDocSync } from "@/lib/handbook/views";
 import { type ChildIssue } from "@/lib/issues/views";
 import { type RichTextDoc } from "@/lib/rich-text";
 
@@ -39,12 +40,30 @@ export interface DocDetail {
   adrNumber: number | null;
   adrStatus: AdrStatus | null;
   adrSupersededBy: DocRef | null;
+  /**
+   * DOC-14 stored handbook sync state (no GitHub call), read by `getDoc` in the same query;
+   * null for the importer's group pages, which are not files.
+   */
+  handbook: HandbookDocSync | null;
 }
 
 export interface DocVersionView {
   version: number;
   authorName: string | null;
   createdAt: Date;
+}
+
+/** DOC-10: one snapshot with its content, for the diff and the read-only preview. */
+export interface DocVersionDetail extends DocVersionView {
+  title: string;
+  content: RichTextDoc | null;
+}
+
+/** ADR-3: an ADR this one supersedes ("Supersedes ADR-0007"). */
+export interface AdrRef {
+  id: string;
+  title: string;
+  adrNumber: number | null;
 }
 
 export interface LinkedIssueView {
@@ -84,4 +103,9 @@ export interface LinkedDocView {
 /** `/STK/docs/<id>`; slice 2's search links here too. */
 export function docPath(projectKey: string, docId: string): string {
   return `/${projectKey}/docs/${docId}`;
+}
+
+/** The doc in edit mode (`?edit=1`): new docs open like this. */
+export function docEditPath(projectKey: string, docId: string): string {
+  return `${docPath(projectKey, docId)}?edit=1`;
 }

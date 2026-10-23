@@ -9,6 +9,8 @@ export interface MenuAction {
   label: string;
   onSelect: () => void;
   destructive?: boolean;
+  /** Shown but not selectable (`aria-disabled`, still focusable), with this reason. */
+  disabledReason?: string;
 }
 
 /**
@@ -110,16 +112,23 @@ export function ActionMenu({
               type="button"
               role="menuitem"
               tabIndex={index === active ? 0 : -1}
+              aria-disabled={action.disabledReason ? true : undefined}
+              title={action.disabledReason}
               onClick={() => {
+                if (action.disabledReason) return;
                 close(false);
                 action.onSelect();
               }}
               className={cn(
                 "rounded px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent",
                 action.destructive && "text-destructive",
+                action.disabledReason && "cursor-not-allowed text-muted-foreground",
               )}
             >
               {action.label}
+              {action.disabledReason ? (
+                <span className="block text-xs text-muted-foreground">{action.disabledReason}</span>
+              ) : null}
             </button>
           ))}
         </div>

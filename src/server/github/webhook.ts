@@ -2,6 +2,7 @@ import { type z } from "zod";
 
 import { type DeliveryResult } from "@/server/services/github";
 import { pgErrorInfo } from "@/server/services/errors";
+import { isHandbookRepository, planHandbookDelivery } from "@/server/handbook/webhook-plan";
 
 import { createPayload, type GithubRepository, pullRequestPayload, pushPayload } from "./payloads";
 import { type DeliveryPlan, isOrgRepository, planCreate, planPullRequest, planPush } from "./plan";
@@ -18,7 +19,9 @@ import { verifyGithubSignature } from "./signature";
  *   5. ping → 200; unhandled events → 202; malformed JSON or payload shape → 400
  *   6. repository outside the Stockkart org → 200, no effect
  *   7. apply in one statement, deduped by X-GitHub-Delivery → 200 (a database error → 500,
- *      nothing written, so "Redeliver" in GitHub retries it)
+ *      nothing written, so "Redeliver" in GitHub retries it). For the handbook repo
+ *      (DOC-14) the same statement also updates publications and docs' sync state
+ *      (`server/handbook/webhook-plan.ts`); still no GitHub API call.
  *
  * Logs carry the event, delivery id, repository and counts only: never the secret, the
  * signature or the payload.
@@ -36,6 +39,12 @@ export interface WebhookDeps {
   apply: (plan: DeliveryPlan) => Promise<DeliveryResult>;
   /** Re-renders the pages that show what changed. */
   refresh: (result: DeliveryResult) => void;
+  /**
+   * DOC-14: `Owner/repo` of the handbook (HANDBOOK_REPO). Its pull requests and pushes also
+   * update the docs' sync state, inside the same deduped statement. No GitHub API call is
+   * ever made from here.
+   */
+  handbookRepo?: () => string;
   log?: (line: Record<string, unknown>) => void;
 }
 
@@ -165,9 +174,26 @@ export function createGithubWebhookHandler(deps: WebhookDeps) {
       return json(200, { ok: true, ignored: "repository" });
     }
 
-    const plan = parsed.plan({ deliveryId, event });
-    const counts = { refs: plan.refs.length, closes: plan.closes?.issues.length ?? 0 };
-    if (plan.refs.length === 0 && !plan.pullRequest && !plan.closes) {
+    const plan: DeliveryPlan = {
+      ...parsed.plan({ deliveryId, event }),
+      // DOC-14, after the signature, the payload and the org checks above.
+      handbook:
+        deps.handbookRepo && isHandbookRepository(parsed.repository, deps.handbookRepo())
+          ? planHandbookDelivery(event, payload, parsed.repository)
+          : null,
+    };
+    const counts = {
+      refs: plan.refs.length,
+      closes: plan.closes?.issues.length ?? 0,
+      ...(plan.handbook
+        ? {
+            handbookPaths: plan.handbook.paths.length,
+            handbookPr: plan.handbook.pullRequest?.outcome ?? null,
+            ...(plan.handbook.truncated ? { handbookTruncated: true } : {}),
+          }
+        : {}),
+    };
+    if (plan.refs.length === 0 && !plan.pullRequest && !plan.closes && !plan.handbook) {
       // Nothing mentions an issue (most pushes): no database work at all.
       log({ event, deliveryId, repo, ...counts, outcome: "nothing_to_link" });
       return json(200, { ok: true, linked: 0, updated: 0, moved: 0 });
@@ -185,12 +211,16 @@ export function createGithubWebhookHandler(deps: WebhookDeps) {
     }
     log({ event, deliveryId, repo, ...counts, ...result, outcome: "applied" });
     if (result.duplicate) return json(200, { ok: true, duplicate: true });
-    if (result.linked > 0 || result.updated > 0 || result.moved > 0) deps.refresh(result);
+    const handbook = result.handbook ?? 0;
+    if (result.linked > 0 || result.updated > 0 || result.moved > 0 || handbook > 0) {
+      deps.refresh(result);
+    }
     return json(200, {
       ok: true,
       linked: result.linked,
       updated: result.updated,
       moved: result.moved,
+      ...(plan.handbook ? { handbook } : {}),
     });
   };
 }

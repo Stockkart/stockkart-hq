@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import {
   boolean,
   check,
@@ -34,6 +34,14 @@ import {
   TEMPLATE_KINDS,
 } from "@/lib/docs/constants";
 import { GITHUB_PR_STATES, GITHUB_REF_KINDS } from "@/lib/github/constants";
+import {
+  GIT_SHA_REGEX_SOURCE,
+  HANDBOOK_BRANCH_REGEX_SOURCE,
+  HANDBOOK_ERROR_CODE_REGEX_SOURCE,
+  HANDBOOK_PR_URL_REGEX_SOURCE,
+  HANDBOOK_PUBLICATION_STATES,
+} from "@/lib/handbook/constants";
+import { HANDBOOK_PATH_MAX, HANDBOOK_PATH_REGEX_SOURCE } from "@/lib/docs/handbook-path";
 import {
   IMPORT_FILENAME_MAX,
   IMPORT_KINDS,
@@ -110,6 +118,14 @@ const fractionalKey = customType<{ data: string }>({
   dataType: () => 'text COLLATE "C"',
 });
 
+/** CHECK body for a handbook repo path: the `isHandbookPath` rules (lib/docs/handbook-path). */
+function handbookPathCheck(column: SQL, nullable: boolean): SQL {
+  const rule = sql`(${column} ~ ${sql.raw(`'${HANDBOOK_PATH_REGEX_SOURCE}'`)}
+    AND char_length(${column}) <= ${sql.raw(String(HANDBOOK_PATH_MAX))}
+    AND strpos(${column}, '..') = 0)`;
+  return nullable ? sql`${column} IS NULL OR ${rule}` : rule;
+}
+
 // ── Enums ────────────────────────────────────────────────────────────────────────────────
 
 export const issueTypeEnum = pgEnum("issue_type", ISSUE_TYPES);
@@ -139,6 +155,11 @@ export const emailDeliveryKindEnum = pgEnum("email_delivery_kind", EMAIL_DELIVER
 export const emailDeliveryStatusEnum = pgEnum("email_delivery_status", EMAIL_DELIVERY_STATUSES);
 export const importKindEnum = pgEnum("import_kind", IMPORT_KINDS);
 export const importStatusEnum = pgEnum("import_status", IMPORT_STATUSES);
+// Handbook sync foundation (migration 0006).
+export const handbookPublicationStateEnum = pgEnum(
+  "handbook_publication_state",
+  HANDBOOK_PUBLICATION_STATES,
+);
 
 // ── Phase 0: sign-in ─────────────────────────────────────────────────────────────────────
 
@@ -656,6 +677,24 @@ export const docs = pgTable(
      * the handbook import updates instead of duplicating. Null for docs written in HQ.
      */
     sourcePath: text("source_path"),
+    /**
+     * Handbook sync (DOC-12/14, migration 0006). `handbook_path` overrides the repo path
+     * (`handbookPathFor`: override → `source_path` → default from the title); `source_path`
+     * stays the import's origin. At the last sync (publish merged or pull applied) the file
+     * had git blob `handbook_blob_sha` and matched `version = handbook_synced_version`, at
+     * `handbook_synced_at` (all three set together). `handbook_remote_sha` is the latest blob
+     * seen on the repo's default branch (push webhook / pull), at `handbook_remote_seen_at`;
+     * a null sha with a seen-at time means a push changed the file and its blob is not known
+     * yet, and `GIT_NULL_SHA` (40 zeros) that it was absent (removed). So: changed in HQ ⇔
+     * `version > handbook_synced_version`; changed in the repo ⇔ `handbook_remote_sha IS
+     * DISTINCT FROM handbook_blob_sha`; both ⇔ conflict (`lib/handbook/sync-state.ts`).
+     */
+    handbookPath: text("handbook_path"),
+    handbookBlobSha: text("handbook_blob_sha"),
+    handbookSyncedVersion: integer("handbook_synced_version"),
+    handbookSyncedAt: timestamp("handbook_synced_at", { withTimezone: true }),
+    handbookRemoteSha: text("handbook_remote_sha"),
+    handbookRemoteSeenAt: timestamp("handbook_remote_seen_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     search: tsvector("search").generatedAlwaysAs(
       sql`setweight(to_tsvector('english'::regconfig, coalesce("title", '')), 'A') || setweight(to_tsvector('english'::regconfig, coalesce("content_text", '')), 'B')`,
@@ -674,6 +713,37 @@ export const docs = pgTable(
     index("docs_search_idx").using("gin", table.search),
     check("docs_version_positive", sql`${table.version} > 0`),
     check("docs_not_own_parent", sql`${table.parentId} IS DISTINCT FROM ${table.id}`),
+    // Migration 0006 (handbook sync). One live doc per repo file: the override or, failing
+    // that, the import's source path (a title-derived default is stored as `handbook_path`
+    // when a doc is first published, so it is covered too). Case-insensitive, so two files
+    // never collide on a case-insensitive checkout (macOS, Windows).
+    uniqueIndex("docs_project_handbook_file_unique")
+      .on(table.projectId, sql`lower(coalesce(${table.handbookPath}, ${table.sourcePath}))`)
+      .where(
+        sql`${table.deletedAt} IS NULL AND coalesce(${table.handbookPath}, ${table.sourcePath}) IS NOT NULL`,
+      ),
+    check("docs_handbook_path_format", handbookPathCheck(sql`${table.handbookPath}`, true)),
+    check(
+      "docs_handbook_blob_sha_format",
+      sql`${table.handbookBlobSha} IS NULL OR ${table.handbookBlobSha} ~ ${sql.raw(`'${GIT_SHA_REGEX_SOURCE}'`)}`,
+    ),
+    check(
+      "docs_handbook_remote_sha_format",
+      sql`${table.handbookRemoteSha} IS NULL OR ${table.handbookRemoteSha} ~ ${sql.raw(`'${GIT_SHA_REGEX_SOURCE}'`)}`,
+    ),
+    check(
+      "docs_handbook_synced_together",
+      sql`(${table.handbookBlobSha} IS NULL) = (${table.handbookSyncedVersion} IS NULL)
+        AND (${table.handbookBlobSha} IS NULL) = (${table.handbookSyncedAt} IS NULL)`,
+    ),
+    check(
+      "docs_handbook_synced_version_valid",
+      sql`${table.handbookSyncedVersion} IS NULL OR ${table.handbookSyncedVersion} BETWEEN 1 AND ${table.version}`,
+    ),
+    check(
+      "docs_handbook_remote_sha_seen",
+      sql`${table.handbookRemoteSha} IS NULL OR ${table.handbookRemoteSeenAt} IS NOT NULL`,
+    ),
   ],
 );
 
@@ -1302,6 +1372,132 @@ export const imports = pgTable(
   ],
 );
 
+// ── Handbook sync (DOC-12, DOC-14; migration 0006) ──────────────────────────────────────
+
+/**
+ * A pull request HQ opened on `Stockkart/engineering-handbook` through its GitHub App
+ * (DOC-14): branch `hq/…` (CHECK), `open` → `merged` | `closed`, or `failed` before or while
+ * opening it (`error_code`, a short machine code; never a token or a response body).
+ * `is_open` is generated from `state` and referenced by `handbook_publication_docs`, which is
+ * how "one open publication per doc" stays true without a trigger (see there).
+ */
+export const handbookPublications = pgTable(
+  "handbook_publications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    branch: text("branch").notNull(),
+    prNumber: integer("pr_number"),
+    prUrl: text("pr_url"),
+    state: handbookPublicationStateEnum("state").notNull().default("open"),
+    isOpen: boolean("is_open")
+      .notNull()
+      .generatedAlwaysAs(sql`state = 'open'`),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    ...timestamps,
+    /** Set exactly while `state = 'merged'`. */
+    mergedAt: timestamp("merged_at", { withTimezone: true }),
+    errorCode: text("error_code"),
+  },
+  (table) => [
+    uniqueIndex("handbook_publications_project_branch_unique").on(table.projectId, table.branch),
+    uniqueIndex("handbook_publications_project_pr_unique")
+      .on(table.projectId, table.prNumber)
+      .where(sql`${table.prNumber} IS NOT NULL`),
+    index("handbook_publications_project_created_idx").on(table.projectId, table.createdAt.desc()),
+    // Target of the composite FK below (Postgres needs a unique key on exactly those columns).
+    unique("handbook_publications_id_open_unique").on(table.id, table.isOpen),
+    check(
+      "handbook_publications_branch_format",
+      sql`${table.branch} ~ ${sql.raw(`'${HANDBOOK_BRANCH_REGEX_SOURCE}'`)}
+        AND strpos(${table.branch}, '..') = 0 AND ${table.branch} NOT LIKE '%.lock'`,
+    ),
+    check(
+      "handbook_publications_pr_number_positive",
+      sql`${table.prNumber} IS NULL OR ${table.prNumber} > 0`,
+    ),
+    check(
+      "handbook_publications_pr_url_format",
+      sql`${table.prUrl} IS NULL OR ${table.prUrl} ~ ${sql.raw(`'${HANDBOOK_PR_URL_REGEX_SOURCE}'`)}`,
+    ),
+    check(
+      "handbook_publications_pr_together",
+      sql`(${table.prNumber} IS NULL) = (${table.prUrl} IS NULL)`,
+    ),
+    check(
+      "handbook_publications_merged_at_state",
+      sql`(${table.state} = 'merged') = (${table.mergedAt} IS NOT NULL)`,
+    ),
+    check(
+      "handbook_publications_merged_has_pr",
+      sql`${table.state} NOT IN ('merged', 'closed') OR ${table.prNumber} IS NOT NULL`,
+    ),
+    check(
+      "handbook_publications_error_code",
+      sql`${table.errorCode} IS NULL OR (${table.state} = 'failed'
+        AND ${table.errorCode} ~ ${sql.raw(`'${HANDBOOK_ERROR_CODE_REGEX_SOURCE}'`)})`,
+    ),
+  ],
+);
+
+/**
+ * The docs of one publication: the repo `path` written, the `doc_version` exported and the
+ * resulting git `blob_sha` (known once the commit exists). Written once per doc, so no
+ * `updated_at`.
+ *
+ * "At most one OPEN publication per doc" is the partial unique index on `doc_id WHERE open`.
+ * A partial index cannot look at another table, so `open` is a copy of the publication's
+ * generated `is_open`, kept equal by the composite FK `(publication_id, open)` →
+ * `handbook_publications (id, is_open)` with `ON UPDATE CASCADE`: changing a publication's
+ * `state` recomputes `is_open`, and Postgres cascades it into these rows in the same
+ * statement. So no trigger, no app-side bookkeeping, and the copy cannot drift (inserting a
+ * row with the wrong `open` fails the FK). Reopening a closed publication while another one
+ * is open for the same doc fails on the index, as it should.
+ */
+export const handbookPublicationDocs = pgTable(
+  "handbook_publication_docs",
+  {
+    publicationId: uuid("publication_id").notNull(),
+    docId: uuid("doc_id")
+      .notNull()
+      .references(() => docs.id, { onDelete: "cascade" }),
+    path: text("path").notNull(),
+    docVersion: integer("doc_version").notNull(),
+    blobSha: text("blob_sha"),
+    open: boolean("open").notNull().default(true),
+    createdAt,
+  },
+  (table) => [
+    primaryKey({ columns: [table.publicationId, table.docId] }),
+    foreignKey({
+      name: "handbook_publication_docs_publication_open_fk",
+      columns: [table.publicationId, table.open],
+      foreignColumns: [handbookPublications.id, handbookPublications.isOpen],
+    })
+      .onUpdate("cascade")
+      .onDelete("cascade"),
+    uniqueIndex("handbook_publication_docs_one_open_per_doc")
+      .on(table.docId)
+      .where(sql`${table.open}`),
+    // A doc's publication history (the doc page's sync status).
+    index("handbook_publication_docs_doc_idx").on(table.docId),
+    // One file per path in a PR. (Doc and publication in the same project is the app's
+    // check, as for incident_services.)
+    uniqueIndex("handbook_publication_docs_publication_path_unique").on(
+      table.publicationId,
+      sql`lower(${table.path})`,
+    ),
+    check("handbook_publication_docs_path_format", handbookPathCheck(sql`${table.path}`, false)),
+    check("handbook_publication_docs_version_positive", sql`${table.docVersion} > 0`),
+    check(
+      "handbook_publication_docs_blob_sha_format",
+      sql`${table.blobSha} IS NULL OR ${table.blobSha} ~ ${sql.raw(`'${GIT_SHA_REGEX_SOURCE}'`)}`,
+    ),
+  ],
+);
+
 export type UserRow = typeof users.$inferSelect;
 export type ProjectRow = typeof projects.$inferSelect;
 export type StatusRow = typeof statuses.$inferSelect;
@@ -1318,3 +1514,5 @@ export type IncidentTimelineRow = typeof incidentTimeline.$inferSelect;
 export type EmailDeliveryRow = typeof emailDeliveries.$inferSelect;
 export type ImportRow = typeof imports.$inferSelect;
 export type ReleaseRow = typeof releases.$inferSelect;
+export type HandbookPublicationRow = typeof handbookPublications.$inferSelect;
+export type HandbookPublicationDocRow = typeof handbookPublicationDocs.$inferSelect;

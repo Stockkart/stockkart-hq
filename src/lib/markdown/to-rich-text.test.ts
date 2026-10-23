@@ -3,7 +3,14 @@ import { describe, expect, it } from "vitest";
 import { parseAdrStatus } from "@/lib/docs/adr";
 import { extractPlainText, richTextDocSchema } from "@/lib/rich-text";
 
-import { markdownToRichText, sectionText, takeTitle } from "./to-rich-text";
+import {
+  HQ_ONLY_LINKS_NOTE,
+  markdownCellToNodes,
+  markdownInlineToNodes,
+  markdownToRichText,
+  sectionText,
+  takeTitle,
+} from "./to-rich-text";
 
 /** Synthetic markdown only (S-7): no handbook content is ever copied into the repo. */
 
@@ -233,5 +240,83 @@ describe("takeTitle and sectionText", () => {
       sectionText(markdownToRichText(`## Status\n\n${text}\n`), "Status") ?? "",
     );
     expect(parsed?.status).toBe(status);
+  });
+});
+
+describe("markdownToRichText: shapes the export writes (DOC-12 symmetry)", () => {
+  it("reads `> **Note:**` / `> **Warning:**` blockquotes as callouts", () => {
+    expect(
+      blocks("> **Note:** Mind the gap.\n>\n> - x\n\n> **Warning:**\n\n> **Note** stays"),
+    ).toEqual([
+      {
+        type: "callout",
+        attrs: { tone: "info" },
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "Mind the gap." }] },
+          {
+            type: "bulletList",
+            content: [
+              {
+                type: "listItem",
+                content: [{ type: "paragraph", content: [{ type: "text", text: "x" }] }],
+              },
+            ],
+          },
+        ],
+      },
+      { type: "callout", attrs: { tone: "warning" }, content: [{ type: "paragraph" }] },
+      {
+        type: "blockquote",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "Note", marks: [{ type: "bold" }] },
+              { type: "text", text: " stays" },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("drops the export's HQ-only-links comment paragraph, and nothing else", () => {
+    expect(blocks(`text\n\n${HQ_ONLY_LINKS_NOTE}\n`)).toEqual([
+      { type: "paragraph", content: [{ type: "text", text: "text" }] },
+    ]);
+    expect(blocks("<!-- other -->")).toEqual([
+      { type: "paragraph", content: [{ type: "text", text: "<!-- other -->" }] },
+    ]);
+    // The same line inside a code block is content.
+    expect(blocks(`\`\`\`\n${HQ_ONLY_LINKS_NOTE}\n\`\`\``)).toEqual([
+      {
+        type: "codeBlock",
+        attrs: { language: null },
+        content: [{ type: "text", text: HQ_ONLY_LINKS_NOTE }],
+      },
+    ]);
+  });
+
+  it("strips exactly one space after a task box", () => {
+    const [list] = blocks("- [ ]  two spaces\n- [x]&#32;\n");
+    expect(list?.content).toEqual([
+      {
+        type: "taskItem",
+        attrs: { checked: false },
+        content: [{ type: "paragraph", content: [{ type: "text", text: " two spaces" }] }],
+      },
+      { type: "taskItem", attrs: { checked: true }, content: [{ type: "paragraph" }] },
+    ]);
+  });
+
+  it("parses one inline run or table cell like the importer does", () => {
+    expect(markdownInlineToNodes("a **b**")).toEqual([
+      { type: "text", text: "a " },
+      { type: "text", text: "b", marks: [{ type: "bold" }] },
+    ]);
+    expect(markdownCellToNodes("`x\\|y` \\| z")).toEqual([
+      { type: "text", text: "x|y", marks: [{ type: "code" }] },
+      { type: "text", text: " | z" },
+    ]);
   });
 });

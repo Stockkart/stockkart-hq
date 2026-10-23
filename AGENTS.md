@@ -44,7 +44,8 @@ src/
   app/(app)/              signed-in app shell (layout calls requirePageSession); my-work/, todos/,
                           notifications/, settings/profile/
   app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, backlog/, board/, docs/
-                          (tree layout, list, docs/[id] editor), adrs/, sprints/ (list,
+                          (index = tree + list, docs/[id] doc page: read mode, `?edit=1`
+                          edit mode; docs/[id]/export DOC-12 .md download), adrs/, sprints/ (list,
                           sprints/[sprintId]), diagrams/ (grid, diagrams/[id] editor), roadmap/
                           (RDM-1/2), releases/ (list, releases/[releaseId]; REL-1/2),
                           incidents/ (list, incidents/[key] = INC-n; INC-1/2), services/ (list,
@@ -72,8 +73,14 @@ src/
   server/github/          webhook: signature check, Zod payloads, pure event → plan rules
                           (services/github.ts applies a plan in ONE statement, deduped by
                           delivery id; never add a webhook write outside that statement)
+  server/handbook/        DOC-14 GitHub App client (fetch only), git blob sha, the pure
+                          webhook plan for the handbook repo; index.ts wires env
   lib/                    isomorphic code: constants, Zod input schemas, keys, rich text,
-                          markdown → editor JSON (lib/markdown), upload policy
+                          markdown ↔ editor JSON (lib/markdown: to-rich-text import,
+                          from-rich-text export), handbook paths and .md export
+                          (lib/docs/handbook-path.ts, markdown-export.ts), line diff
+                          (lib/text/line-diff.ts), handbook sync vocabulary (lib/handbook/),
+                          upload policy
                           (lib/attachments/policy.ts), @user mentions (lib/mentions.ts),
                           plain-text rules per editor node (lib/rich-text-nodes/)
   features/               feature UI (shell/, issue/, planning/, sprints/, todos/, search/,
@@ -213,6 +220,28 @@ entity_id)` → `comments (id, entity_type, entity_id)` keeps a reply on its thr
     `issues.due_date` (both `date`), and RDM-2 dependencies are `issue_links` `blocks` rows.
   - The postmortem, release-notes and sprint-retro doc templates are already seeded
     built-ins (`kind = 'doc'`, subtypes `postmortem`, `release_notes`, `retro`).
+- Migration `0006_handbook_foundation` holds the schema of the two handbook slices, so
+  **they add no migration** (see "Handbook slice notes"):
+  - `docs.handbook_path` (repo path override; `source_path` stays the import origin;
+    resolve with `handbookPathFor`), `handbook_blob_sha` + `handbook_synced_version` +
+    `handbook_synced_at` (set together, CHECK; synced version ≤ `version`),
+    `handbook_remote_sha` (needs `handbook_remote_seen_at`; as built by the sync slice, a
+    seen-at without a sha means "changed, blob unknown" and `GIT_NULL_SHA` means "absent on
+    the default branch"). Shas are 40 lower-case hex (CHECK); paths follow
+    `isHandbookPath` (CHECK, same regex). Unique index on
+    `(project_id, lower(coalesce(handbook_path, source_path)))` for live docs: one doc per
+    file, so persist the default path into `handbook_path` when a doc is first published.
+  - `handbook_publications`: `branch` (`hq/<one segment>`, CHECK; unique per project),
+    `pr_number` + `pr_url` (together; `https://github.com/<owner>/<repo>/pull/<n>`),
+    `state` `open|merged|closed|failed`, generated `is_open`, `created_by`, `merged_at`
+    (exactly while `merged`), `error_code` (only on `failed`, `^[a-z0-9_.-]{1,64}$`).
+    `merged`/`closed` need a PR.
+  - `handbook_publication_docs` (PK publication + doc; path, `doc_version`, `blob_sha`,
+    `open`; one row per path per publication, case-insensitive). **One open publication per doc** = partial unique index on `doc_id WHERE open`.
+    `open` is not app-maintained: a composite FK `(publication_id, open)` →
+    `handbook_publications (id, is_open)` `ON UPDATE CASCADE` copies the generated flag, so
+    an UPDATE of `state` flips it in the same statement (no trigger; a wrong `open` on insert
+    fails the FK). Insert rows with the default `open = true` into an open publication.
 - @user mentions: `extractUserMentionIds(doc)` (`lib/mentions.ts`) reads `mention` nodes;
   `userMentionSyncCtes` / `userMentionSyncStatement` (`services/sql.ts`) keep the
   `to_type = 'user'` mention links in sync, like the issue-key ones, and RETURN the newly
@@ -347,6 +376,156 @@ Gotchas:
   the `hq.docs_tree:<projectId>` lock in a `RunAtomic`, under a root "Postmortems" page.
   INC-1 lets people edit and delete their own `note`/`action` timeline entries (logged as
   `timeline_edited` / `timeline_deleted` activity); `status_change` entries stay as written.
+
+## Handbook slice notes
+
+**Handbook status: both slices (docs UX and handbook two-way sync) are done and merged** on
+top of migration 0006, without a migration of their own. Where they meet: the sync status
+badge and the "Publish to handbook" / "Review & pull" actions live in the docs-UX header
+registries (read and edit mode alike); the sync state rides on `docQueries.getDoc`, so the
+doc page is still ONE round trip; restore (DOC-10) and supersede (ADR-3) bump the version,
+so a synced doc turns "Changed in HQ"; the history panel and the publish / pull dialogs draw
+diffs with the same `LineDiffView`. `handbook-doc-actions.test.tsx` and the "docs UX seams"
+cases of `handbook.db.test.ts` pin these seams; keep them green. The text below is the
+original split, kept as the map of who owns what.
+
+The handbook foundation (migration 0006) prepared two slices: **docs UX** and **handbook
+two-way sync** (`Stockkart/engineering-handbook` is public and also edited by PRs directly:
+HQ → repo goes through PRs a GitHub App opens; repo → HQ is detected from push webhooks).
+Neither adds a migration. Shared pieces, already built and tested — use them, do not fork:
+
+- `lib/markdown/from-rich-text.ts` (`richTextToMarkdown`, `normalizeForMarkdown`; see README
+  "Markdown export" for the mapping and the lossy cases) and the importer
+  `lib/markdown/to-rich-text.ts`, which reads the export's shapes back (callouts, the
+  HQ-only-links comment). Keep the round-trip tests green when touching either.
+- `lib/docs/markdown-export.ts` (`docToMarkdown`: `# Title`, ADR title and Status from the
+  columns) and `services/doc-export.ts` (`docExportQueries.markdownFile`).
+- `lib/docs/handbook-path.ts` (`handbookPathFor`, `isHandbookPath`): never write a repo
+  path that did not pass `isHandbookPath`.
+- `lib/text/line-diff.ts` (`lineDiff`: Myers line diff, our own, no dependency; hunks
+  `equal|add|remove` with `collapsed` context runs).
+- `lib/handbook/constants.ts` (publication states, sha / branch / PR URL / error-code formats).
+- The route `app/(app)/[projectKey]/docs/[id]/export/route.ts` (DOC-12 download).
+
+| Slice                              | Owns                                                                                                                                                                                                                                                                                          | Touches (append-only)                                                                                                                                                           |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Docs UX (DOC-10, ADR-3, DOC-12 UI) | the doc page layout (`app/(app)/[projectKey]/docs/[id]/page.tsx`, `features/docs/` page components), read/edit mode, the versions panel (diff via `lineDiff` of exported Markdown), the supersede flow, the "Export .md" button                                                               | `services/doc-queries.ts`, `actions/docs.ts` (supersede)                                                                                                                        |
+| Handbook sync (DOC-14)             | the GitHub App client (`server/handbook/`), publish/pull services (`services/handbook-*.ts`, `actions/handbook.ts`), webhook handling for the handbook repo, the settings "Handbook" tab (`features/settings/project/handbook/`), doc sync status components (`features/docs/handbook-sync/`) | `env.ts` + `.env.example` (App id/key, repo), `app/api/webhooks/github` (route the handbook repo's pushes), the settings tab list, one slot on the doc page for the sync status |
+
+Rules for the sync slice:
+
+- **Both directions are optimistic.** Publish exports `docs.version` and records
+  `doc_version`; on merge set `handbook_blob_sha`, `handbook_synced_version` and
+  `handbook_synced_at` in one UPDATE. A push webhook only updates `handbook_remote_sha` /
+  `handbook_remote_seen_at`; a pull applies the file like the importer does (version + 1 and
+  a snapshot, `WHERE version = base`), never silently over an HQ edit made since the last
+  sync (that is a conflict to show, both ways).
+- One open publication per doc is enforced by the database (see "Database"); catch the
+  unique violation on `handbook_publication_docs_one_open_per_doc` and report "already being
+  published". Doc and publication in the same project is the app's check.
+- **Which doc owns a repo file** is `coalesce(handbook_path, source_path)` on live docs
+  (case-insensitive unique index). Pulls and webhooks must resolve files by that, not by
+  `source_path` alone (the importer's key): a doc whose `handbook_path` moved keeps its old
+  `source_path`, and another doc may now own that file. Persist the default path into
+  `handbook_path` on first publish, so the index covers it.
+- Default paths never take a GitHub-special top-level name (`README`, `LICENSE`,
+  `SECURITY`, `CONTRIBUTING` … get `_DOC`); an explicit `handbook_path` may, so the publish
+  UI should confirm before writing `README.md`, `decisions/0000-template.md` or such.
+- **Public repo.** The serializer writes @mentions as `@Display Name` (which may also ping a
+  same-named GitHub user) and HQ ids in `/api/files/<id>` and `/<KEY>/…` links. Decide in the
+  publish UI whether to warn about or strip them before the first PR; nothing is published
+  automatically.
+- Branches are `hq/…` only; the App never pushes to the default branch or to a branch a
+  person made. Never log the App's private key or installation tokens; `error_code` holds a
+  short code, never a response body.
+- Webhooks: verify the signature first (as `server/github/` does) and dedupe by delivery id.
+- The handbook repo is public: export only what the doc already says (no internal ids beyond
+  the HQ links the serializer writes, no emails, no attachment URLs that bypass HQ auth).
+
+Docs UX as built (no migration):
+
+- **Doc page** = `features/docs/doc-screen.tsx` (client) under `docs/[id]/page.tsx`, still ONE
+  round trip (`docs-ux.db.test.ts` and `handbook.db.test.ts` count it; add any new page read
+  there and to both tests).
+  Read mode renders `RichTextView` (no Tiptap loaded); `?edit=1` mounts `DocEditor`, which
+  only holds the edit body and is driven through `controllerRef` (`flush`, `saveVersion`,
+  `mine`). "Done" = `Autosaver.flush()`, then read mode; a save that did not land asks first.
+  `E`, `[`, Esc and ⌘/Ctrl+Enter are in `features/shell/shortcuts.ts` (scope "Docs").
+- No persistent tree: `pages-nav.tsx` (drawer + pinned column, `localStorage` key
+  `hq.docs.pages`). The docs index page renders the full `DocTree` itself; the docs layout no
+  longer reads the tree.
+- Side panels open one at a time; `DocCommentsPanel` stays mounted while hidden (`visible`,
+  `onActivate`) so comment requests from the editor and from read mode reach it.
+- **Inline comments from read mode**: `doc-read-view.tsx` tags text leaves for the view only
+  (`tagTextLeaves`, mark `hqTextLeaf`, renderer `renderers/text-leaf.tsx`; never saved), maps
+  the selection to `{ leaf, from, to }`, adds the anchor with `addAnchorMark`
+  (`lib/docs/anchor-marks.ts`) and saves with `saveDocAction` on the shown version (§7.4);
+  only then does it send the usual `hq:comment-anchor-request`. A conflict refreshes, never
+  overwrites.
+- **DOC-10**: `docService.restoreVersion` = `lockedSave` (shared with `saveDoc`) with the old
+  title and content, `snapshot: true` and an activity row `restored` (field `version`, from =
+  restored version, to = new version). `restoredContent` keeps anchors of live threads and
+  re-anchors current threads whose exact text exists in the old version. The diff is
+  `lineDiff` over `# title` + `richTextToMarkdown` (`history/`), drawn by
+  `features/docs/diff/line-diff-view.tsx` (`LineDiffView`, also the publish / pull dialogs'
+  renderer: one component, do not fork it); version contents load on open
+  (`loadDocVersionAction`), never with the page.
+- **ADR-3**: `docService.supersedeAdr` is ONE statement: `UPDATE` the old ADR (gated on "not
+  superseded yet"; it bumps `version`, since the status is in the export) first, then the
+  insert gated on it (FK to the new id checked at statement end), activity on both
+  (`adrStatus`, `adrSupersededBy` on the old; `supersedes` on the new). Numbering is
+  `allocateAdr`, shared with `createAdr`.
+
+**Header registries** (one line each to add an entry; the handbook sync uses both):
+
+- `features/docs/doc-actions/index.ts` → `DOC_ACTIONS` (above the delete line):
+  `types.ts` descriptors with `id`, `label`, `visible?`, `disabledReason?` (shown, not
+  selectable, with the reason), and `run` or a `dialog` (props: `context`, `open`,
+  `onOpenChange`). `context.flush()` saves pending edits, `context.toReadMode()` leaves edit
+  mode like "Done", `context.current()` is the copy on screen, `context.doc.version` is the
+  latest version saved on the page. Ids are checked unique at load.
+- `features/docs/doc-header-badges/index.tsx` → `DOC_HEADER_BADGES`: `{ id, Badge }` where
+  `Badge` takes `{ doc: DocDetail }` (render null when there is nothing to say). Fields a
+  badge needs go into `docQueries.getDoc` (same query, so still one round trip), as
+  `DocDetail.handbook` does.
+
+**Sync slice as built (DOC-14).** README "Engineering handbook sync" has the setup, statuses
+and conflict rules; keep these seams intact:
+
+- `server/handbook/github-app.ts` is the ONLY GitHub API client (fetch, no SDK). Every URL is
+  built and re-checked there (token endpoint or `/repos/<HANDBOOK_REPO>/…`), every path passes
+  `isHandbookPath`, writes go to `hq/…` branches only. `server/handbook/index.ts` wires it
+  from env; tests use `test/handbook-fakes.ts` (an in-memory repo) or a fetch fake.
+- Status is derived by `lib/handbook/sync-state.ts` from stored columns (`handbookSyncStatus`).
+  `docs.handbook_remote_sha = GIT_NULL_SHA` (40 zeros) means **removed** on the default
+  branch; `NULL` with a `handbook_remote_seen_at` means **changed, blob unknown** (a push
+  touched it). This refines the foundation's "seen-at without a sha = absent" without a
+  migration.
+- Webhook: `server/handbook/webhook-plan.ts` (pure) adds `plan.handbook` after the signature,
+  payload and org checks; `applyDelivery` writes it in its ONE deduped statement (`hb_*`
+  CTEs). Never call GitHub there. HQ's commits carry an `HQ-Publication: <branch>` trailer so
+  the push of its own merge is not drift (only while that publication is open or merged
+  within the hour). A merge also matches a `failed` publication by branch (its PR was opened
+  by a request that timed out) and takes the PR number and URL from the payload.
+- Publish (`services/handbook-publish.ts`) claims the publication (`open`, no PR yet) in one
+  statement BEFORE calling GitHub, then records the PR + activity, or `failed` + `error_code`
+  (and puts back the paths it pinned). A claim left without a PR for 15 minutes is failed by
+  the next publish of its docs.
+- "Check handbook now" is rate-limited through `login_attempts` rows keyed
+  `handbook_check:<projectId>` with `success = true` (shared across instances; never counted
+  as failed sign-ins, which use `email:` / `ip:` keys and `NOT success`).
+- **On the doc page** (no temporary mount any more): `DocDetail.handbook` comes from
+  `docQueries.getDoc` (the `handbookSyncColumns` + open-publication joins shared with
+  `handbookQueries`), so there is no extra read; `page.tsx` passes `handbookConfigured()`
+  (env only). `HandbookHeaderBadge` is in `DOC_HEADER_BADGES` and recomputes the status for
+  the version saved on the page (`statusAtVersion`); `publishToHandbookAction` /
+  `pullFromHandbookAction` (`handbook-doc-actions.tsx`) are in `DOC_ACTIONS`. Publish never
+  sends unsaved content: the server exports the stored `docs.version`, the dialog runs
+  `context.flush()` before its preview ("Save first" if that fails or an upload is still
+  running), and the publish carries the previewed version (`expectedVersion`), refused with
+  `PREVIEW_STALE_MESSAGE` if the doc was saved again since. Pull runs
+  `context.toReadMode()` first, so the applied version shows in read mode and no editor is
+  left on the old version.
 
 ## File storage (R2)
 

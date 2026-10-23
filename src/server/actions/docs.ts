@@ -8,17 +8,21 @@ import {
   createAdrInput,
   createDocInput,
   docIdInput,
+  docVersionInput,
   linkIssueInput,
   moveDocInput,
   renameDocInput,
+  restoreDocVersionInput,
   saveDocInput,
+  supersedeAdrInput,
   unlinkIssueInput,
   updateDocMetaInput,
 } from "@/lib/docs/schemas";
-import { type DocTemplateView } from "@/lib/docs/views";
+import { type DocTemplateView, type DocVersionDetail } from "@/lib/docs/views";
 import { requireSession } from "@/server/auth/require-session";
 import { docQueries, docService } from "@/server/services";
 import { type CreatedDoc, type SaveDocResult } from "@/server/services/docs";
+import { notFound } from "@/server/services/errors";
 
 import { runAction } from "./action-runner";
 
@@ -120,4 +124,42 @@ export async function unlinkDocIssueAction(input: unknown): Promise<ActionResult
 export async function loadDocTemplatesAction(): Promise<ActionResult<DocTemplateView[]>> {
   await requireSession();
   return { ok: true, data: await docQueries.docTemplates() };
+}
+
+/** DOC-10: one snapshot's title and content, loaded when a version is opened (diff, preview). */
+export async function loadDocVersionAction(
+  input: unknown,
+): Promise<ActionResult<DocVersionDetail>> {
+  await requireSession();
+  return run(
+    docVersionInput,
+    input,
+    async (data) => {
+      const version = await docQueries.getVersion(data.docId, data.version);
+      if (!version) throw notFound(`Version ${data.version}`);
+      return version;
+    },
+    { revalidate: false },
+  );
+}
+
+/**
+ * DOC-10 restore: a new version with the old title and content, locked like a save. A
+ * conflict comes back as data (the banner path), like `saveDocAction`.
+ */
+export async function restoreDocVersionAction(
+  input: unknown,
+): Promise<ActionResult<SaveDocResult>> {
+  const session = await requireSession();
+  return run(restoreDocVersionInput, input, (data) =>
+    docService.restoreVersion(session.user.id, data),
+  );
+}
+
+/** ADR-3 "Supersede with new ADR…": the new ADR (opened in edit mode by the client). */
+export async function supersedeAdrAction(
+  input: unknown,
+): Promise<ActionResult<CreatedDoc & { number: number }>> {
+  const session = await requireSession();
+  return run(supersedeAdrInput, input, (data) => docService.supersedeAdr(session.user.id, data));
 }

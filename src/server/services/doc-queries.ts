@@ -3,11 +3,13 @@ import { alias as pgAlias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 
 import {
+  type AdrRef,
   type AdrRow,
   type DocDetail,
   type DocRef,
   type DocTemplateView,
   type DocTreeItem,
+  type DocVersionDetail,
   type DocVersionView,
   type LinkedDocView,
   type LinkedIssueView,
@@ -18,6 +20,8 @@ import {
   docs,
   docVersions,
   entityLinks,
+  handbookPublicationDocs,
+  handbookPublications,
   issues,
   projects,
   statuses,
@@ -27,6 +31,12 @@ import {
 import { directRead } from "@/server/db/read-batch";
 import { type AppDatabase } from "@/server/db/types";
 
+import {
+  docSyncOf,
+  handbookSyncColumns,
+  openPublicationDocOn,
+  openPublicationOn,
+} from "./handbook-queries";
 import { type QueryOptions } from "./issue-queries";
 import { type IdRef, rowsOf } from "./sql";
 
@@ -83,6 +93,8 @@ export function createDocQueries(db: AppDatabase, { read = directRead }: QueryOp
             updatedByName: editor.name,
             successorId: successor.id,
             successorTitle: successor.title,
+            // DOC-14 badge and actions: stored sync state, same query (no extra read).
+            ...handbookSyncColumns,
           })
           .from(docs)
           .innerJoin(projects, eq(projects.id, docs.projectId))
@@ -91,6 +103,8 @@ export function createDocQueries(db: AppDatabase, { read = directRead }: QueryOp
             successor,
             and(eq(successor.id, docs.adrSupersededBy), isNull(successor.deletedAt)),
           )
+          .leftJoin(handbookPublicationDocs, openPublicationDocOn)
+          .leftJoin(handbookPublications, openPublicationOn)
           .where(and(eq(docs.id, docId), eq(docs.projectId, projectId), isNull(docs.deletedAt)))
           .limit(1),
       );
@@ -103,6 +117,7 @@ export function createDocQueries(db: AppDatabase, { read = directRead }: QueryOp
           row.successorId && row.successorTitle !== null
             ? { id: row.successorId, title: row.successorTitle }
             : null,
+        handbook: docSyncOf({ ...row, ...row.doc }),
       };
     },
 
@@ -138,6 +153,40 @@ export function createDocQueries(db: AppDatabase, { read = directRead }: QueryOp
           .where(eq(docVersions.docId, docId))
           .orderBy(desc(docVersions.version))
           .limit(50),
+      );
+    },
+
+    /**
+     * DOC-10 diff / preview: one snapshot of a live doc, with its content. Loaded when a
+     * version is opened (never with the page: 50 contents would make it heavy).
+     */
+    async getVersion(docId: string, version: number): Promise<DocVersionDetail | null> {
+      const [row] = await read(
+        db
+          .select({
+            version: docVersions.version,
+            title: docVersions.title,
+            content: docVersions.content,
+            authorName: users.name,
+            createdAt: docVersions.createdAt,
+          })
+          .from(docVersions)
+          .innerJoin(docs, and(eq(docs.id, docVersions.docId), isNull(docs.deletedAt)))
+          .leftJoin(users, eq(users.id, docVersions.authorId))
+          .where(and(eq(docVersions.docId, docId), eq(docVersions.version, version)))
+          .limit(1),
+      );
+      return row ?? null;
+    },
+
+    /** ADR-3 "Supersedes ADR-0007": live ADRs whose successor is this doc. */
+    async supersedes(docId: string): Promise<AdrRef[]> {
+      return read(
+        db
+          .select({ id: docs.id, title: docs.title, adrNumber: docs.adrNumber })
+          .from(docs)
+          .where(and(eq(docs.adrSupersededBy, docId), eq(docs.type, "adr"), isNull(docs.deletedAt)))
+          .orderBy(asc(docs.adrNumber)),
       );
     },
 
