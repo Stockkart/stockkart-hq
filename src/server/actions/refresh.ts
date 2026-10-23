@@ -47,6 +47,8 @@ export const SERVICES = "/[projectKey]/services";
 export const SERVICE_PAGE = "/[projectKey]/services/[slug]";
 export const INCIDENTS = "/[projectKey]/incidents";
 export const INCIDENT_PAGE = "/[projectKey]/incidents/[key]";
+/** COST-1…8: the costs page (every tab); entries also change My Work's COST-7 card. */
+export const COSTS = "/[projectKey]/costs";
 
 /** Every page that lists or shows issue fields. */
 export const ISSUE_VIEWS = [ISSUE_LIST, ISSUE_PAGE, BACKLOG, BOARD, MY_WORK, ROADMAP] as const;

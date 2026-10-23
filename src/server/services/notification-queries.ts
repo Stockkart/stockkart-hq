@@ -1,17 +1,20 @@
 import { and, count, desc, eq, gt, isNull, lte, type SQL, sql } from "drizzle-orm";
 import { alias as pgAlias } from "drizzle-orm/pg-core";
 
+import { isMonth, monthLabel } from "@/lib/costs/month";
 import { formatIncidentKey } from "@/lib/incidents/constants";
 import { incidentPath } from "@/lib/incidents/rules";
 import { formatIssueKey, issuePath } from "@/lib/issues/keys";
 import { type DigestFrequency, type NotificationType } from "@/lib/notifications/constants";
 import {
+  type CostReminderDetails,
   type NotificationPage,
   type NotificationTarget,
   type NotificationView,
 } from "@/lib/notifications/views";
 import { directRead, type Read } from "@/server/db/read-batch";
 import {
+  costItems,
   docs,
   incidents,
   issues,
@@ -39,6 +42,7 @@ const actor = pgAlias(users, "notification_actor");
 const issueProject = pgAlias(projects, "notification_issue_project");
 const docProject = pgAlias(projects, "notification_doc_project");
 const incidentProject = pgAlias(projects, "notification_incident_project");
+const costProject = pgAlias(projects, "notification_cost_project");
 const fromStatus = pgAlias(statuses, "notification_from_status");
 const toStatus = pgAlias(statuses, "notification_to_status");
 
@@ -58,11 +62,34 @@ interface Row {
   incidentNumber: number | null;
   incidentTitle: string | null;
   incidentProjectKey: string | null;
+  costProjectKey: string | null;
   statusFrom: string | null;
   statusTo: string | null;
 }
 
+/** COST-7 `meta` ({ month, missingCount }), when well-formed. */
+function costReminderOf(row: Row): CostReminderDetails | null {
+  if (row.type !== "cost_reminder") return null;
+  const month = row.meta?.month;
+  const missingCount = row.meta?.missingCount;
+  if (!isMonth(month) || typeof missingCount !== "number" || !Number.isInteger(missingCount)) {
+    return null;
+  }
+  return { month, missingCount };
+}
+
 function targetOf(row: Row): NotificationTarget | null {
+  // COST-7 `cost_reminder`: the costs page on that month (the entity is one of the
+  // project's cost items; the reminder is about the month, not the item).
+  if (row.type === "cost_reminder") {
+    const details = costReminderOf(row);
+    if (!details || !isMonth(details.month) || !row.costProjectKey) return null;
+    return {
+      kind: "costs",
+      title: `${monthLabel(details.month)} costs`,
+      href: `/${row.costProjectKey}/costs?month=${details.month}`,
+    };
+  }
   if (row.issueNumber !== null && row.issueTitle !== null && row.issueProjectKey !== null) {
     return {
       kind: "issue",
@@ -102,6 +129,7 @@ function toView(row: Row): NotificationView {
         : null,
     read: row.readAt !== null,
     createdAt: row.createdAt,
+    ...(row.type === "cost_reminder" ? { costReminder: costReminderOf(row) } : {}),
   };
 }
 
@@ -111,61 +139,73 @@ export function createNotificationQueries(
 ) {
   /** The user's notifications, newest first, with their target and names resolved. */
   function listQuery(userId: string, limit: number, offset: number, where?: SQL) {
-    return db
-      .select({
-        id: notifications.id,
-        type: notifications.type,
-        meta: notifications.meta,
-        readAt: notifications.readAt,
-        createdAt: notifications.createdAt,
-        actorName: actor.name,
-        issueNumber: issues.number,
-        issueTitle: issues.title,
-        issueProjectKey: issueProject.key,
-        docId: docs.id,
-        docTitle: docs.title,
-        docProjectKey: docProject.key,
-        incidentNumber: incidents.number,
-        incidentTitle: incidents.title,
-        incidentProjectKey: incidentProject.key,
-        statusFrom: fromStatus.name,
-        statusTo: toStatus.name,
-      })
-      .from(notifications)
-      .leftJoin(actor, eq(actor.id, notifications.actorId))
-      .leftJoin(
-        issues,
-        and(
-          eq(notifications.entityType, "issue"),
-          eq(issues.id, notifications.entityId),
-          isNull(issues.deletedAt),
-        ),
-      )
-      .leftJoin(issueProject, eq(issueProject.id, issues.projectId))
-      .leftJoin(
-        docs,
-        and(
-          eq(notifications.entityType, "doc"),
-          eq(docs.id, notifications.entityId),
-          isNull(docs.deletedAt),
-        ),
-      )
-      .leftJoin(docProject, eq(docProject.id, docs.projectId))
-      .leftJoin(
-        incidents,
-        and(
-          eq(notifications.entityType, "incident"),
-          eq(incidents.id, notifications.entityId),
-          isNull(incidents.deletedAt),
-        ),
-      )
-      .leftJoin(incidentProject, eq(incidentProject.id, incidents.projectId))
-      .leftJoin(fromStatus, eq(fromStatus.id, metaUuid("from")))
-      .leftJoin(toStatus, eq(toStatus.id, metaUuid("to")))
-      .where(and(eq(notifications.userId, userId), where))
-      .orderBy(desc(notifications.createdAt), desc(notifications.id))
-      .limit(limit)
-      .offset(offset);
+    return (
+      db
+        .select({
+          id: notifications.id,
+          type: notifications.type,
+          meta: notifications.meta,
+          readAt: notifications.readAt,
+          createdAt: notifications.createdAt,
+          actorName: actor.name,
+          issueNumber: issues.number,
+          issueTitle: issues.title,
+          issueProjectKey: issueProject.key,
+          docId: docs.id,
+          docTitle: docs.title,
+          docProjectKey: docProject.key,
+          incidentNumber: incidents.number,
+          incidentTitle: incidents.title,
+          incidentProjectKey: incidentProject.key,
+          costProjectKey: costProject.key,
+          statusFrom: fromStatus.name,
+          statusTo: toStatus.name,
+        })
+        .from(notifications)
+        .leftJoin(actor, eq(actor.id, notifications.actorId))
+        .leftJoin(
+          issues,
+          and(
+            eq(notifications.entityType, "issue"),
+            eq(issues.id, notifications.entityId),
+            isNull(issues.deletedAt),
+          ),
+        )
+        .leftJoin(issueProject, eq(issueProject.id, issues.projectId))
+        .leftJoin(
+          docs,
+          and(
+            eq(notifications.entityType, "doc"),
+            eq(docs.id, notifications.entityId),
+            isNull(docs.deletedAt),
+          ),
+        )
+        .leftJoin(docProject, eq(docProject.id, docs.projectId))
+        .leftJoin(
+          incidents,
+          and(
+            eq(notifications.entityType, "incident"),
+            eq(incidents.id, notifications.entityId),
+            isNull(incidents.deletedAt),
+          ),
+        )
+        .leftJoin(incidentProject, eq(incidentProject.id, incidents.projectId))
+        // COST-7: a deleted item still names its project (the month is what matters).
+        .leftJoin(
+          costItems,
+          and(eq(notifications.entityType, "cost_item"), eq(costItems.id, notifications.entityId)),
+        )
+        .leftJoin(
+          costProject,
+          and(eq(costProject.id, costItems.projectId), isNull(costProject.archivedAt)),
+        )
+        .leftJoin(fromStatus, eq(fromStatus.id, metaUuid("from")))
+        .leftJoin(toStatus, eq(toStatus.id, metaUuid("to")))
+        .where(and(eq(notifications.userId, userId), where))
+        .orderBy(desc(notifications.createdAt), desc(notifications.id))
+        .limit(limit)
+        .offset(offset)
+    );
   }
 
   return {

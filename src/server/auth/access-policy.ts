@@ -19,6 +19,9 @@ const PUBLIC_PATHS = new Set<string>([
   // NTF-2 digest job: Vercel Cron holds no session; the route requires
   // `Authorization: Bearer <CRON_SECRET>` (constant-time compare, 503 without the secret).
   "/api/cron/digest",
+  // COST-7 monthly jobs (the costs reminder), same auth as the digest: Bearer CRON_SECRET
+  // compared in constant time, 503 without the secret. Exact path only.
+  "/api/cron/monthly",
   // NTF-2 one-click unsubscribe (RFC 8058) from a digest email: the random token in the
   // link is the credential (only its hash is stored); GET only asks, POST unsubscribes,
   // rate limited per IP, and the page reveals nothing about the account.

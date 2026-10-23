@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { CostReminderBanner } from "@/features/costs/reminder-banner";
 import { RelativeTime } from "@/features/issue/client-utils";
 import { IssueTypeIcon, PriorityLabel, StatusBadge } from "@/features/issue/issue-badges";
+import { localDate } from "@/lib/costs/month";
 import { type StatusCategory } from "@/lib/issues/constants";
 import { MY_WORK_MENTIONS } from "@/lib/notifications/schemas";
 import { requirePageSession } from "@/server/auth/require-session";
-import { mentionQueries, planningQueries } from "@/server/services";
+import { costQueries, mentionQueries, planningQueries } from "@/server/services";
 import { BOARD_DONE_DAYS } from "@/server/services/planning-queries";
 
 export const metadata: Metadata = { title: "My Work" };
@@ -23,16 +25,20 @@ const MENTION_SOURCE = { issue: "description", comment: "comment", doc: "doc" } 
 
 /**
  * MY-1: issues assigned to me by status category, recently viewed items, and the latest
- * places others @mentioned me (issue descriptions, comments, docs). One round trip.
+ * places others @mentioned me (issue descriptions, comments, docs), plus the COST-7 card
+ * when last month's costs are incomplete and I am a reminder recipient. One round trip.
  */
 export default async function MyWorkPage() {
   // Layouts and pages render in parallel, so each page checks the session itself too.
   const session = await requirePageSession();
   const name = session.user.name || session.user.email;
-  const [assigned, recent, mentions] = await Promise.all([
+  // COST-7 fallback card: computed in this same batch (no extra round trip).
+  const today = localDate(new Date());
+  const [assigned, recent, mentions, costReminders] = await Promise.all([
     planningQueries.listAssignedTo(session.user.id),
     planningQueries.listRecentlyViewed(session.user.id),
     mentionQueries.listMentionsOf(session.user.id, MY_WORK_MENTIONS),
+    costQueries.remindersFor(session.user.id, today),
   ]);
   const total = assigned.in_progress.length + assigned.todo.length;
 
@@ -45,6 +51,18 @@ export default async function MyWorkPage() {
           open {total === 1 ? "issue" : "issues"}.
         </p>
       </div>
+
+      {costReminders.length > 0 ? (
+        <section aria-label="Cost reminders" className="flex flex-col gap-2">
+          {costReminders.map((reminder) => (
+            <CostReminderBanner
+              key={`${reminder.projectKey}:${reminder.month}`}
+              projectKey={reminder.projectKey}
+              reminder={reminder}
+            />
+          ))}
+        </section>
+      ) : null}
 
       <section aria-labelledby="assigned-heading" className="flex flex-col gap-4">
         <h2 id="assigned-heading" className="text-lg font-medium">

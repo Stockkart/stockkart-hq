@@ -14,7 +14,7 @@ import { LazyBurndownChart, LazyVelocityChart } from "./lazy-charts";
  * the "Show table" toggle swaps the chart for the visible table. The chart itself is hidden
  * from assistive technology, since the table carries the same data.
  */
-function ChartFigure({
+export function ChartFigure({
   title,
   summary,
   chart,

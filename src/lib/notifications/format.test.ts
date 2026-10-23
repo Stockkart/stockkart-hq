@@ -95,4 +95,29 @@ describe("notification wording (NTF-1)", () => {
     expect(unreadBadge(7)).toBe("7");
     expect(unreadBadge(100)).toBe("99+");
   });
+
+  it("words the COST-7 reminder as a system event linking to the month", () => {
+    const costs = {
+      kind: "costs",
+      title: "October 2026 costs",
+      href: "/STK/costs?month=2026-10",
+    } as const;
+    const reminder = view({
+      type: "cost_reminder",
+      actorName: null,
+      target: costs,
+      costReminder: { month: "2026-10", missingCount: 5 },
+    });
+    expect(notificationActor(reminder)).toBe("Stockkart HQ");
+    expect(notificationText(reminder)).toBe(
+      "reminds you: October 2026 costs are not added yet (5 items missing)",
+    );
+    expect(notificationHref(reminder)).toBe("/STK/costs?month=2026-10");
+    expect(
+      notificationText({ ...reminder, costReminder: { month: "2026-10", missingCount: 1 } }),
+    ).toContain("(1 item missing)");
+    expect(notificationText({ ...reminder, costReminder: null })).toBe(
+      "reminds you to add last month's costs",
+    );
+  });
 });

@@ -129,7 +129,8 @@ export const envSchema = z.object({
       .optional(),
   ),
   // NTF-2 digest job: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`
-  // (`openssl rand -hex 32`). Optional, but /api/cron/digest then answers 503 (fail closed).
+  // (`openssl rand -hex 32`). Optional, but /api/cron/digest and /api/cron/monthly (COST-7)
+  // then answer 503 (fail closed).
   CRON_SECRET: optionalString.pipe(
     z.string().min(32, "CRON_SECRET must be at least 32 characters").optional(),
   ),

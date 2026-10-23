@@ -55,6 +55,7 @@ describe("default-deny access policy", () => {
     "/api/auth/csrf",
     "/api/webhooks/github",
     "/api/cron/digest",
+    "/api/cron/monthly",
     "/unsubscribe",
     "/_next/static/chunks/a.js",
   ])("lets anonymous requests reach public path %s", (path) => {
@@ -73,6 +74,11 @@ describe("default-deny access policy", () => {
     "/api/cron/",
     "/api/cron/digest/",
     "/api/cron/digest/x",
+    // COST-7: exact path too.
+    "/api/cron/monthly/",
+    "/api/cron/monthly/x",
+    "/api/cron/monthlyx",
+    "/API/cron/monthly",
     "/api/cron/other",
     "/unsubscribe/",
     "/unsubscribe/x",
