@@ -240,14 +240,21 @@ editor JSON → GitHub-flavoured Markdown, deterministic, ending in exactly one 
 | diagram embed                    | `[Diagram: Title](/<KEY>/diagrams/<id>)`                             |
 | inline comment anchor            | dropped (the text stays)                                             |
 
-Docs that link to `/api/files/…` or `/<KEY>/diagrams/…` end with one HTML comment saying
-those links only work inside HQ; the importer drops that line again. ADRs start with
+Docs with root-relative links into HQ (`/api/…` attachments, `/<KEY>/…` diagrams, docs,
+issues) end with one HTML comment saying those links only work inside HQ; the importer
+drops that paragraph again (not the same line inside a code block). ADRs start with
 `# NNNN. Title`, and their Status paragraph starts with the status from the columns
 (`` `Accepted` ``, `` `Accepted (recorded retrospectively)` ``, `Superseded by
 [NNNN](NNNN-slug.md)` …), keeping the rest ("Recorded against …").
 
+Escaping covers CommonMark and GitHub: ``\ ` * [ ] < | ~ $`` always (GitHub reads a single
+`~x~` as strikethrough and `$x$` as math), `_` unless inside a word, `&` before an entity,
+`#` in headings, and what would start a block at a line start (`# - + = > :` and `1.`);
+whitespace at a line's edges is written as `&#32;`. Bare URLs, `#123` and `@name` still
+autolink on GitHub (display only).
+
 `markdownToRichText(richTextToMarkdown(doc))` equals `normalizeForMarkdown(doc)` and a second
-export is byte-identical (tests, including 1 500 generated inline cases). Known lossy cases:
+export is byte-identical (tests, including 3 000 generated cases). Known lossy cases:
 soft line breaks (paragraphs come back on one line), heading levels 4–6 (→ 3), empty
 paragraphs and a trailing hard break, hard breaks in headings and table cells (→ space),
 table cell spans, a header column and non-paragraph blocks in cells (their text), marks on
@@ -255,16 +262,19 @@ inline code, bold/italic/strike on whitespace at their edges (moved outside) and
 emphasis that starts or ends mid-word next to punctuation (dropped, text kept, rather than
 emitting Markdown that means something else), mentions/attachments/diagram embeds (become
 text and links), comment anchors, unknown nodes (their text), code block languages outside
-`[A-Za-z0-9_+#.-]`, and a `mermaid` code block (becomes a Mermaid block). A bullet list whose
-items all start with a literal `[ ] ` and a quote starting with a bold `Note:` read back as a
-task list and a callout.
+`[A-Za-z0-9_+#.-]`, a `mermaid` code block (becomes a Mermaid block), ordered lists whose
+last number would exceed nine digits (renumbered from 1) and NUL characters (U+FFFD). A
+bullet list whose items all start with a literal `[ ] ` and a quote starting with a bold
+`Note:` read back as a task list and a callout. An empty task item is written `- [ ]&#32;`,
+which HQ reads back as a task but GitHub shows as the text `[ ]`.
 
 **Repo paths** (`src/lib/docs/handbook-path.ts`): `docs.handbook_path` if set, else
 `docs.source_path`, else ADRs `decisions/NNNN-<slug>.md` (ASCII kebab title, ≤ 60 chars) and
-other docs `<UPPER_SNAKE_TITLE>.md` at the top level. A path must be relative, use ASCII
-letters, digits, `_`, `-` and `.` in `/`-separated segments that do not start with `.`,
-contain no `..`, end in lower-case `.md` and be at most 200 characters (CHECKed in the
-database too); an invalid stored path is skipped.
+other docs `<UPPER_SNAKE_TITLE>.md` at the top level (a GitHub-special name such as
+`README`, `LICENSE` or `SECURITY` gets `_DOC`). A path must be relative, use ASCII letters,
+digits, `_`, `-` and `.` in `/`-separated segments that do not start with `.`, contain no
+`..`, end in lower-case `.md` and be at most 200 characters (CHECKed in the database too);
+an invalid stored path is skipped. One live doc per file, case-insensitively.
 
 ## Performance
 

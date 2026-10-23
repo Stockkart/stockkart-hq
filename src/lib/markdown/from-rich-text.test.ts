@@ -199,6 +199,10 @@ const FIXTURES: Record<string, RichTextNode> = {
     p(text("Wow!"), text("link", link("https://example.test"))),
     p(text("```")),
     p(text("[ref]: https://example.test")),
+    // A pipe line followed by a delimiter-looking line must not become a table.
+    p(text("a | b"), { type: "hardBreak" }, text(":-")),
+    p(text("x `|` y"), { type: "hardBreak" }, text("-|-")),
+    p(text("~single~ and $math$ and \u0000nul")),
   ),
 };
 
@@ -296,9 +300,11 @@ describe("richTextToMarkdown (DOC-12)", () => {
     expect(markdown).toContain("snake_case_name and \\_under\\_ and \\*star\\*");
     expect(markdown).toContain("&#32;&#32;&#32;&#32;four spaces");
     expect(markdown).toContain("Wow\\![link](https://example.test)");
-    // Every paragraph reads back as exactly its text.
+    // Every paragraph reads back as exactly its text (NUL reads as U+FFFD, as in markdown-it).
     const back = markdownToRichText(markdown);
-    expect(extractPlainText(back)).toBe(extractPlainText(FIXTURES.escaping ?? doc()));
+    expect(extractPlainText(back)).toBe(
+      extractPlainText(FIXTURES.escaping ?? doc()).replace(/\0/g, "\uFFFD"),
+    );
   });
 
   it("is empty-safe and ends with exactly one newline", () => {
@@ -311,6 +317,37 @@ describe("richTextToMarkdown (DOC-12)", () => {
     const tricky = doc(p(text("x"), text('"q"', "bold"), text("y")));
     const markdown = expectRoundTrip(tricky);
     expect(extractPlainText(markdownToRichText(markdown))).toBe('x"q"y');
+  });
+
+  it("never lets text start a table, and escapes GitHub's single ~ and $ math", () => {
+    expect(toMarkdown(doc(p(text("a | b"), { type: "hardBreak" }, text(":-"))))).toBe(
+      "a \\| b\\\n\\:-\n",
+    );
+    expect(toMarkdown(doc(p(text("~x~ costs $5 or $x$"))))).toBe("\\~x\\~ costs \\$5 or \\$x\\$\n");
+  });
+
+  it("keeps ordered list numbers within CommonMark's nine digits", () => {
+    const list = (start: number) =>
+      doc({
+        type: "orderedList",
+        attrs: { start },
+        content: [item(p(text("a"))), item(p(text("b")))],
+      });
+    expect(toMarkdown(list(999_999_998))).toBe("999999998. a\n999999999. b\n");
+    expect(toMarkdown(list(999_999_999))).toBe("1. a\n2. b\n");
+    expectRoundTrip(list(999_999_999));
+  });
+
+  it("notes HQ links of any kind, and keeps the note's text inside code", () => {
+    expect(toMarkdown(doc(p(text("see"), text(" STK-1", link("/STK/issues/STK-1")))))).toContain(
+      HQ_ONLY_LINKS_NOTE,
+    );
+    expect(toMarkdown(doc(p(text("x", link("https://example.test/STK")))))).toBe(
+      "[x](https://example.test/STK)\n",
+    );
+    expectRoundTrip(
+      doc({ type: "codeBlock", attrs: { language: null }, content: [text(HQ_ONLY_LINKS_NOTE)] }),
+    );
   });
 
   it("is stable on Markdown written by hand (one pass normalises the formatting)", () => {
@@ -427,6 +464,50 @@ describe("richTextToMarkdown on generated inline content", () => {
       // headings and cells; edge breaks of a paragraph are dropped).
       const flat = (node: RichTextNode) => extractPlainText(node).replace(/\s+/g, "");
       expect(flat(normalized)).toBe(flat(fixture));
+    }
+  });
+
+  it("never turns lines of block-start characters into structure (1500 cases)", () => {
+    const random = prng(7);
+    const TOKENS = [
+      "|",
+      ":",
+      "-",
+      "---",
+      ":-:",
+      "a",
+      " ",
+      "1.",
+      "2)",
+      "#",
+      ">",
+      "=",
+      "+",
+      "*",
+      "`",
+      "~",
+      "$",
+      "[",
+    ];
+    const pick = () => TOKENS[Math.floor(random() * TOKENS.length)] ?? "a";
+    for (let run = 0; run < 1500; run += 1) {
+      const lineCount = 1 + Math.floor(random() * 4);
+      const nodes: RichTextNode[] = [];
+      for (let line = 0; line < lineCount; line += 1) {
+        if (line > 0) nodes.push({ type: "hardBreak" });
+        nodes.push(text(Array.from({ length: 1 + Math.floor(random() * 4) }, pick).join("")));
+      }
+      const container = Math.floor(random() * 3);
+      const fixture =
+        container === 0
+          ? doc(p(...nodes))
+          : container === 1
+            ? doc({ type: "blockquote", content: [p(...nodes)] })
+            : doc({ type: "bulletList", content: [item(p(...nodes))] });
+      const markdown = richTextToMarkdown(fixture);
+      expect(sortMarks(markdownToRichText(markdown)), markdown).toEqual(
+        sortMarks(normalizeForMarkdown(fixture)),
+      );
     }
   });
 });

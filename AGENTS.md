@@ -226,15 +226,15 @@ entity_id)` → `comments (id, entity_type, entity_id)` keeps a reply on its thr
     `handbook_remote_sha` (needs `handbook_remote_seen_at`; a seen-at without a sha means
     "absent on the default branch"). Shas are 40 lower-case hex (CHECK); paths follow
     `isHandbookPath` (CHECK, same regex). Unique index on
-    `(project_id, coalesce(handbook_path, source_path))` for live docs: one doc per file, so
-    persist the default path into `handbook_path` when a doc is first published.
+    `(project_id, lower(coalesce(handbook_path, source_path)))` for live docs: one doc per
+    file, so persist the default path into `handbook_path` when a doc is first published.
   - `handbook_publications`: `branch` (`hq/<one segment>`, CHECK; unique per project),
     `pr_number` + `pr_url` (together; `https://github.com/<owner>/<repo>/pull/<n>`),
     `state` `open|merged|closed|failed`, generated `is_open`, `created_by`, `merged_at`
     (exactly while `merged`), `error_code` (only on `failed`, `^[a-z0-9_.-]{1,64}$`).
     `merged`/`closed` need a PR.
   - `handbook_publication_docs` (PK publication + doc; path, `doc_version`, `blob_sha`,
-    `open`). **One open publication per doc** = partial unique index on `doc_id WHERE open`.
+    `open`; one row per path per publication, case-insensitive). **One open publication per doc** = partial unique index on `doc_id WHERE open`.
     `open` is not app-maintained: a composite FK `(publication_id, open)` →
     `handbook_publications (id, is_open)` `ON UPDATE CASCADE` copies the generated flag, so
     an UPDATE of `state` flips it in the same statement (no trigger; a wrong `open` on insert
@@ -409,7 +409,19 @@ Rules for the sync slice:
   sync (that is a conflict to show, both ways).
 - One open publication per doc is enforced by the database (see "Database"); catch the
   unique violation on `handbook_publication_docs_one_open_per_doc` and report "already being
-  published".
+  published". Doc and publication in the same project is the app's check.
+- **Which doc owns a repo file** is `coalesce(handbook_path, source_path)` on live docs
+  (case-insensitive unique index). Pulls and webhooks must resolve files by that, not by
+  `source_path` alone (the importer's key): a doc whose `handbook_path` moved keeps its old
+  `source_path`, and another doc may now own that file. Persist the default path into
+  `handbook_path` on first publish, so the index covers it.
+- Default paths never take a GitHub-special top-level name (`README`, `LICENSE`,
+  `SECURITY`, `CONTRIBUTING` … get `_DOC`); an explicit `handbook_path` may, so the publish
+  UI should confirm before writing `README.md`, `decisions/0000-template.md` or such.
+- **Public repo.** The serializer writes @mentions as `@Display Name` (which may also ping a
+  same-named GitHub user) and HQ ids in `/api/files/<id>` and `/<KEY>/…` links. Decide in the
+  publish UI whether to warn about or strip them before the first PR; nothing is published
+  automatically.
 - Branches are `hq/…` only; the App never pushes to the default branch or to a branch a
   person made. Never log the App's private key or installation tokens; `error_code` holds a
   short code, never a response body.

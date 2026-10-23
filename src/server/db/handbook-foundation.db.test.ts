@@ -132,6 +132,10 @@ describeDb("handbook foundation schema (Postgres)", () => {
     expect(await violation(newDoc({ handbookPath: "RUNBOOK.md" }))).toBe(
       "docs_project_handbook_file_unique",
     );
+    // Case-insensitive, like a macOS or Windows checkout.
+    expect(await violation(newDoc({ handbookPath: "Runbook.md" }))).toBe(
+      "docs_project_handbook_file_unique",
+    );
     const other = await newDoc({ handbookPath: "OTHER.md" });
     await db.update(docs).set({ deletedAt: new Date() }).where(eq(docs.id, other));
     // A deleted doc frees its file.
@@ -256,5 +260,14 @@ describeDb("handbook foundation schema (Postgres)", () => {
       "handbook_publication_docs_blob_sha_format",
     );
     await insert({ blobSha: SHA });
+    // One file per path in a publication.
+    const otherDoc = await newDoc();
+    expect(
+      await violation(
+        db
+          .insert(handbookPublicationDocs)
+          .values({ publicationId, docId: otherDoc, path: "a.md", docVersion: 1 }),
+      ),
+    ).toBe("handbook_publication_docs_publication_path_unique");
   });
 });

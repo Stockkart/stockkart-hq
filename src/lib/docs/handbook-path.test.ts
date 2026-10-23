@@ -71,6 +71,16 @@ describe("handbook paths (DOC-12, DOC-14)", () => {
     expect(defaultHandbookPath({ type: "page", title: "../../etc", adrNumber: null })).toBe(
       "ETC.md",
     );
+    // Never a file GitHub gives a meaning to (license, security policy, readme …).
+    expect(defaultHandbookPath({ type: "page", title: "Security", adrNumber: null })).toBe(
+      "SECURITY_DOC.md",
+    );
+    expect(defaultHandbookPath({ type: "page", title: "Readme", adrNumber: null })).toBe(
+      "README_DOC.md",
+    );
+    expect(
+      handbookPathFor({ type: "page", title: "Readme", adrNumber: null, sourcePath: "README.md" }),
+    ).toBe("README.md");
   });
 
   it("prefers the override, then the import's source path, skipping invalid ones", () => {

@@ -74,6 +74,26 @@ export interface HandbookPathDoc {
   sourcePath?: string | null;
 }
 
+/**
+ * Top-level names GitHub gives a meaning to (the repo's readme, license, security policy …).
+ * A default path never takes one: a doc titled "Security" becomes `SECURITY_DOC.md`. The
+ * handbook's own README keeps `README.md` through its import `source_path`.
+ */
+const RESERVED_TOP_LEVEL = new Set([
+  "README",
+  "LICENSE",
+  "LICENCE",
+  "COPYING",
+  "SECURITY",
+  "CONTRIBUTING",
+  "CODE_OF_CONDUCT",
+  "SUPPORT",
+  "GOVERNANCE",
+  "FUNDING",
+  "CITATION",
+  "CODEOWNERS",
+]);
+
 /** The default path of a doc that has none stored. */
 export function defaultHandbookPath(doc: Omit<HandbookPathDoc, "handbookPath" | "sourcePath">) {
   if (doc.type === "adr") {
@@ -82,7 +102,8 @@ export function defaultHandbookPath(doc: Omit<HandbookPathDoc, "handbookPath" | 
     const prefix = doc.adrNumber !== null ? `${formatAdrNumber(doc.adrNumber)}-` : "";
     return `${HANDBOOK_DECISIONS_DIR}/${prefix}${handbookSlug(title)}.md`;
   }
-  return `${handbookUpperSnake(doc.title)}.md`;
+  const name = handbookUpperSnake(doc.title);
+  return `${RESERVED_TOP_LEVEL.has(name) ? `${name}_DOC` : name}.md`;
 }
 
 /** The doc's repo path (see the module comment for precedence); always a valid path. */

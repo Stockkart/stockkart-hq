@@ -59,12 +59,13 @@ const TASK_PREFIX = /^\[([ xX])\]\s/;
 export const CALLOUT_LABELS = { info: "Note:", warning: "Warning:" } as const;
 
 /**
- * The comment the export appends when a doc links to HQ-only URLs (attachments under
- * `/api/files/…`, diagrams under `/<KEY>/diagrams/…`): GitHub hides it, and the import drops
- * the line again. Keep it a single line.
+ * The comment the export appends when a doc links into HQ (root-relative `/api/…` and
+ * `/<KEY>/…` links: attachments, diagrams, docs, issues). GitHub hides it, and the import
+ * drops it again, but only as a top-level paragraph of exactly this text (so the same line
+ * inside a code block stays). Keep it a single line.
  */
 export const HQ_ONLY_LINKS_NOTE =
-  "<!-- Stockkart HQ: links to /api/files/… (attachments) and /<project>/diagrams/… only work inside HQ, after signing in. -->";
+  "<!-- Stockkart HQ: links starting with /api/ or /<project>/ only work inside HQ, after signing in. -->";
 
 const sameMarks = (a: RichTextMark[] | undefined, b: RichTextMark[] | undefined) =>
   JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
@@ -256,12 +257,7 @@ export function markdownToRichText(markdown: string): RichTextDoc {
     parent.content = [...(parent.content ?? []), node];
   };
 
-  // The export's "HQ-only links" comment is not content (raw HTML would stay literal text).
-  const source = markdown
-    .split("\n")
-    .filter((line) => line.trim() !== HQ_ONLY_LINKS_NOTE)
-    .join("\n");
-  for (const token of md.parse(source, {})) {
+  for (const token of md.parse(markdown, {})) {
     if (IGNORED.has(token.type)) continue;
     const open = OPEN_TYPES[token.type];
     if (open) {
@@ -318,7 +314,15 @@ export function markdownToRichText(markdown: string): RichTextDoc {
           append({ type: "paragraph", content: [{ type: "text", text: token.content }] });
     }
   }
-  return { type: "doc", content: root.content?.length ? root.content : [{ type: "paragraph" }] };
+  // The export's "HQ-only links" comment is not content (raw HTML would stay literal text).
+  const isNote = (node: RichTextNode) =>
+    node.type === "paragraph" &&
+    node.content?.length === 1 &&
+    node.content[0]?.type === "text" &&
+    !node.content[0].marks &&
+    node.content[0].text === HQ_ONLY_LINKS_NOTE;
+  const blocks = (root.content ?? []).filter((node) => !isNote(node));
+  return { type: "doc", content: blocks.length > 0 ? blocks : [{ type: "paragraph" }] };
 }
 
 /** A leading `# Title` becomes the doc title (the page shows the title itself). */

@@ -1,5 +1,5 @@
 {
-  "id": "44afd637-854d-45d3-862a-2a855b1a8a69",
+  "id": "a05888a9-b700-45b7-94e2-71dd3575ea32",
   "prevId": "97801e3f-213e-40c3-a747-49130ffe3d17",
   "version": "7",
   "dialect": "postgresql",
@@ -1391,7 +1391,7 @@
               "nulls": "last"
             },
             {
-              "expression": "coalesce(\"handbook_path\", \"source_path\")",
+              "expression": "lower(coalesce(\"handbook_path\", \"source_path\"))",
               "asc": true,
               "isExpression": true,
               "nulls": "last"
@@ -2244,6 +2244,27 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "handbook_publication_docs_publication_path_unique": {
+          "name": "handbook_publication_docs_publication_path_unique",
+          "columns": [
+            {
+              "expression": "publication_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "lower(\"path\")",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
           "concurrently": false,
           "method": "btree",
           "with": {}

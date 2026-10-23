@@ -98,6 +98,9 @@ function normalizeMarks(marks: readonly RichTextMark[] | undefined): RichTextMar
 }
 
 const markKey = (mark: RichTextMark) => canonicalJson(mark);
+
+/** As markdown-it reads text: newlines in inline text are spaces, NUL is U+FFFD. */
+const inlineText = (value: string) => value.replace(/\r\n?|\n/g, " ").replace(/\0/g, "\uFFFD");
 const sameMarks = (a: readonly RichTextMark[] = [], b: readonly RichTextMark[] = []) =>
   a.length === b.length && a.every((mark, index) => markKey(mark) === markKey(b[index] ?? mark));
 const hasMark = (marks: readonly RichTextMark[] | undefined, mark: RichTextMark) =>
@@ -146,14 +149,16 @@ function flattenInline(nodes: readonly RichTextNode[], context: InlineContext): 
     switch (node.type) {
       case "text":
         // A text node holds no newlines in the editor; if one does, it reads as a space.
-        out.push(textNode((node.text ?? "").replace(/\r\n?|\n/g, " "), normalizeMarks(node.marks)));
+        out.push(textNode(inlineText(node.text ?? ""), normalizeMarks(node.marks)));
         break;
       case "hardBreak":
         out.push(context.breaks ? { type: "hardBreak" } : textNode(" "));
         break;
       case USER_MENTION_NODE:
         // @mentions are plain `@Name` in Markdown (the user id is HQ-only).
-        out.push(textNode(`@${mentionLabel(node) ?? "someone"}`, normalizeMarks(node.marks)));
+        out.push(
+          textNode(inlineText(`@${mentionLabel(node) ?? "someone"}`), normalizeMarks(node.marks)),
+        );
         break;
       case FILE_NODE: {
         const attrs = fileNodeAttrs(node.attrs);
@@ -162,7 +167,7 @@ function flattenInline(nodes: readonly RichTextNode[], context: InlineContext): 
           (mark) => mark.type !== "link" && mark.type !== "code",
         );
         out.push(
-          textNode(attrs.filename, [
+          textNode(inlineText(attrs.filename), [
             { type: "link", attrs: { href: attachmentUrl(attrs.attachmentId) } },
             ...marks,
           ]),
@@ -175,7 +180,7 @@ function flattenInline(nodes: readonly RichTextNode[], context: InlineContext): 
       default:
         if (node.content) out.push(...flattenInline(node.content, context));
         else {
-          const text = extractPlainText(node).replace(/\s*\n\s*/g, " ");
+          const text = inlineText(extractPlainText(node).replace(/\s*\n\s*/g, " "));
           if (text) out.push(textNode(text, normalizeMarks(node.marks)));
         }
     }
@@ -316,7 +321,8 @@ function codeText(node: RichTextNode): string {
   return (node.content ?? [])
     .map((child) => child.text ?? "")
     .join("")
-    .replace(/\r\n?/g, "\n");
+    .replace(/\r\n?/g, "\n")
+    .replace(/\0/g, "\uFFFD");
 }
 
 function linkParagraph(text: string, href: string | null): RichTextNode[] {
@@ -359,7 +365,7 @@ function normalizeTable(node: RichTextNode): RichTextNode[] {
           const parts = (cells[column]?.content ?? []).map((block) =>
             block.type === "paragraph" || block.type === "heading"
               ? (block.content ?? [])
-              : [textNode(extractPlainText(block).replace(/\s*\n\s*/g, " "))],
+              : [textNode(inlineText(extractPlainText(block).replace(/\s*\n\s*/g, " ")))],
           );
           const inline = parts
             .filter((part) => part.length > 0)
@@ -419,7 +425,9 @@ function normalizeBlock(node: RichTextNode, options: Options): RichTextNode[] {
       if (items.length === 0) return [];
       if (node.type === "orderedList") {
         const start = Number(node.attrs?.start ?? 1);
-        const valid = Number.isInteger(start) && start >= 0 && start <= MAX_ORDERED_START;
+        // CommonMark markers have at most 9 digits: the LAST item's number must fit too.
+        const valid =
+          Number.isInteger(start) && start >= 0 && start + items.length - 1 <= MAX_ORDERED_START;
         return [
           valid && start !== 1
             ? { type: "orderedList", attrs: { start }, content: items }
@@ -451,7 +459,12 @@ function normalizeBlock(node: RichTextNode, options: Options): RichTextNode[] {
     }
     case "mermaid": {
       const source = typeof node.attrs?.source === "string" ? node.attrs.source : "";
-      return [{ type: "mermaid", attrs: { source: source.replace(/\r\n?/g, "\n") } }];
+      return [
+        {
+          type: "mermaid",
+          attrs: { source: source.replace(/\r\n?/g, "\n").replace(/\0/g, "\uFFFD") },
+        },
+      ];
     }
     case "horizontalRule":
       return [{ type: "horizontalRule" }];
@@ -514,7 +527,17 @@ export function normalizeForMarkdown(
 ): RichTextDoc {
   const projectKey =
     options.projectKey && PROJECT_KEY_PATTERN.test(options.projectKey) ? options.projectKey : null;
-  return { type: "doc", content: atLeastOne(normalizeBlocks(doc.content ?? [], { projectKey })) };
+  // Mirrors the importer, which drops a top-level paragraph that is exactly the note.
+  const blocks = normalizeBlocks(doc.content ?? [], { projectKey }).filter(
+    (node) =>
+      !(
+        node.type === "paragraph" &&
+        node.content?.length === 1 &&
+        node.content[0]?.text === HQ_ONLY_LINKS_NOTE &&
+        !node.content[0].marks
+      ),
+  );
+  return { type: "doc", content: atLeastOne(blocks) };
 }
 
 // ── Printing ────────────────────────────────────────────────────────────────────────────
@@ -529,19 +552,17 @@ interface PrintContext {
 const ENTITY = /^&(?:#[0-9]{1,7}|#[xX][0-9a-fA-F]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/;
 const ALNUM = /^[\p{L}\p{N}]$/u;
 
-/** Backslash-escapes what markdown-it would read as syntax inside a line. */
+/** Backslash-escapes what markdown-it or GitHub would read as syntax inside a line. GitHub
+ * also reads a single `~x~` as strikethrough and `$x$` as math, so both are always escaped. */
 function escapeText(text: string, context: PrintContext): string {
   let out = "";
   for (let index = 0; index < text.length; index += 1) {
     const char = text.charAt(index);
     const prev = text.charAt(index - 1);
     const next = text.charAt(index + 1);
-    if ("\\`*[]<|".includes(char)) out += `\\${char}`;
+    if ("\\`*[]<|~$".includes(char)) out += `\\${char}`;
     // `_` between two letters/digits is never emphasis (snake_case stays readable).
     else if (char === "_") out += ALNUM.test(prev) && ALNUM.test(next) ? "_" : "\\_";
-    // A lone `~` is text; `~~` (or one next to a strike delimiter) is not.
-    else if (char === "~")
-      out += prev === "~" || next === "~" || index === 0 || index === text.length - 1 ? "\\~" : "~";
     else if (char === "&") out += ENTITY.test(text.slice(index)) ? "\\&" : "&";
     // `!` right before a link's `[` would make it an image.
     else if (char === "!" && index === text.length - 1) out += "\\!";
@@ -552,9 +573,11 @@ function escapeText(text: string, context: PrintContext): string {
   return out;
 }
 
-/** At the start of a line: `# `, `- `, `+ `, `= `, `> `, `1. ` would start a block. */
+/** At the start of a line: `# `, `- `, `+ `, `= `, `> `, `1. ` would start a block, and a
+ * line starting with `:` (after `-`/`|`, already escaped) could be a table delimiter row
+ * under a line holding a pipe (tables may interrupt a paragraph). */
 function escapeLineStart(escaped: string): string {
-  if (/^[#\-+=>]/.test(escaped)) return `\\${escaped}`;
+  if (/^[#\-+=>:]/.test(escaped)) return `\\${escaped}`;
   return escaped.replace(/^(\d{1,9})([.)])/, "$1\\$2");
 }
 
@@ -775,7 +798,8 @@ function printBlocks(nodes: readonly RichTextNode[]): string[] {
   });
 }
 
-const HQ_ONLY_HREF = /^\/(?:api\/files\/|[A-Z]{2,5}\/diagrams\/)/;
+/** Root-relative links into HQ: `/api/…` (attachments) and `/<KEY>…` (diagrams, docs, issues). */
+const HQ_ONLY_HREF = /^\/(?:api\/|[A-Z]{2,5}(?:[/?#]|$))/;
 
 function linksIntoHq(node: RichTextNode): boolean {
   return (

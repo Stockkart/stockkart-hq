@@ -280,12 +280,20 @@ describe("markdownToRichText: shapes the export writes (DOC-12 symmetry)", () =>
     ]);
   });
 
-  it("drops the export's HQ-only-links comment line, and nothing else", () => {
+  it("drops the export's HQ-only-links comment paragraph, and nothing else", () => {
     expect(blocks(`text\n\n${HQ_ONLY_LINKS_NOTE}\n`)).toEqual([
       { type: "paragraph", content: [{ type: "text", text: "text" }] },
     ]);
     expect(blocks("<!-- other -->")).toEqual([
       { type: "paragraph", content: [{ type: "text", text: "<!-- other -->" }] },
+    ]);
+    // The same line inside a code block is content.
+    expect(blocks(`\`\`\`\n${HQ_ONLY_LINKS_NOTE}\n\`\`\``)).toEqual([
+      {
+        type: "codeBlock",
+        attrs: { language: null },
+        content: [{ type: "text", text: HQ_ONLY_LINKS_NOTE }],
+      },
     ]);
   });
 

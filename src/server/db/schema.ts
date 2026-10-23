@@ -714,9 +714,10 @@ export const docs = pgTable(
     check("docs_not_own_parent", sql`${table.parentId} IS DISTINCT FROM ${table.id}`),
     // Migration 0006 (handbook sync). One live doc per repo file: the override or, failing
     // that, the import's source path (a title-derived default is stored as `handbook_path`
-    // when a doc is first published, so it is covered too).
+    // when a doc is first published, so it is covered too). Case-insensitive, so two files
+    // never collide on a case-insensitive checkout (macOS, Windows).
     uniqueIndex("docs_project_handbook_file_unique")
-      .on(table.projectId, sql`coalesce(${table.handbookPath}, ${table.sourcePath})`)
+      .on(table.projectId, sql`lower(coalesce(${table.handbookPath}, ${table.sourcePath}))`)
       .where(
         sql`${table.deletedAt} IS NULL AND coalesce(${table.handbookPath}, ${table.sourcePath}) IS NOT NULL`,
       ),
@@ -1481,6 +1482,12 @@ export const handbookPublicationDocs = pgTable(
       .where(sql`${table.open}`),
     // A doc's publication history (the doc page's sync status).
     index("handbook_publication_docs_doc_idx").on(table.docId),
+    // One file per path in a PR. (Doc and publication in the same project is the app's
+    // check, as for incident_services.)
+    uniqueIndex("handbook_publication_docs_publication_path_unique").on(
+      table.publicationId,
+      sql`lower(${table.path})`,
+    ),
     check("handbook_publication_docs_path_format", handbookPathCheck(sql`${table.path}`, false)),
     check("handbook_publication_docs_version_positive", sql`${table.docVersion} > 0`),
     check(

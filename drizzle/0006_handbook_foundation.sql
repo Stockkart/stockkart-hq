@@ -52,10 +52,11 @@ ALTER TABLE "handbook_publications" ADD CONSTRAINT "handbook_publications_projec
 ALTER TABLE "handbook_publications" ADD CONSTRAINT "handbook_publications_created_by_users_id_fk" FOREIGN KEY ("created_by") REFERENCES "public"."users"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "handbook_publication_docs_one_open_per_doc" ON "handbook_publication_docs" USING btree ("doc_id") WHERE "handbook_publication_docs"."open";--> statement-breakpoint
 CREATE INDEX "handbook_publication_docs_doc_idx" ON "handbook_publication_docs" USING btree ("doc_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "handbook_publication_docs_publication_path_unique" ON "handbook_publication_docs" USING btree ("publication_id",lower("path"));--> statement-breakpoint
 CREATE UNIQUE INDEX "handbook_publications_project_branch_unique" ON "handbook_publications" USING btree ("project_id","branch");--> statement-breakpoint
 CREATE UNIQUE INDEX "handbook_publications_project_pr_unique" ON "handbook_publications" USING btree ("project_id","pr_number") WHERE "handbook_publications"."pr_number" IS NOT NULL;--> statement-breakpoint
 CREATE INDEX "handbook_publications_project_created_idx" ON "handbook_publications" USING btree ("project_id","created_at" DESC NULLS LAST);--> statement-breakpoint
-CREATE UNIQUE INDEX "docs_project_handbook_file_unique" ON "docs" USING btree ("project_id",coalesce("handbook_path", "source_path")) WHERE "docs"."deleted_at" IS NULL AND coalesce("docs"."handbook_path", "docs"."source_path") IS NOT NULL;--> statement-breakpoint
+CREATE UNIQUE INDEX "docs_project_handbook_file_unique" ON "docs" USING btree ("project_id",lower(coalesce("handbook_path", "source_path"))) WHERE "docs"."deleted_at" IS NULL AND coalesce("docs"."handbook_path", "docs"."source_path") IS NOT NULL;--> statement-breakpoint
 ALTER TABLE "docs" ADD CONSTRAINT "docs_handbook_path_format" CHECK ("docs"."handbook_path" IS NULL OR ("docs"."handbook_path" ~ '^([A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*[.]md$'
     AND char_length("docs"."handbook_path") <= 200
     AND strpos("docs"."handbook_path", '..') = 0));--> statement-breakpoint
