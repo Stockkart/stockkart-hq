@@ -7,6 +7,7 @@ import {
   type Ref,
   useCallback,
   useId,
+  useRef,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -149,6 +150,7 @@ export function PagesDrawer({
   onPin: () => void;
 }) {
   const [query, setQuery] = useState("");
+  const search = useRef<HTMLInputElement>(null);
   return (
     <Sheet
       open={open}
@@ -157,7 +159,16 @@ export function PagesDrawer({
         onOpenChange(next);
       }}
     >
-      <SheetContent side="left" aria-describedby={undefined} data-pages-nav="">
+      <SheetContent
+        side="left"
+        aria-describedby={undefined}
+        data-pages-nav=""
+        // Search-as-you-type: the search box, not the Pin button, gets the focus.
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          search.current?.focus();
+        }}
+      >
         <div className="flex items-center gap-2 pr-8">
           <SheetTitle>Pages</SheetTitle>
           <Button
@@ -171,7 +182,7 @@ export function PagesDrawer({
             Pin
           </Button>
         </div>
-        <PagesSearch value={query} onChange={setQuery} />
+        <PagesSearch value={query} onChange={setQuery} inputRef={search} />
         <div className="min-h-0 flex-1 overflow-y-auto">
           <DocTree
             projectKey={projectKey}

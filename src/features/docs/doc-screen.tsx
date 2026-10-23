@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { shouldIgnoreShortcut } from "@/features/issue/keyboard";
 import { callAction, RelativeTime } from "@/features/issue/client-utils";
 import { matchesShortcut } from "@/features/shell/shortcuts";
+import { UPLOADS_RUNNING_MESSAGE } from "@/lib/attachments/nodes";
 import { anchorIdsInOrder } from "@/lib/doc-comments/anchors";
 import { type DocThreadView } from "@/lib/doc-comments/views";
 import { adrLabel, formatAdrNumber, splitAdrTitle } from "@/lib/docs/adr";
@@ -48,7 +49,7 @@ import { ConflictBanner, DocEditor, type DocEditorController, SaveIndicator } fr
 import { DocHeaderBadges } from "./doc-header-badges";
 import { DocReadView } from "./doc-read-view";
 import { DocDetails, LinkedIssues } from "./doc-side-panel";
-import { HistoryPanel } from "./history/version-history";
+import { HistoryPanel, type RestoreOutcome } from "./history/version-history";
 import { PagesDrawer, PinnedPages, usePagesPreference } from "./pages-nav";
 
 /**
@@ -159,6 +160,7 @@ export function DocScreen({
   const editor = useRef<DocEditorController>(null);
   const [saverState, setSaverState] = useState<SaverState | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const leavingRef = useRef(false);
   const [restoreConflict, setRestoreConflict] = useState<{
     version: number;
     latest: ConflictInfo;
@@ -191,11 +193,21 @@ export function DocScreen({
    * null if the person chose to stay (a save did not land).
    */
   async function done(): Promise<{ version: number } | null> {
+    // Key repeat or a double Esc must not run a second flush (or a second prompt).
+    if (leavingRef.current) return null;
     const controller = editor.current;
     let version = shown.version;
     if (controller) {
+      // A running upload lands in the editor; leaving now would drop it.
+      if (controller.uploading()) {
+        toast.error(`${UPLOADS_RUNNING_MESSAGE} before you leave edit mode.`);
+        return null;
+      }
+      leavingRef.current = true;
       setLeaving(true);
-      const state = await controller.flush();
+      const state = await controller.flush().finally(() => {
+        leavingRef.current = false;
+      });
       setLeaving(false);
       version = state.version;
       if (state.status === "conflict" || state.status === "error") {
@@ -232,7 +244,12 @@ export function DocScreen({
       // Bubbling phase: popovers (mention list, pickers) handle their own Esc first.
       other: (event) => {
         if (editing) {
-          const esc = event.key === "Escape" && !event.metaKey && !event.ctrlKey && !event.altKey;
+          const esc =
+            event.key === "Escape" &&
+            !event.isComposing &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            !event.altKey;
           if (esc && !event.defaultPrevented && !keysBelongElsewhere(event.target)) {
             event.preventDefault();
             void done();
@@ -276,12 +293,12 @@ export function DocScreen({
     return shown;
   }
 
-  async function restore(version: number, base?: number): Promise<boolean> {
+  async function restore(version: number, base?: number): Promise<RestoreOutcome> {
     let baseVersion = base ?? shown.version;
     if (base === undefined && editing) {
       // Restore from edit mode: save my edits first, then continue in read mode.
       const left = await done();
-      if (!left) return false;
+      if (!left) return "failed";
       baseVersion = left.version;
     }
     let result;
@@ -289,22 +306,22 @@ export function DocScreen({
       result = await restoreDocVersionAction({ docId: doc.id, version, baseVersion });
     } catch {
       toast.error("Could not restore. Reload the page and try again.");
-      return false;
+      return "failed";
     }
     if (!result.ok) {
       toast.error(result.error);
-      return false;
+      return "failed";
     }
     if (result.data.status === "conflict") {
       // A newer save than the one shown: never overwritten (the banner offers the choice).
       setRestoreConflict({ version, latest: result.data.latest });
-      return false;
+      return "conflict";
     }
     setRestoreConflict(null);
     toast.success(`Restored v${version} as v${result.data.version}`);
     // The action re-rendered the page with the new version; the read view adopts it.
     router.refresh();
-    return true;
+    return "restored";
   }
 
   const actionContext: DocActionContext = {
@@ -332,7 +349,7 @@ export function DocScreen({
       link.click();
       link.remove();
     },
-    copyText: (text) => navigator.clipboard.writeText(text),
+    copyText,
   };
 
   const isAdr = doc.type === "adr";
@@ -341,7 +358,17 @@ export function DocScreen({
   const owner = users.find((user) => user.id === doc.ownerId)?.name ?? null;
   const threadCount = comments?.threads.filter((thread) => thread.resolvedAt === null).length ?? 0;
 
+  // Opening a panel from its button moves the focus into it (an overlay below 1024 px).
+  const panelHeading = useRef<HTMLHeadingElement>(null);
+  const focusPanel = useRef(false);
+  useEffect(() => {
+    if (!focusPanel.current || panel === null) return;
+    focusPanel.current = false;
+    panelHeading.current?.focus();
+  }, [panel]);
+
   function togglePanel(id: DocPanelId) {
+    focusPanel.current = panel !== id;
     setPanel((current) => (current === id ? null : id));
   }
 
@@ -607,7 +634,7 @@ export function DocScreen({
         className="fixed inset-y-0 right-0 z-40 w-[min(22rem,calc(100vw-3rem))] overflow-y-auto border-l bg-background p-4 shadow-lg lg:sticky lg:top-6 lg:z-auto lg:max-h-[calc(100dvh-6rem)] lg:w-80 lg:shrink-0 lg:self-start lg:p-0 lg:pl-6 lg:shadow-none"
       >
         <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="text-sm font-semibold">
+          <h2 ref={panelHeading} tabIndex={-1} className="text-sm font-semibold outline-none">
             {PANELS.find((item) => item.id === panel)?.label}
           </h2>
           <button
@@ -669,14 +696,31 @@ export function DocScreen({
   );
 }
 
+/**
+ * Clipboard write that keeps the user gesture: with `ClipboardItem` the (pending) text is
+ * handed over at once; otherwise it is awaited first (Chromium and Firefox allow that).
+ */
+async function copyText(text: string | Promise<string>): Promise<void> {
+  const clipboard = navigator.clipboard;
+  if (typeof ClipboardItem !== "undefined" && typeof clipboard.write === "function") {
+    const blob = Promise.resolve(text).then((value) => new Blob([value], { type: "text/plain" }));
+    await clipboard.write([new ClipboardItem({ "text/plain": blob })]);
+    return;
+  }
+  await clipboard.writeText(await text);
+}
+
 /** "Copy mine" of a restore conflict: the version that was to be restored, as Markdown. */
 async function copyVersionMarkdown(doc: DocDetail, version: number) {
-  const detail = await callAction(() => loadDocVersionAction({ docId: doc.id, version }));
-  if (!detail) return;
-  try {
+  const markdown = (async () => {
+    const detail = await callAction(() => loadDocVersionAction({ docId: doc.id, version }));
+    if (!detail) throw new Error("not loaded");
     const { richTextToMarkdown } = await import("@/lib/markdown/from-rich-text");
     const body = richTextToMarkdown(detail.content ?? emptyDoc(), { projectKey: doc.projectKey });
-    await navigator.clipboard.writeText(`# ${detail.title}\n\n${body}`);
+    return `# ${detail.title}\n\n${body}`;
+  })();
+  try {
+    await copyText(markdown);
     toast.success(`v${version} is on the clipboard as Markdown`);
   } catch {
     toast.error("Could not copy. Open the version in History and copy from its preview.");

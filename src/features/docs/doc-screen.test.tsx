@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { UPLOAD_NODE } from "@/lib/attachments/nodes";
 import { COMMENT_ANCHOR_MARK } from "@/lib/doc-comments/anchors";
 import { type RichTextDoc } from "@/lib/rich-text";
 import { body, DOC_ID, docDetail, thread, treeItem, USER_ID } from "@/test/doc-fixtures";
@@ -52,7 +53,16 @@ vi.mock("@/features/editor/lazy-rich-text-editor", () => ({
   }) => (
     <label>
       {label}
-      <textarea onChange={(event) => onChange?.(body(event.target.value))} />
+      <textarea
+        onChange={(event) =>
+          onChange?.(
+            // "UPLOAD" stands for an image still uploading (its placeholder node).
+            event.target.value.endsWith("UPLOAD")
+              ? { type: "doc", content: [{ type: UPLOAD_NODE, attrs: { id: "u1" } }] }
+              : body(event.target.value),
+          )
+        }
+      />
     </label>
   ),
   preloadRichTextEditor: vi.fn(),
@@ -187,6 +197,18 @@ describe("read mode by default", () => {
     await user.click(screen.getByRole("button", { name: "Done" }));
     await waitFor(() => expect(confirm).toHaveBeenCalled());
     // Stayed: the editor is still there.
+    expect(editorBox()).toBeInTheDocument();
+    expect(window.location.search).toBe("?edit=1");
+  });
+});
+
+describe("leaving edit mode", () => {
+  it("waits for a running upload instead of dropping it", async () => {
+    const user = userEvent.setup();
+    at(`/STK/docs/${DOC_ID}?edit=1`);
+    render(<DocScreen {...props()} />);
+    await user.type(await screen.findByRole("textbox", { name: "Document" }), "UPLOAD");
+    await user.click(screen.getByRole("button", { name: "Done" }));
     expect(editorBox()).toBeInTheDocument();
     expect(window.location.search).toBe("?edit=1");
   });

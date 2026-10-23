@@ -40,7 +40,10 @@ function SupersedeDialog({ context, open, onOpenChange }: DocActionDialogProps) 
   function submit() {
     startTransition(async () => {
       // Pending edits of the old ADR first, so nothing is left behind unsaved.
-      await context.flush();
+      if (!(await context.flush())) {
+        toast.error("Your latest changes to this ADR are not saved yet. Save them first.");
+        return;
+      }
       const created = await callAction(() => supersedeAdrAction({ docId: doc.id, title }));
       if (!created) return;
       onOpenChange(false);
@@ -97,7 +100,9 @@ function SupersedeDialog({ context, open, onOpenChange }: DocActionDialogProps) 
 
 export const supersedeAction: DocAction = {
   id: "supersede-adr",
-  visible: ({ doc }) => doc.type === "adr" && doc.adrNumber !== null && !doc.adrSupersededBy,
+  // Same rule as the server: anything but an ADR already superseded.
+  visible: ({ doc }) =>
+    doc.type === "adr" && doc.adrNumber !== null && doc.adrStatus !== "superseded",
   label: "Supersede with new ADR…",
   dialog: SupersedeDialog,
 };
@@ -105,7 +110,8 @@ export const supersedeAction: DocAction = {
 /** Blocked once superseded: the menu links to the successor instead (supersede that one). */
 export const openSuccessorAction: DocAction = {
   id: "open-successor",
-  visible: ({ doc }) => doc.type === "adr" && doc.adrSupersededBy !== null,
+  visible: ({ doc }) =>
+    doc.type === "adr" && doc.adrStatus === "superseded" && doc.adrSupersededBy !== null,
   label: ({ doc }) =>
     `Superseded by ${adrLabel(splitAdrTitle(doc.adrSupersededBy?.title ?? "")?.number ?? null)}: open it`,
   run({ doc, navigate }) {

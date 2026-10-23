@@ -24,7 +24,11 @@ export interface DocActionContext {
   navigate: (href: string) => void;
   /** Starts a file download from an HQ route (the browser keeps the page). */
   download: (href: string) => void;
-  copyText: (text: string) => Promise<void>;
+  /**
+   * Puts text on the clipboard. Accepts a promise, so the copy starts within the click
+   * (Safari drops the user gesture across an `await` otherwise).
+   */
+  copyText: (text: string | Promise<string>) => Promise<void>;
 }
 
 export interface DocActionDialogProps {

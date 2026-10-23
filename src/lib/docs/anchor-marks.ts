@@ -72,11 +72,17 @@ const tagMark = (leaf: number): RichTextMark => ({ type: TEXT_LEAF_MARK, attrs: 
  * tag is the outermost mark, so its element wraps exactly the leaf's text.
  */
 export function tagTextLeaves<T extends RichTextNode>(doc: T): T {
-  return mapLeaves(doc, (node, leaf, inCode) =>
-    markable(node, inCode)
-      ? [withMarks(node, node.text ?? "", [...(node.marks ?? []), tagMark(leaf)])]
-      : [node],
-  );
+  return mapLeaves(doc, (node, leaf, inCode) => {
+    // A stored tag (never written by HQ, but the JSON is untrusted) must not shift ours.
+    const marks = (node.marks ?? []).filter((mark) => mark.type !== TEXT_LEAF_MARK);
+    return markable(node, inCode)
+      ? [withMarks(node, node.text ?? "", [...marks, tagMark(leaf)])]
+      : [
+          marks.length === (node.marks ?? []).length
+            ? node
+            : withMarks(node, node.text ?? "", marks),
+        ];
+  });
 }
 
 /** The leaf index of a `TEXT_LEAF_MARK`, or null when malformed. */

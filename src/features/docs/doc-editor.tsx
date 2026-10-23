@@ -19,7 +19,7 @@ import { matchesQuery, Select } from "@/components/ui/select";
 import { LazyRichTextEditor } from "@/features/editor/lazy-rich-text-editor";
 import { callAction } from "@/features/issue/client-utils";
 import { userOptions } from "@/features/issue/field-options";
-import { withoutPendingUploads } from "@/lib/attachments/nodes";
+import { hasPendingUploads, withoutPendingUploads } from "@/lib/attachments/nodes";
 import { anchorIdsInOrder } from "@/lib/doc-comments/anchors";
 import { splitAdrTitle } from "@/lib/docs/adr";
 import {
@@ -184,6 +184,8 @@ export interface DocEditorController {
   retry: () => void;
   /** My current copy (title with any ADR prefix, content). */
   mine: () => { title: string; content: RichTextDoc };
+  /** An image or file is still uploading (it lands in the editor, so do not leave yet). */
+  uploading: () => boolean;
 }
 
 /**
@@ -225,6 +227,8 @@ export function DocEditor({
   // DOC-13: where the comment anchors are in the CURRENT content (orders threads, finds
   // orphans the moment their text is deleted). Reported to the page's comments panel.
   const anchorOrder = useRef(anchorIdsInOrder(doc.content));
+  // The editor's content with upload placeholders (the saver gets it without them).
+  const rawContent = useRef<RichTextDoc | null>(doc.content);
   const reportAnchors = (content: RichTextDoc | null) => {
     const order = anchorIdsInOrder(content);
     if (sameOrder(anchorOrder.current, order)) return;
@@ -264,6 +268,7 @@ export function DocEditor({
       saveVersion: () => saver.saveNow(true),
       retry: () => saver.saveNow(),
       mine: () => saver.mine,
+      uploading: () => hasPendingUploads(rawContent.current),
     }),
     [saver],
   );
@@ -375,6 +380,7 @@ export function DocEditor({
         className="min-h-[60vh]"
         // An upload placeholder is never saved; the finished image triggers its own change.
         onChange={(content) => {
+          rawContent.current = content;
           saver.change({ content: withoutPendingUploads(content) });
           reportAnchors(content);
         }}

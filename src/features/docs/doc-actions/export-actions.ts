@@ -51,7 +51,7 @@ export const copyMarkdownAction: DocAction = {
   label: "Copy as Markdown",
   async run(context) {
     try {
-      await context.copyText(await currentMarkdown(context));
+      await context.copyText(currentMarkdown(context));
       toast.success("Copied as Markdown");
     } catch {
       toast.error("Could not copy. Use “Download as Markdown” instead.");

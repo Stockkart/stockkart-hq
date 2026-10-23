@@ -628,6 +628,11 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
                   updated_by = ${actorId}::uuid, updated_at = now()
                 WHERE id = ${old.id}::uuid AND type = 'adr' AND deleted_at IS NULL
                   AND adr_status IS DISTINCT FROM 'superseded'
+                  -- The insert's parent check too, so a parent deleted meanwhile refuses
+                  -- both (a clean conflict) instead of leaving a dangling successor id.
+                  AND (${parentId}::uuid IS NULL OR EXISTS (SELECT 1 FROM docs p
+                    WHERE p.id = ${parentId}::uuid AND p.project_id = ${old.projectId}::uuid
+                      AND p.deleted_at IS NULL))
                 RETURNING id
               )`,
             gate: sql`EXISTS (SELECT 1 FROM superseded)`,

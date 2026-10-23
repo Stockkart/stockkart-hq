@@ -243,7 +243,8 @@ describe("history: restore (DOC-10)", () => {
     });
     render(<DocScreen {...props()} />);
     await restoreV2(user);
-    await user.keyboard("{Escape}");
+    // The dialog closes by itself, so the banner is seen.
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Version 2" })).toBeNull());
     const banner = await screen.findByText(/Not restored: Bo saved v5/);
     expect(banner.closest("[role=alert]")).not.toBeNull();
     // "Restore anyway" retries on the winner's version (still a locked write).

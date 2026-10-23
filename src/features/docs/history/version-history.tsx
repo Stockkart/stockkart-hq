@@ -28,6 +28,8 @@ import { VersionDiff } from "./version-diff";
  * confirmation. Version contents are loaded when opened, never with the page.
  */
 
+export type RestoreOutcome = "restored" | "conflict" | "failed";
+
 export interface CurrentDoc {
   version: number;
   title: string;
@@ -56,8 +58,11 @@ export function HistoryPanel({
   versions: DocVersionView[];
   /** The latest saved state (the editor's while editing). */
   current: () => CurrentDoc;
-  /** Restores `version`; resolves true once it landed (false: refused or a conflict). */
-  onRestore: (version: number) => Promise<boolean>;
+  /**
+   * Restores `version`. `conflict`: someone saved meanwhile; the dialog closes so the page's
+   * conflict banner is seen. `failed`: refused (a toast says why); the dialog stays.
+   */
+  onRestore: (version: number) => Promise<RestoreOutcome>;
 }) {
   const [open, setOpen] = useState<number | null>(null);
   const currentVersion = current().version;
@@ -148,7 +153,7 @@ function VersionDialog({
   version: number;
   previous: number | null;
   current: () => CurrentDoc;
-  onRestore: (version: number) => Promise<boolean>;
+  onRestore: (version: number) => Promise<RestoreOutcome>;
   onClose: () => void;
 }) {
   // The current copy as of opening: a save while the dialog is open is not chased.
@@ -221,6 +226,8 @@ function VersionDialog({
           <TabsContent value="changes" className="max-h-[50dvh] overflow-y-auto">
             {texts && texts.key === pairKey ? (
               <VersionDiff
+                // A new pair starts with its unchanged runs collapsed again.
+                key={pairKey}
                 oldText={texts.old}
                 newText={texts.new}
                 oldLabel={labels.old}
@@ -270,8 +277,9 @@ function VersionDialog({
                     disabled={restoring}
                     onClick={() =>
                       startRestore(async () => {
-                        if (await onRestore(version)) onClose();
-                        else setConfirming(false);
+                        const outcome = await onRestore(version);
+                        if (outcome === "failed") setConfirming(false);
+                        else onClose();
                       })
                     }
                   >
