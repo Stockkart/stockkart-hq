@@ -104,6 +104,8 @@ nobody can sign in.
 | `AUTH_URL`                                                               | no       | Public URL of the app. Not needed on Vercel. Set it for `next start` elsewhere, and leave it unset rather than empty                                                                                                 |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | no       | Private Cloudflare R2 bucket for attachments and diagram thumbnails (see "File storage (R2)"). Unset or incomplete: the app runs, file routes answer 503 and uploads are refused. Backups use GitHub secrets instead |
 | `GITHUB_WEBHOOK_SECRET`                                                  | no       | GitHub webhook HMAC secret (`openssl rand -hex 32`). Unset: the app runs, the webhook answers 503 and does nothing                                                                                                   |
+| `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`  | no       | Engineering handbook sync (DOC-14) GitHub App; see "Engineering handbook sync". All three or none: until each is set, publish and pull refuse with "Handbook sync isn't set up". The PEM key may use literal `\n`    |
+| `HANDBOOK_REPO`                                                          | no       | `Owner/repo` of the handbook (default `Stockkart/engineering-handbook`; must be in the Stockkart org). The only repo the App client can address                                                                      |
 | `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `APP_BASE_URL`                    | no       | Email digest (NTF-2) through Resend; see "Email digest". All three or none: until each is set no email is sent and the profile says "Email isn't set up"                                                             |
 | `CRON_SECRET`                                                            | no       | Bearer secret of the daily digest job (`openssl rand -hex 32`, ≥ 32 characters). Unset: `/api/cron/digest` answers 503 and does nothing                                                                              |
 | `HQ_LOG_QUERIES`                                                         | no       | `1` logs every database round trip per request (counts and ms only, never SQL). Off by default; see "Performance"                                                                                                    |
@@ -336,8 +338,8 @@ checked 2026-10-20). If Neon moves, change `regions` with it.
 
 Branches, pull requests and commits that mention an issue key show in the issue's
 **Development** panel, and a merged PR that says "Fixes STK-123" moves the issue to Done
-(SPEC §4.15, GH-1…GH-4). It is one **organisation webhook**; there is no GitHub App and HQ
-holds no GitHub token.
+(SPEC §4.15, GH-1…GH-4). It is one **organisation webhook**; HQ holds no GitHub token for
+it. (The handbook sync below adds a GitHub App scoped to the handbook repo only.)
 
 ### Setup (once, by an org owner)
 
@@ -399,6 +401,97 @@ plain http to `127.0.0.1`/`localhost` are accepted). Run HQ with the same secret
 GITHUB_WEBHOOK_SECRET='<same value as the server>' pnpm exec tsx scripts/send-test-webhook.ts \
   --event pr-opened --key STK-1 --pr 7      # also: ping, create, push, pr-merged
 ```
+
+## Engineering handbook sync
+
+`Stockkart/engineering-handbook` is **public**, and people also change it through their own
+pull requests, so the sync (DOC-14) works both ways and never overwrites anything silently:
+
+- **HQ → repo**: "Publish to handbook" (doc page, or "Publish selected" in Settings →
+  Handbook, at most 50 docs) opens ONE pull request through a GitHub App: a fresh
+  `hq/publish-<yyyymmdd>-<id>` branch with every file in ONE commit. HQ never pushes to the
+  default branch or to a branch a person made.
+- **Repo → HQ**: the org webhook's pushes to the default branch mark the touched docs; "Review
+  & pull" shows the diff and applies the file as a new HQ version.
+
+### Setup (once, by an org owner)
+
+1. GitHub → `Stockkart` organisation → Settings → Developer settings → GitHub Apps → **New
+   GitHub App**, owned by the org. Homepage URL: the HQ URL. **Webhook: untick "Active"** (no
+   App webhook: the org webhook already delivers the handbook's events).
+2. Repository permissions: **Contents: Read and write**, **Pull requests: Read and write**,
+   **Metadata: Read-only** (mandatory). Nothing else, no organisation or account permissions.
+   "Where can this GitHub App be installed?": Only on this account.
+3. Create it, note the **App ID**, then **Generate a private key** (a `.pem` download). Keep
+   it out of files, chat and the repo.
+4. **Install App** → the Stockkart org → **Only select repositories** →
+   `engineering-handbook` only. The installation's URL ends in its **installation ID**
+   (`…/settings/installations/<id>`).
+5. Vercel → the HQ project → Settings → Environment Variables (Production): `GITHUB_APP_ID`,
+   `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY` (the whole PEM; one line with
+   literal `\n` works) and `HANDBOOK_REPO=Stockkart/engineering-handbook`, then redeploy.
+6. Check the org webhook (see "GitHub integration") covers the handbook repo: an org webhook
+   covers every repo, with **Pushes** and **Pull requests** selected. Settings → Handbook then
+   says "GitHub App configured".
+
+HQ asks GitHub for an installation token scoped to `HANDBOOK_REPO` only, with exactly
+`contents: write, pull_requests: write, metadata: read`, keeps it in memory until 5 minutes
+before it expires, and refuses any URL outside `/repos/<HANDBOOK_REPO>/` (plus the token
+endpoint). Logs hold the request kind and status code only, never the key, the JWT, the token
+or file contents. Without all three App values every publish, pull, check and import refuses
+with "Handbook sync isn't set up".
+
+### Statuses
+
+| Status              | Meaning                                                                                                   |
+| ------------------- | --------------------------------------------------------------------------------------------------------- |
+| Not in handbook     | Never published or imported, and not seen in the repo                                                     |
+| In sync             | HQ's version is the one last published or pulled, and the repo still has that file                        |
+| Changed in HQ       | Edited in HQ since the last sync (`version > handbook_synced_version`): publish it                        |
+| Changed in handbook | A push changed the file since the last sync (or an imported doc was never compared): review & pull        |
+| Both changed        | Both sides changed since the last sync (or there is no common base): a conflict to resolve                |
+| PR open #n          | A publish PR is open (one per doc at most); merging it marks the docs In sync, closing it changes nothing |
+| Removed in handbook | The file is gone from the default branch: publish to add it back, or delete the doc                       |
+
+The page shows stored state only; it never calls GitHub. A push marks the doc with "blob
+unknown" (or "removed"); the exact blob is read when someone opens "Review & pull" or runs
+**Check handbook now** (Settings → Handbook, once a minute per project), which compares every
+mapped doc with the default branch in one tree request, marks docs whose export already
+matches the repo as In sync, and lists unmapped top-level and `decisions/NNNN-*.md` files under
+"New in handbook" with an Import button (the importer's conversion, IMP-1/2).
+
+### Conflict rules
+
+- **Publish** reads each file on the default branch first. Identical → skipped (recorded In
+  sync). Changed since the last sync (or present with no sync yet) → refused with "Changed in
+  the handbook since your last sync: pull first", unless the person reviewed the diff in the
+  publish dialog and ticked "Overwrite", which counts only for the exact blob they saw.
+- **Pull** applies only if the file is still the blob the diff showed and the doc is still at
+  the version the diff was made from. "Repo ahead" (HQ unchanged since the last sync) is a
+  clean pull; "Both changed" asks: **Take handbook version** (a new HQ version; HQ's copy stays
+  in the version history) or **Keep HQ version** (publish with overwrite, through a PR).
+  ADRs keep their HQ number and take the title and `## Status` (incl. "Superseded by NNNN")
+  from the file.
+- **Secrets block**: the service-registry heuristic (credential URLs, token prefixes,
+  `password=…`, long random strings) runs over every file; a finding blocks the publish with
+  no override. Every publish shows: _"The handbook repo is PUBLIC: anything you publish is
+  visible to everyone on the internet. Check for internal hosts, customer data, secrets and
+  @mention names."_
+- A publish that fails half-way is recorded `failed` with a short code; its branch may remain
+  on GitHub (the message names it), and the paths it pinned are put back. If its PR was
+  opened anyway (a timed-out request), merging it still syncs the docs. HQ never retries
+  creating a branch or a PR. HQ's own merge push is recognised by the
+  `HQ-Publication: hq/…` trailer line or GitHub's "Merge pull request #n from …/hq/…"
+  subject (never a revert), only while that publication is open or merged within the hour,
+  and is left to the pull_request event; Check handbook now catches anything it misses.
+- A merged PR with more than HQ's one commit (someone pushed to the `hq/…` branch) marks the
+  docs synced to HQ's export but the handbook side "blob unknown", so they show "Changed in
+  handbook" until reviewed. A push processed before the merge event is kept.
+- Re-adding a file removed in the handbook needs the same explicit confirmation as an
+  overwrite. Paths GitHub gives a meaning to (`README.md`, `LICENSE.md`, `SECURITY.md` …, and
+  `decisions/0000-template.md`) are only written from the single-doc dialog after a
+  confirmation; bulk publish leaves them out. The server refuses a publish without the
+  "fine for everyone on the internet" acknowledgement, and a pull while the doc's PR is open.
 
 ## Email digest (NTF-2)
 

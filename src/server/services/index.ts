@@ -1,4 +1,5 @@
 import { db, read, runAtomic } from "@/server/db/client";
+import { handbookGithub } from "@/server/handbook";
 import { storage } from "@/server/storage";
 
 import { createAttachmentService } from "./attachments";
@@ -12,6 +13,9 @@ import { createDocService } from "./docs";
 import { createFileQueries } from "./files";
 import { createGithubService } from "./github";
 import { createGithubQueries } from "./github-queries";
+import { createHandbookPublishService } from "./handbook-publish";
+import { createHandbookPullService } from "./handbook-pull";
+import { createHandbookQueries } from "./handbook-queries";
 import { createImportQueries, createImportService } from "./imports";
 import { createIncidentQueries } from "./incident-queries";
 import { createIncidentService } from "./incidents";
@@ -85,3 +89,15 @@ export const incidentService = createIncidentService(db, { runAtomic, read });
 export const incidentQueries = createIncidentQueries(db, { read });
 // Handbook foundation (DOC-12 export).
 export const docExportQueries = createDocExportQueries(db, { read });
+// Handbook sync (DOC-14).
+export const handbookQueries = createHandbookQueries(db, { read });
+export const handbookPublishService = createHandbookPublishService(db, {
+  runAtomic,
+  read,
+  github: handbookGithub,
+});
+export const handbookPullService = createHandbookPullService(db, {
+  runAtomic,
+  read,
+  github: handbookGithub,
+});

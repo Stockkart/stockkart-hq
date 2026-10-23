@@ -49,6 +49,14 @@ export const COMPONENT_NAME_MAX = 60;
 export const WIP_LIMIT_MIN = 1;
 export const WIP_LIMIT_MAX = 999;
 
-/** Settings tabs, also the `?tab=` URL value. `import`: IMP-4 CSV import of issues. */
-export const SETTINGS_TABS = ["general", "workflow", "labels", "components", "import"] as const;
+/** Settings tabs, also the `?tab=` URL value. `import`: IMP-4 CSV import of issues;
+ * `handbook`: DOC-14 engineering-handbook sync. */
+export const SETTINGS_TABS = [
+  "general",
+  "workflow",
+  "labels",
+  "components",
+  "import",
+  "handbook",
+] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];

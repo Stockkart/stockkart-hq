@@ -46,6 +46,8 @@ src/
   app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, backlog/, board/, docs/
                           (index = tree + list, docs/[id] doc page: read mode, `?edit=1`
                           edit mode; docs/[id]/export DOC-12 .md download), adrs/, sprints/ (list,
+                          (tree layout, list, docs/[id] editor, docs/[id]/export DOC-12 .md
+                          download), adrs/, sprints/ (list,
                           sprints/[sprintId]), diagrams/ (grid, diagrams/[id] editor), roadmap/
                           (RDM-1/2), releases/ (list, releases/[releaseId]; REL-1/2),
                           incidents/ (list, incidents/[key] = INC-n; INC-1/2), services/ (list,
@@ -73,6 +75,8 @@ src/
   server/github/          webhook: signature check, Zod payloads, pure event → plan rules
                           (services/github.ts applies a plan in ONE statement, deduped by
                           delivery id; never add a webhook write outside that statement)
+  server/handbook/        DOC-14 GitHub App client (fetch only), git blob sha, the pure
+                          webhook plan for the handbook repo; index.ts wires env
   lib/                    isomorphic code: constants, Zod input schemas, keys, rich text,
                           markdown ↔ editor JSON (lib/markdown: to-rich-text import,
                           from-rich-text export), handbook paths and .md export
@@ -225,6 +229,9 @@ entity_id)` → `comments (id, entity_type, entity_id)` keeps a reply on its thr
     `handbook_synced_at` (set together, CHECK; synced version ≤ `version`),
     `handbook_remote_sha` (needs `handbook_remote_seen_at`; a seen-at without a sha means
     "absent on the default branch"). Shas are 40 lower-case hex (CHECK); paths follow
+    `handbook_remote_sha` (needs `handbook_remote_seen_at`; as built by the sync slice, a
+    seen-at without a sha means "changed, blob unknown" and `GIT_NULL_SHA` means "absent on
+    the default branch"). Shas are 40 lower-case hex (CHECK); paths follow
     `isHandbookPath` (CHECK, same regex). Unique index on
     `(project_id, lower(coalesce(handbook_path, source_path)))` for live docs: one doc per
     file, so persist the default path into `handbook_path` when a doc is first published.
@@ -469,6 +476,39 @@ Docs UX as built (no migration):
   where `Badge` takes `{ doc: DocDetail }` (render null when there is nothing to say). Sync
   state needs fields that `DocDetail` lacks: add them to `docQueries.getDoc` (same query,
   so still one round trip).
+
+**Sync slice as built (DOC-14).** README "Engineering handbook sync" has the setup, statuses
+and conflict rules; keep these seams intact:
+
+- `server/handbook/github-app.ts` is the ONLY GitHub API client (fetch, no SDK). Every URL is
+  built and re-checked there (token endpoint or `/repos/<HANDBOOK_REPO>/…`), every path passes
+  `isHandbookPath`, writes go to `hq/…` branches only. `server/handbook/index.ts` wires it
+  from env; tests use `test/handbook-fakes.ts` (an in-memory repo) or a fetch fake.
+- Status is derived by `lib/handbook/sync-state.ts` from stored columns (`handbookSyncStatus`).
+  `docs.handbook_remote_sha = GIT_NULL_SHA` (40 zeros) means **removed** on the default
+  branch; `NULL` with a `handbook_remote_seen_at` means **changed, blob unknown** (a push
+  touched it). This refines the foundation's "seen-at without a sha = absent" without a
+  migration.
+- Webhook: `server/handbook/webhook-plan.ts` (pure) adds `plan.handbook` after the signature,
+  payload and org checks; `applyDelivery` writes it in its ONE deduped statement (`hb_*`
+  CTEs). Never call GitHub there. HQ's commits carry an `HQ-Publication: <branch>` trailer so
+  the push of its own merge is not drift (only while that publication is open or merged
+  within the hour). A merge also matches a `failed` publication by branch (its PR was opened
+  by a request that timed out) and takes the PR number and URL from the payload.
+- Publish (`services/handbook-publish.ts`) claims the publication (`open`, no PR yet) in one
+  statement BEFORE calling GitHub, then records the PR + activity, or `failed` + `error_code`
+  (and puts back the paths it pinned). A claim left without a PR for 15 minutes is failed by
+  the next publish of its docs.
+- "Check handbook now" is rate-limited through `login_attempts` rows keyed
+  `handbook_check:<projectId>` with `success = true` (shared across instances; never counted
+  as failed sign-ins, which use `email:` / `ip:` keys and `NOT success`).
+- **Temporary doc-page mount**: `app/(app)/[projectKey]/docs/[id]/page.tsx` adds ONE read
+  (`loadHandbookDocSync`, `features/docs/handbook-sync/load.ts`, same batch) and renders
+  `<HandbookDocBar>` above `<DocEditor>`. When the docs-UX slice lands, move
+  `HandbookStatusBadge` into its header badges slot and the two `HandbookActions` entries
+  ("Publish to handbook", "Review & pull"; they open `PublishDialog` / `PullDialog`) into
+  `features/docs/doc-actions/index.ts`, then delete `HandbookDocBar` and its line in the page.
+  Keep the read in the page's batch (`handbook.db.test.ts` pins one round trip).
 
 ## File storage (R2)
 

@@ -9,12 +9,14 @@ import { ImportPanel } from "@/features/import/import-panel";
 import { AutoRetroToggle } from "@/features/settings/project/auto-retro-toggle";
 import { ComponentEditor } from "@/features/settings/project/component-editor";
 import { GeneralForm } from "@/features/settings/project/general-form";
+import { HandbookTab } from "@/features/settings/project/handbook/handbook-tab";
 import { LabelEditor } from "@/features/settings/project/label-editor";
 import { SettingsTabs } from "@/features/settings/project/settings-tabs";
 import { WorkflowEditor } from "@/features/settings/project/workflow-editor";
 import { SETTINGS_TABS } from "@/lib/settings/constants";
 import { requirePageSession } from "@/server/auth/require-session";
-import { importQueries, settingsQueries } from "@/server/services";
+import { handbookConfigView } from "@/server/handbook";
+import { handbookQueries, importQueries, settingsQueries } from "@/server/services";
 import { projectIdByKey } from "@/server/services/sql";
 
 interface Props {
@@ -35,11 +37,14 @@ export default async function ProjectSettingsPage({ params, searchParams }: Prop
   const raw = await searchParams;
   const tab = z.enum(SETTINGS_TABS).catch("general").parse(raw.tab);
   const key = resolveProjectKey(projectKey, `/settings${tab === "general" ? "" : `?tab=${tab}`}`);
-  const [project, settings, imports] = await Promise.all([
+  const [project, settings, imports, handbookDocs, handbookPublications] = await Promise.all([
     requireProject(key),
     settingsQueries.getSettings(projectIdByKey(key)),
     // IMP-4 import history (Import tab), same batch.
     importQueries.listImports(projectIdByKey(key)),
+    // DOC-14 Handbook tab: stored sync state only (no GitHub call), same batch.
+    handbookQueries.listDocs(projectIdByKey(key)),
+    handbookQueries.recentPublications(projectIdByKey(key)),
   ]);
   if (!settings) notFound();
 
@@ -68,6 +73,14 @@ export default async function ProjectSettingsPage({ params, searchParams }: Prop
           labels: <LabelEditor projectKey={project.key} labels={settings.labels} />,
           components: <ComponentEditor projectKey={project.key} components={settings.components} />,
           import: <ImportPanel projectKey={project.key} history={imports} />,
+          handbook: (
+            <HandbookTab
+              projectKey={project.key}
+              config={handbookConfigView()}
+              docs={handbookDocs}
+              publications={handbookPublications}
+            />
+          ),
         }}
       />
     </div>
