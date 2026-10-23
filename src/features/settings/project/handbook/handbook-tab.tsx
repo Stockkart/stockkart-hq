@@ -111,7 +111,7 @@ export function HandbookTab({
           projectKey,
           docIds: chosen.map((doc) => doc.docId),
           // The confirm dialog's "fine for everyone on the internet" box (required to send).
-          acknowledgedPublic: true,
+          acknowledgedPublic: acknowledged,
         }),
       );
       if (!outcome) return;

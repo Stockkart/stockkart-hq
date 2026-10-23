@@ -88,6 +88,15 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
     return row;
   }
 
+  /** The database's clock (webhook markers use `now()`; the app clock may differ). */
+  async function dbNow(): Promise<Date> {
+    const [row] = rowsOf(
+      await db.execute(sql`SELECT now() AS now`),
+      z.object({ now: z.coerce.date() }),
+    );
+    return row?.now ?? new Date(0);
+  }
+
   async function remoteFile(path: string) {
     return guarded(async () => {
       const main = await github.getDefaultBranch();
@@ -105,8 +114,8 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
     remoteSha: string,
     matches: boolean,
     readAt: Date,
-  ) {
-    await db.execute(sql`
+  ): Promise<boolean> {
+    const result = await db.execute(sql`
       UPDATE docs SET handbook_remote_sha = ${remoteSha}, handbook_remote_seen_at = now(),
         handbook_blob_sha = CASE WHEN ${matches}::boolean THEN ${remoteSha} ELSE handbook_blob_sha END,
         handbook_synced_version = CASE WHEN ${matches}::boolean THEN version
@@ -116,7 +125,9 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
         AND (NOT ${matches}::boolean OR version = ${row.version}::int)
         AND (handbook_remote_seen_at IS NULL
           OR handbook_remote_seen_at < ${readAt.toISOString()}::timestamptz)
+      RETURNING id
     `);
+    return rowsOf(result, z.object({ id: z.string() })).length > 0;
   }
 
   function classify(row: HandbookDocRow, localSha: string, remoteSha: string): PullState {
@@ -157,7 +168,7 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
       const row = await loadOne(docId);
       const path = pathOf(row);
       const hqMarkdown = markdownOf(row, path);
-      const readAt = new Date();
+      const readAt = await dbNow();
       const file = await remoteFile(path);
       if (!file) {
         await recordRemote(row, GIT_NULL_SHA, false, readAt);
@@ -194,7 +205,7 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
         throw conflict("The doc changed in HQ since the review; review again");
       }
       const path = pathOf(row);
-      const readAt = new Date();
+      const readAt = await dbNow();
       const file = await remoteFile(path);
       if (!file) throw conflict("The file is no longer in the handbook");
       if (file.sha !== input.remoteSha) {
@@ -202,7 +213,9 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
       }
       if (gitBlobSha(markdownOf(row, path)) === file.sha) {
         // Same content: only the sync columns change, no new version.
-        await recordRemote(row, file.sha, true, readAt);
+        if (!(await recordRemote(row, file.sha, true, readAt))) {
+          throw conflict("The doc or the handbook changed during the review; review again");
+        }
         return { version: row.version };
       }
       const pulled = parsePulledFile(row, file.content);
@@ -286,7 +299,7 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
       if (!project) throw notFound(`Project ${projectKey}`);
       if (!(await reserveCheck(project.id))) throw conflict(CHECK_RATE_LIMITED_MESSAGE);
 
-      const readAt = new Date();
+      const readAt = await dbNow();
       const tree = await guarded(async () => {
         const main = await github.getDefaultBranch();
         return github.listTree(main.sha);

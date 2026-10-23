@@ -110,7 +110,7 @@ export function PublishDialog({
           overwrite: preview.needsOverwrite
             ? [{ docId, remoteSha: preview.remote?.sha ?? GIT_NULL_SHA }]
             : [],
-          acknowledgedPublic: true,
+          acknowledgedPublic: acknowledged,
           confirmSpecialPath: preview.specialPath && special,
         }),
       );

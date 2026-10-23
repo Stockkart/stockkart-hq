@@ -269,6 +269,9 @@ export function createGithubService(db: AppDatabase) {
           FROM handbook_publication_docs pd JOIN hb_merged m ON m.id = pd.publication_id
           WHERE docs.id = pd.doc_id AND pd.blob_sha IS NOT NULL AND docs.deleted_at IS NULL
             AND pd.doc_version <= docs.version
+            -- An older publication landing late never moves the sync back.
+            AND (docs.handbook_synced_version IS NULL
+              OR pd.doc_version >= docs.handbook_synced_version)
           RETURNING docs.id, m.pr_number
         ),
         hb_synced_activity AS (

@@ -161,7 +161,8 @@ export function planHandbookPullRequest(payload: unknown): HandbookDeliveryPlan 
     pullRequest: {
       number: pr.number,
       branch: pr.head.ref,
-      url: pr.html_url,
+      // Built like the App client's, so it always fits the pr_url CHECK.
+      url: `https://github.com/${repository.full_name}/pull/${pr.number}`,
       outcome: merged ? "merged" : "closed",
       mergedAt: merged ? (pr.merged_at ?? pr.updated_at ?? null) : null,
       cleanMerge: commits.success && commits.data.pull_request.commits === 1,

@@ -492,6 +492,16 @@ describeDb("handbook sync (Postgres)", () => {
       .from(activity)
       .where(and(eq(activity.entityId, doc.id), eq(activity.action, "handbook_published")));
     expect(logged).toEqual([]);
+
+    // Failing before the PR request puts the pinned path back.
+    const early = await newDoc("Fails early", "Text.");
+    repo.failAt("commitFiles", "github_409");
+    await expect(publish([early.id])).rejects.toThrow(/Publishing failed \(github_409\)/);
+    const [unpinned] = await db
+      .select({ path: docs.handbookPath })
+      .from(docs)
+      .where(eq(docs.id, early.id));
+    expect(unpinned?.path).toBeNull();
     repo.failAt(null);
     const retry = await publishService().publish(actor, {
       projectKey: "STK",

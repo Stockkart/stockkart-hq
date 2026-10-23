@@ -52,6 +52,7 @@ export interface HandbookPublishDeps {
   runAtomic: RunAtomic;
   read?: Read;
   github: HandbookGithub;
+  log?: (line: Record<string, unknown>) => void;
   /** Test hooks. */
   now?: () => Date;
   newId?: () => string;
@@ -105,6 +106,10 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
   const github = deps.github;
   const now = deps.now ?? (() => new Date());
   const newId = deps.newId ?? randomUUID;
+  const log =
+    deps.log ??
+    ((line: Record<string, unknown>) =>
+      process.stdout.write(`[handbook-publish] ${JSON.stringify(line)}\n`));
 
   function requireConfigured() {
     // Fail closed before any read: without the App nothing is published.
@@ -375,10 +380,10 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
       }
 
       // 4. GitHub. Anything that fails marks the publication failed (5).
-      let branchAttempted = false;
+      // Once the PR request is sent, GitHub may have opened it even if we see an error (a
+      // timeout): the merge webhook then syncs this publication, so its pins must stay.
+      let prRequested = false;
       try {
-        // A timed-out create may still have made the branch, so it counts from the attempt.
-        branchAttempted = true;
         await github.createBranch(branch, main.sha);
         const message = [
           "docs: publish from Stockkart HQ",
@@ -400,6 +405,7 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
           }
         }
         const n = toPublish.length;
+        prRequested = true;
         const pr = await github.openPullRequest(
           branch,
           main.name,
@@ -470,15 +476,16 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
             )
             UPDATE docs SET handbook_path = r.previous
             FROM jsonb_to_recordset(${pins}::jsonb) AS r(id uuid, path text, previous text)
-            WHERE docs.id = r.id AND docs.handbook_path = r.path
+            WHERE NOT ${prRequested}::boolean AND docs.id = r.id AND docs.handbook_path = r.path
               AND r.previous IS DISTINCT FROM r.path AND EXISTS (SELECT 1 FROM failed)
           `);
-        } catch {
+        } catch (recordError) {
           // Keep the original error; the claim is then failed as abandoned after 15 min.
+          // Only the Postgres code is logged (driver errors can carry parameters).
+          log({ outcome: "record_failed", code: pgErrorInfo(recordError)?.code ?? null });
         }
-        const leftover = branchAttempted
-          ? ` The branch ${branch} may remain on GitHub; delete it there.`
-          : "";
+        // A timed-out create may still have made the branch, so it is always mentioned.
+        const leftover = ` The branch ${branch} may remain on GitHub; delete it there.`;
         if (code === "internal") throw error;
         throw invalid(`Publishing failed (${code}).${leftover}`);
       }
