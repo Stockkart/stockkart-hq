@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { DEFAULT_HANDBOOK_REPO, isHandbookRepo } from "./lib/handbook/constants";
 import { databaseUrlUsesTls, LOOPBACK_HOSTS } from "./server/db/database-url";
 
 /**
@@ -131,6 +132,43 @@ export const envSchema = z.object({
   // (`openssl rand -hex 32`). Optional, but /api/cron/digest then answers 503 (fail closed).
   CRON_SECRET: optionalString.pipe(
     z.string().min(32, "CRON_SECRET must be at least 32 characters").optional(),
+  ),
+  // DOC-14 handbook sync through a GitHub App (README "Engineering handbook sync"). All
+  // optional: until the App id, installation id and key are all set, `handbookConfigured()`
+  // is false and every handbook write fails closed ("Handbook sync isn't set up"). The repo
+  // must belong to the Stockkart org; it is the ONLY repo the App client can address.
+  HANDBOOK_REPO: optionalString.pipe(
+    z
+      .string()
+      .refine(isHandbookRepo, "HANDBOOK_REPO must be Owner/repo in the Stockkart organisation")
+      .default(DEFAULT_HANDBOOK_REPO),
+  ),
+  GITHUB_APP_ID: optionalString.pipe(
+    z
+      .string()
+      .regex(/^[1-9][0-9]{0,19}$/, "GITHUB_APP_ID must be the numeric App ID")
+      .optional(),
+  ),
+  GITHUB_APP_INSTALLATION_ID: optionalString.pipe(
+    z
+      .string()
+      .regex(/^[1-9][0-9]{0,19}$/, "GITHUB_APP_INSTALLATION_ID must be the numeric installation id")
+      .optional(),
+  ),
+  // PEM, as GitHub downloads it. Vercel and .env files often hold it on one line with
+  // literal `\n` escapes; those become real newlines. Never printed (see parseEnv).
+  GITHUB_APP_PRIVATE_KEY: optionalString.pipe(
+    z
+      .string()
+      .transform((value) => value.replace(/\\n/g, "\n").trim())
+      .refine(
+        (value) =>
+          /^-----BEGIN (?:RSA )?PRIVATE KEY-----\n[\s\S]+\n-----END (?:RSA )?PRIVATE KEY-----$/.test(
+            value,
+          ),
+        "GITHUB_APP_PRIVATE_KEY must be the App's PEM private key",
+      )
+      .optional(),
   ),
   // Development aid: `1` logs database round trips per request (counts and timings only,
   // never SQL text or parameters). Off unless set to exactly "1".
