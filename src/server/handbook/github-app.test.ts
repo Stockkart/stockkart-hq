@@ -195,6 +195,31 @@ describe("handbook GitHub App client (DOC-14)", () => {
     await expect(client.getPullRequest(1)).rejects.toMatchObject({ code: "token_scope" });
   });
 
+  it("reads the default branch from the repo root (GET /repos/<owner>/<repo>)", async () => {
+    const { client, calls } = fakeGithub({
+      ...tokenRoute(),
+      [`GET ${REPO}`]: () =>
+        json({ full_name: "Stockkart/engineering-handbook", default_branch: "main" }),
+      [`GET ${REPO}/git/ref/heads/main`]: () =>
+        json({ ref: "refs/heads/main", object: { sha: SHA(7) } }),
+    });
+    await expect(client.getDefaultBranch()).resolves.toEqual({ name: "main", sha: SHA(7) });
+    expect(calls.map((call) => `${call.method} ${call.url.pathname}`)).toEqual([
+      "POST /app/installations/67890/access_tokens",
+      `GET ${REPO}`,
+      `GET ${REPO}/git/ref/heads/main`,
+    ]);
+  });
+
+  it("does not treat a repo whose name only starts with the handbook's as in scope", async () => {
+    const { client, fetchFake } = fakeGithub(tokenRoute());
+    // Same prefix, different repo: `/repos/Stockkart/engineering-handbook-old`.
+    await expect(
+      client.getFile("../../engineering-handbook-old/README.md", "main"),
+    ).rejects.toThrow(HandbookGithubError);
+    expect(fetchFake).not.toHaveBeenCalled();
+  });
+
   it("can only address the handbook repo (hard check on every call)", async () => {
     const outside = createHandbookGithub({
       config: { ...CONFIG, repo: "SomeoneElse/engineering-handbook" },

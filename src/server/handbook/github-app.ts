@@ -238,11 +238,13 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
     const url = new URL(path, GITHUB_API);
     if (query) for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
     const tokenPath = `/app/installations/${encodeURIComponent(cfg.installationId)}/access_tokens`;
-    const prefix = `${repoPrefix(cfg)}/`.toLowerCase();
+    // The repo itself (`GET /repos/<owner>/<repo>`, for the default branch) and paths under it.
+    const repoRoot = repoPrefix(cfg).toLowerCase();
+    const pathname = url.pathname.toLowerCase();
     const allowed =
       url.origin === GITHUB_API &&
       !/%2f|%2e|%5c/i.test(url.pathname) &&
-      (url.pathname === tokenPath || url.pathname.toLowerCase().startsWith(prefix));
+      (url.pathname === tokenPath || pathname === repoRoot || pathname.startsWith(`${repoRoot}/`));
     if (!allowed) throw new HandbookGithubError("repo_scope");
     return url;
   }
