@@ -16,6 +16,11 @@ import {
  * Parsed with markdown-it (MIT) with raw HTML off: `<b>` or `<script>` in the markdown stays
  * literal text, so nothing imported can become markup (S-8). Links keep only http(s)/mailto
  * and relative targets (`isSafeHref`); images become their alt text (no blob store yet).
+ *
+ * The inverse is `from-rich-text.ts` (DOC-12 export, DOC-14 publish). For the round trip, two
+ * shapes the export writes are read back here: a blockquote that starts with `**Note:**` /
+ * `**Warning:**` is a callout, and the export's own `HQ_ONLY_LINKS_NOTE` comment line is
+ * dropped (it would otherwise be literal text, as raw HTML is off).
  */
 
 const md = new MarkdownIt({ html: false, linkify: false, typographer: false });
@@ -46,12 +51,25 @@ const OPEN_TYPES: Record<string, (token: Token) => RichTextNode> = {
 /** Grouping tokens with no node of their own. */
 const IGNORED = new Set(["thead_open", "thead_close", "tbody_open", "tbody_close"]);
 
-const TASK_PREFIX = /^\[([ xX])\]\s+/;
+/** One whitespace after the box: the export writes `[ ] ` + the item's text, and an empty item
+ * as `[ ]&#32;`, so stripping exactly one keeps a text that starts with spaces as written. */
+const TASK_PREFIX = /^\[([ xX])\]\s/;
+
+/** Callout tone → the bold label that starts its blockquote in Markdown (DOC-1, DOC-12). */
+export const CALLOUT_LABELS = { info: "Note:", warning: "Warning:" } as const;
+
+/**
+ * The comment the export appends when a doc links to HQ-only URLs (attachments under
+ * `/api/files/…`, diagrams under `/<KEY>/diagrams/…`): GitHub hides it, and the import drops
+ * the line again. Keep it a single line.
+ */
+export const HQ_ONLY_LINKS_NOTE =
+  "<!-- Stockkart HQ: links to /api/files/… (attachments) and /<project>/diagrams/… only work inside HQ, after signing in. -->";
 
 const sameMarks = (a: RichTextMark[] | undefined, b: RichTextMark[] | undefined) =>
   JSON.stringify(a ?? []) === JSON.stringify(b ?? []);
 
-function inlineNodes(token: Token): RichTextNode[] {
+function inlineNodes(token: Pick<Token, "children">): RichTextNode[] {
   const out: RichTextNode[] = [];
   const marks: RichTextMark[] = [];
   /** One entry per open link: the mark pushed, or null for a dropped (unsafe) link. */
@@ -129,8 +147,22 @@ function inlineNodes(token: Token): RichTextNode[] {
   return out;
 }
 
+/** Inline Markdown (one paragraph's text) → editor inline nodes, exactly as the importer
+ * reads it inside a block. The export uses it to check what it wrote (from-rich-text.ts). */
+export function markdownInlineToNodes(markdown: string): RichTextNode[] {
+  const [token] = md.parseInline(markdown, {});
+  return token ? inlineNodes(token) : [];
+}
+
+/** The inline nodes of one GFM table cell's Markdown, as the importer reads a cell (`\|`
+ * escapes are table syntax, even inside code spans). */
+export function markdownCellToNodes(cell: string): RichTextNode[] {
+  const inline = md.parse(`| ${cell} |\n| --- |\n`, {}).find((token) => token.type === "inline");
+  return inline ? inlineNodes(inline) : [];
+}
+
 /** Turns a bullet list whose items all start with `[ ]` / `[x]` into a task list. */
-function asTaskList(list: RichTextNode): RichTextNode {
+export function asTaskList(list: RichTextNode): RichTextNode {
   const items = list.content ?? [];
   const firstText = (item: RichTextNode) => item.content?.[0]?.content?.[0];
   const isTask = (item: RichTextNode) => {
@@ -164,6 +196,36 @@ function asTaskList(list: RichTextNode): RichTextNode {
   };
 }
 
+/**
+ * A blockquote whose first paragraph starts with a bold `Note:` / `Warning:` is a callout of
+ * that tone (the export writes callouts so); the label and one space after it are dropped.
+ * Anything else is returned unchanged.
+ */
+export function asCallout(quote: RichTextNode): RichTextNode {
+  const [first, ...rest] = quote.content ?? [];
+  const [label, ...inline] = first?.type === "paragraph" ? (first.content ?? []) : [];
+  const bold = label?.type === "text" && sameMarks(label.marks, [{ type: "bold" }]);
+  const tone = bold
+    ? (Object.keys(CALLOUT_LABELS) as (keyof typeof CALLOUT_LABELS)[]).find(
+        (key) => CALLOUT_LABELS[key] === label.text,
+      )
+    : undefined;
+  if (!tone) return quote;
+  const [head, ...tail] = inline;
+  const text = head?.type === "text" && head.text?.startsWith(" ") ? head.text.slice(1) : null;
+  const paragraphContent: RichTextNode[] =
+    head && text !== null ? (text === "" ? tail : [{ ...head, text }, ...tail]) : inline;
+  const content: RichTextNode[] = [
+    ...(paragraphContent.length > 0 ? [{ type: "paragraph", content: paragraphContent }] : []),
+    ...rest,
+  ];
+  return {
+    type: "callout",
+    attrs: { tone },
+    content: content.length > 0 ? content : [{ type: "paragraph" }],
+  };
+}
+
 /** Fixes a node up to the editor schema once all its children are known. */
 function finish(node: RichTextNode): RichTextNode {
   const content = node.content ?? [];
@@ -173,9 +235,10 @@ function finish(node: RichTextNode): RichTextNode {
       return content[0]?.type === "paragraph"
         ? node
         : { ...node, content: [{ type: "paragraph" }, ...content] };
+    case "blockquote":
+      return content.length > 0 ? asCallout(node) : { ...node, content: [{ type: "paragraph" }] };
     case "tableHeader":
     case "tableCell":
-    case "blockquote":
       return content.length > 0 ? node : { ...node, content: [{ type: "paragraph" }] };
     case "bulletList":
       return asTaskList(node);
@@ -193,7 +256,12 @@ export function markdownToRichText(markdown: string): RichTextDoc {
     parent.content = [...(parent.content ?? []), node];
   };
 
-  for (const token of md.parse(markdown, {})) {
+  // The export's "HQ-only links" comment is not content (raw HTML would stay literal text).
+  const source = markdown
+    .split("\n")
+    .filter((line) => line.trim() !== HQ_ONLY_LINKS_NOTE)
+    .join("\n");
+  for (const token of md.parse(source, {})) {
     if (IGNORED.has(token.type)) continue;
     const open = OPEN_TYPES[token.type];
     if (open) {
