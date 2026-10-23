@@ -22,6 +22,7 @@ import {
   LabelDot,
   labelOptions,
   priorityOptions,
+  releaseOptions,
   sprintOptions,
   statusOptions,
   userOptions,
@@ -36,7 +37,7 @@ interface IssueFieldsProps {
   currentUserId: string;
 }
 
-type PanelField = Exclude<IssueField, "title" | "description">;
+type PanelField = Exclude<IssueField, "title" | "description" | "schedule">;
 
 /**
  * §5.4 side panel (ISS-5). Each control saves its own field (§9.4: last write wins per
@@ -54,6 +55,7 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
     dueDate: issue.dueDate,
     parent: issue.parent?.id ?? null,
     sprint: issue.sprintId,
+    release: issue.releaseId,
   };
   const { valueOf, change, flush } = useFieldSaver<PanelField>(
     serverValues,
@@ -70,6 +72,7 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
     due: useId(),
     parent: useId(),
     sprint: useId(),
+    release: useId(),
     labels: useId(),
   };
 
@@ -169,6 +172,18 @@ export function IssueFields({ issue, meta, parentOptions, currentUserId }: Issue
             clearLabel="Backlog"
             placeholder="Backlog"
             onChange={(value) => pick("sprint", value)}
+          />
+        </Field>
+
+        <Field label="Fix version" htmlFor={ids.release}>
+          <Select
+            id={ids.release}
+            label="Fix version"
+            value={idOf("release")}
+            options={releaseOptions(meta.releases)}
+            clearLabel="None"
+            placeholder="None"
+            onChange={(value) => pick("release", value)}
           />
         </Field>
 

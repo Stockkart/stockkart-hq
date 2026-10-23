@@ -7,6 +7,7 @@ import {
   ListTodo,
   type LucideIcon,
   Network,
+  Package,
   Server,
   Settings,
   Siren,
@@ -35,10 +36,9 @@ export const DEFAULT_PROJECT_KEY = "STK";
 const projectHref = (section: string) => `/${DEFAULT_PROJECT_KEY}/${section}`;
 
 /**
- * SPEC §5.1 app shell. My Work, Todos, Backlog, Board, Issues, Sprints, Docs, ADRs and
- * Diagrams work; Roadmap, Incidents and Services show the "coming soon" placeholder
- * (`[projectKey]/[section]`) until their slice lands. Settings opens the profile (GitHub
- * username, GH-4).
+ * SPEC §5.1 app shell. Every item works: My Work, Todos, Backlog, Board, Issues, Sprints,
+ * Roadmap, Releases, Docs, ADRs, Diagrams, Incidents and Services; an unknown section is a
+ * 404 (`[projectKey]/[section]`). Settings opens the profile (GitHub username, GH-4).
  */
 export const NAV_SECTIONS: NavSection[] = [
   {
@@ -55,6 +55,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Issues", icon: ListChecks, href: projectHref("issues") },
       { label: "Sprints", icon: Timer, href: projectHref("sprints") },
       { label: "Roadmap", icon: Flag, href: projectHref("roadmap") },
+      // REL-1/2.
+      { label: "Releases", icon: Package, href: projectHref("releases") },
       { label: "Docs", icon: BookOpen, href: projectHref("docs") },
       { label: "ADRs", icon: FileCheck2, href: projectHref("adrs") },
       { label: "Diagrams", icon: Network, href: projectHref("diagrams") },

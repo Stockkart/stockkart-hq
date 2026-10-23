@@ -10,10 +10,19 @@ import {
 } from "@/lib/sprints/schemas";
 import { requireSession } from "@/server/auth/require-session";
 import { planningService, sprintService } from "@/server/services";
+import { type EnsuredRetro } from "@/server/services/sprint-retros";
 import { type CompletedSprint } from "@/server/services/sprints";
 
 import { runAction } from "./action-runner";
-import { ISSUE_LIST, MY_WORK, refreshPages, SPRINT_VIEWS } from "./refresh";
+import {
+  ISSUE_LIST,
+  MY_WORK,
+  refreshDocsTree,
+  refreshPages,
+  SPRINT_PAGE,
+  SPRINT_VIEWS,
+  SPRINTS,
+} from "./refresh";
 
 /**
  * Sprint mutations (SPR-1, SPR-2, BLG-3). Like every action: session first (S-2: action ids
@@ -75,7 +84,25 @@ export async function completeSprintAction(input: unknown): Promise<ActionResult
     completeSprintInput,
     input,
     (data) => sprintService.completeSprint(session.user.id, data),
-    refreshSprintViews,
+    // SPR-5: the completion may also have made the retro doc (a new page in the tree).
+    () => {
+      refreshSprintViews();
+      refreshDocsTree();
+    },
+  );
+}
+
+/** SPR-5 "Create retro" for a completed sprint without one; returns the (existing) doc. */
+export async function createSprintRetroAction(input: unknown): Promise<ActionResult<EnsuredRetro>> {
+  const session = await requireSession();
+  return runAction(
+    sprintIdInput,
+    input,
+    (data) => sprintService.createRetro(session.user.id, data.sprintId),
+    () => {
+      refreshPages(SPRINTS, SPRINT_PAGE);
+      refreshDocsTree();
+    },
   );
 }
 

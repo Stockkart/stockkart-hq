@@ -16,6 +16,13 @@ const PUBLIC_PATHS = new Set<string>([
   // Signature-verified GitHub webhook (GH-1): the route authenticates every delivery itself
   // (HMAC-SHA256, fails closed without GITHUB_WEBHOOK_SECRET).
   "/api/webhooks/github",
+  // NTF-2 digest job: Vercel Cron holds no session; the route requires
+  // `Authorization: Bearer <CRON_SECRET>` (constant-time compare, 503 without the secret).
+  "/api/cron/digest",
+  // NTF-2 one-click unsubscribe (RFC 8058) from a digest email: the random token in the
+  // link is the credential (only its hash is stored); GET only asks, POST unsubscribes,
+  // rate limited per IP, and the page reveals nothing about the account.
+  "/unsubscribe",
   // Static files from /public and framework metadata.
   "/favicon.ico",
   "/robots.txt",

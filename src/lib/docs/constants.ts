@@ -39,6 +39,14 @@ export type AdrStatus = (typeof ADR_STATUSES)[number];
 export const TEMPLATE_KINDS = ["doc", "issue", "diagram"] as const;
 export type TemplateKind = (typeof TEMPLATE_KINDS)[number];
 
+/**
+ * DOC-13 inline comments: `comments.anchor_id` is the id of the comment mark in the doc JSON
+ * (stable across edits, so it never holds offsets), `anchor_text` the quoted selection at the
+ * time of commenting. Both are only used on doc comments (a CHECK enforces it).
+ */
+export const DOC_COMMENT_ANCHOR_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+export const DOC_COMMENT_ANCHOR_TEXT_MAX = 500;
+
 export const DOC_TYPE_LABELS: Record<DocType, string> = {
   page: "Page",
   design: "Design (HLD)",

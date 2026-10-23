@@ -17,6 +17,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { ArrowRightLeft, GripVertical } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useOptimistic, useRef, useState, useTransition } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -30,6 +31,7 @@ import {
 import { callAction } from "@/features/issue/client-utils";
 import { Avatar, IssueTypeIcon, PriorityLabel, StatusBadge } from "@/features/issue/issue-badges";
 import { type PlanningIssue, type StatusOption } from "@/lib/issues/views";
+import { isFull, wipState } from "@/lib/planning/wip";
 import { cn } from "@/lib/utils";
 import { updateIssueFieldAction } from "@/server/actions/issues";
 
@@ -72,6 +74,13 @@ export function Board({ issues, statuses, projectKey }: BoardProps) {
   function moveTo(issue: PlanningIssue, status: StatusOption, keepFocus = false) {
     if (issue.status.id === status.id) return;
     if (keepFocus) setFocusId(issue.id);
+    // BRD-5: a full column still takes the card, with a warning.
+    const inTarget = optimistic.filter((row) => row.status.id === status.id).length;
+    if (isFull(inTarget, status.wipLimit)) {
+      toast.warning(`${status.name} is over its WIP limit`, {
+        description: `${inTarget + 1} issues, limit ${status.wipLimit}.`,
+      });
+    }
     startTransition(async () => {
       applyOptimistic({ id: issue.id, status });
       const result = await callAction(() =>
@@ -130,20 +139,28 @@ function Column({
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status.id });
   const headingId = useId();
+  const wip = wipState(count, status.wipLimit);
   return (
     <section
       ref={setNodeRef}
       aria-labelledby={headingId}
       className={cn(
         "flex w-72 shrink-0 flex-col rounded-lg border bg-muted/30",
+        // BRD-5: amber when over the WIP limit (the badge says it in text too).
+        wip.over && "border-amber-500 bg-amber-50 dark:border-amber-400 dark:bg-amber-950/40",
         isOver && "ring-2 ring-ring/50",
       )}
     >
       <h2 id={headingId} className="flex items-center justify-between gap-2 border-b px-3 py-2">
         <StatusBadge name={status.name} category={status.category} />
-        <span className="text-xs text-muted-foreground tabular-nums">
-          {count}
-          <span className="sr-only"> {count === 1 ? "issue" : "issues"}</span>
+        <span className="flex items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
+          {wip.over ? (
+            <span className="rounded bg-amber-200 px-1.5 py-0.5 font-medium text-amber-950 dark:bg-amber-400/25 dark:text-amber-100">
+              Over WIP limit
+            </span>
+          ) : null}
+          <span aria-hidden="true">{wip.label}</span>
+          <span className="sr-only">{wip.description}</span>
         </span>
       </h2>
       <ul className="flex min-h-24 flex-col gap-2 p-2">{children}</ul>

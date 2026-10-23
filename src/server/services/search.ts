@@ -4,6 +4,12 @@ import { z } from "zod";
 import { DIAGRAM_KIND_LABELS, DIAGRAM_KINDS } from "@/lib/diagrams/constants";
 import { diagramPath } from "@/lib/diagrams/links";
 import { docPath } from "@/lib/docs/views";
+import {
+  formatIncidentKey,
+  INCIDENT_SEVERITIES,
+  INCIDENT_SEVERITY_LABELS,
+} from "@/lib/incidents/constants";
+import { incidentPath, parseIncidentKey } from "@/lib/incidents/rules";
 import { formatIssueKey, issuePath, parseIssueKey } from "@/lib/issues/keys";
 import {
   EMPTY_RESULTS,
@@ -18,7 +24,7 @@ import { type AppDatabase } from "@/server/db/types";
 import { rowsOf } from "./sql";
 
 /**
- * SRCH-1/2 global search over issues, docs, diagrams and comments with Postgres full-text search
+ * SRCH-1/2 global search over issues, docs, diagrams, comments and incidents with Postgres full-text search
  * (`websearch_to_tsquery`, so "quoted phrases", `or` and `-word` work), ranked with
  * `ts_rank` over the GIN-indexed generated `search` columns. Soft-deleted rows, and comments
  * on deleted issues or docs, never appear.
@@ -235,16 +241,57 @@ export function createSearchService(db: AppDatabase) {
     });
   }
 
+  /**
+   * INC-1: incidents by title (A) and summary (B), or by key (`INC-3`, any project); the
+   * severity is the hit's context.
+   */
+  async function searchIncidents(query: string): Promise<SearchHit[]> {
+    const number = parseIncidentKey(query);
+    const textMatch = sql`(n.search @@ q.query AND ${indexable})`;
+    const matches = number === null ? textMatch : sql`(n.number = ${number}::int OR ${textMatch})`;
+    const keyFirst = number === null ? sql`` : sql`(n.number = ${number}::int) DESC,`;
+    const result = await db.execute(sql`
+      WITH q AS (SELECT websearch_to_tsquery('english', ${query}) AS query)
+      SELECT n.id::text AS id, n.number, n.title, n.severity::text AS severity,
+        p.key AS project_key,
+        CASE WHEN n.summary <> '' THEN ${headline("n.summary")} END AS snippet
+      FROM q, incidents n JOIN projects p ON p.id = n.project_id
+      WHERE n.deleted_at IS NULL AND ${matches}
+      ORDER BY ${keyFirst} ts_rank(n.search, q.query) DESC, n.started_at DESC
+      LIMIT ${SEARCH_GROUP_LIMIT}
+    `);
+    const rows = rowsOf(
+      result,
+      z.object({
+        id: z.string(),
+        number: z.number(),
+        title: z.string(),
+        severity: z.enum(INCIDENT_SEVERITIES),
+        project_key: z.string(),
+        snippet: z.string().nullable(),
+      }),
+    );
+    return rows.map((row) => ({
+      kind: "incident",
+      id: row.id,
+      href: incidentPath(row.project_key, row.number),
+      title: `${formatIncidentKey(row.number)} ${row.title}`,
+      context: INCIDENT_SEVERITY_LABELS[row.severity],
+      snippet: snippetOf(row.snippet),
+    }));
+  }
+
   return {
     /** `query` is already trimmed and length-checked by `searchInput`. */
     async search(query: string): Promise<SearchResults> {
       if (!query) return EMPTY_RESULTS;
-      const [jump, issueHits, docHits, diagramHits, commentHits] = await Promise.all([
+      const [jump, issueHits, docHits, diagramHits, commentHits, incidentHits] = await Promise.all([
         jumpTo(query),
         searchIssues(query),
         searchDocs(query),
         searchDiagrams(query),
         searchComments(query),
+        searchIncidents(query),
       ]);
       return {
         jump,
@@ -252,6 +299,7 @@ export function createSearchService(db: AppDatabase) {
         docs: docHits,
         diagrams: diagramHits,
         comments: commentHits,
+        incidents: incidentHits,
       };
     },
   };

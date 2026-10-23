@@ -4,7 +4,7 @@ import { z } from "zod";
 import { BULK_MAX, type bulkEditInput, type BulkEditResult } from "@/lib/issues/bulk";
 import { formatIssueKey } from "@/lib/issues/keys";
 import { directRead, type Read } from "@/server/db/read-batch";
-import { issues, labels, projects, sprints, statuses, users } from "@/server/db/schema";
+import { issues, labels, projects, releases, sprints, statuses, users } from "@/server/db/schema";
 import { type AppDatabase } from "@/server/db/types";
 
 import { conflict, invalid, notFound } from "./errors";
@@ -113,6 +113,18 @@ export function createBulkService(db: AppDatabase, options: { read?: Read; notif
         if (row.state === "closed") throw invalid("That sprint is closed; pick an open one");
         return;
       }
+      case "release": {
+        if (!change.releaseId) return;
+        const [row] = await read(
+          db
+            .select({ id: releases.id })
+            .from(releases)
+            .where(and(eq(releases.id, change.releaseId), eq(releases.projectId, inProject)))
+            .limit(1),
+        );
+        if (!row) throw notFound("Release");
+        return;
+      }
       case "addLabels":
       case "removeLabels": {
         const rows = await read(
@@ -129,14 +141,28 @@ export function createBulkService(db: AppDatabase, options: { read?: Read; notif
     }
   }
 
-  /** The statement for one field change of `issues` (status, priority, assignee, sprint). */
+  /** The statement for one field change of `issues` (status, priority, assignee, sprint, release). */
   function fieldWrite(
     change: Extract<
       BulkEditData["change"],
-      { kind: "status" | "priority" | "assignee" | "sprint" }
+      { kind: "status" | "priority" | "assignee" | "sprint" | "release" }
     >,
   ): { column: string; field: string; value: SQL; alsoSet: SQL; gate: SQL; watch: boolean } {
     switch (change.kind) {
+      case "release":
+        return {
+          column: "release_id",
+          field: "release",
+          value: uuidOrNull(change.releaseId),
+          alsoSet: sql``,
+          // REL-1: a release of the project, share-locked so a concurrent delete of it
+          // (which counts its issues under a row lock) is ordered against this write.
+          gate: change.releaseId
+            ? sql`EXISTS (SELECT 1 FROM releases r WHERE r.id = ${change.releaseId}::uuid
+                AND r.project_id = (SELECT id FROM project) FOR SHARE)`
+            : sql`TRUE`,
+          watch: false,
+        };
       case "status":
         return {
           column: "status_id",

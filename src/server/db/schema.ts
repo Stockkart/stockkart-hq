@@ -4,6 +4,7 @@ import {
   check,
   customType,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -13,6 +14,7 @@ import {
   smallint,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
   type AnyPgColumn,
@@ -24,8 +26,27 @@ import {
   MAX_ATTACHMENT_BYTES,
 } from "@/lib/attachments/constants";
 import { DIAGRAM_KINDS, DIAGRAM_SCENE_MAX_BYTES } from "@/lib/diagrams/constants";
-import { ADR_STATUSES, DOC_STATUSES, DOC_TYPES, TEMPLATE_KINDS } from "@/lib/docs/constants";
+import {
+  ADR_STATUSES,
+  DOC_COMMENT_ANCHOR_TEXT_MAX,
+  DOC_STATUSES,
+  DOC_TYPES,
+  TEMPLATE_KINDS,
+} from "@/lib/docs/constants";
 import { GITHUB_PR_STATES, GITHUB_REF_KINDS } from "@/lib/github/constants";
+import {
+  IMPORT_FILENAME_MAX,
+  IMPORT_KINDS,
+  IMPORT_REPORT_MAX_BYTES,
+  IMPORT_STATUSES,
+} from "@/lib/imports/constants";
+import {
+  INCIDENT_SEVERITIES,
+  INCIDENT_STATUSES,
+  INCIDENT_TIMELINE_BODY_MAX,
+  INCIDENT_TIMELINE_KINDS,
+  INCIDENT_TITLE_MAX,
+} from "@/lib/incidents/constants";
 import {
   COMMENT_ENTITY_TYPES,
   ENTITY_TYPES,
@@ -35,8 +56,21 @@ import {
   STATUS_CATEGORIES,
   STATUS_DEFAULT_FOR,
 } from "@/lib/issues/constants";
-import { NOTIFICATION_TYPES } from "@/lib/notifications/constants";
+import {
+  DIGEST_FREQUENCIES,
+  EMAIL_DELIVERY_KINDS,
+  EMAIL_DELIVERY_STATUSES,
+  EMAIL_ERROR_CODE_MAX,
+  NOTIFICATION_TYPES,
+} from "@/lib/notifications/constants";
 import { type RichTextDoc } from "@/lib/rich-text";
+import {
+  SERVICE_MAX_ENVIRONMENTS,
+  SERVICE_MAX_LINKS,
+  SERVICE_SLUG_MAX,
+  type ServiceEnvironment,
+  type ServiceLink,
+} from "@/lib/service-registry/constants";
 
 /**
  * SPEC §8. Phase 0 tables (users, login_attempts) plus every table Phase 1 needs, defined up
@@ -44,7 +78,9 @@ import { type RichTextDoc } from "@/lib/rich-text";
  * migration. GitHub refs and deliveries arrived with GH-1…GH-4. The Phase 2 (P1) foundation
  * (migration 0004) added watchers, notifications, saved views, attachments, diagrams and
  * diagram versions in one go, so the P1 feature slices need no migration of their own.
- * Incidents and services arrive with their phase.
+ * The P2 foundation (migration 0005) does the same for the P2 slices: services, incidents
+ * (with their services and timeline), email deliveries, imports, inline doc comment
+ * columns, WIP limits, sprint retro docs and release fields.
  *
  * Conventions:
  * - Every table has `id uuid`, `created_at`, `updated_at` unless SPEC §8 says otherwise.
@@ -94,6 +130,15 @@ export const notificationTypeEnum = pgEnum("notification_type", NOTIFICATION_TYP
 export const attachmentEntityTypeEnum = pgEnum("attachment_entity_type", ATTACHMENT_ENTITY_TYPES);
 export const attachmentStatusEnum = pgEnum("attachment_status", ATTACHMENT_STATUSES);
 export const diagramKindEnum = pgEnum("diagram_kind", DIAGRAM_KINDS);
+// P2 foundation (migration 0005).
+export const incidentSeverityEnum = pgEnum("incident_severity", INCIDENT_SEVERITIES);
+export const incidentStatusEnum = pgEnum("incident_status", INCIDENT_STATUSES);
+export const incidentTimelineKindEnum = pgEnum("incident_timeline_kind", INCIDENT_TIMELINE_KINDS);
+export const digestFrequencyEnum = pgEnum("digest_frequency", DIGEST_FREQUENCIES);
+export const emailDeliveryKindEnum = pgEnum("email_delivery_kind", EMAIL_DELIVERY_KINDS);
+export const emailDeliveryStatusEnum = pgEnum("email_delivery_status", EMAIL_DELIVERY_STATUSES);
+export const importKindEnum = pgEnum("import_kind", IMPORT_KINDS);
+export const importStatusEnum = pgEnum("import_status", IMPORT_STATUSES);
 
 // ── Phase 0: sign-in ─────────────────────────────────────────────────────────────────────
 
@@ -112,6 +157,16 @@ export const users = pgTable(
     sessionVersion: integer("session_version").notNull().default(0),
     /** NTF-2 (P2) email digest opt-in. Off until the user turns it on. */
     notifyEmail: boolean("notify_email").notNull().default(false),
+    /** NTF-2 cadence once opted in. */
+    digestFrequency: digestFrequencyEnum("digest_frequency").notNull().default("daily"),
+    /** End of the last digest period sent (or skipped), so the next one starts there. */
+    lastDigestAt: timestamp("last_digest_at", { withTimezone: true }),
+    /**
+     * NTF-2 one-click unsubscribe: the sha-256 (lowercase hex) of a random token that only
+     * the emailed link holds. The token itself is never stored, so a database read cannot
+     * unsubscribe anyone. Null until the first digest is sent; rotate it to revoke old links.
+     */
+    emailUnsubscribeTokenHash: text("email_unsubscribe_token_hash"),
     ...timestamps,
   },
   (table) => [
@@ -119,6 +174,14 @@ export const users = pgTable(
     uniqueIndex("users_github_login_unique")
       .on(sql`lower(${table.githubLogin})`)
       .where(sql`${table.githubLogin} IS NOT NULL`),
+    // The unsubscribe route looks the user up by hash.
+    uniqueIndex("users_email_unsubscribe_token_hash_unique")
+      .on(table.emailUnsubscribeTokenHash)
+      .where(sql`${table.emailUnsubscribeTokenHash} IS NOT NULL`),
+    check(
+      "users_email_unsubscribe_token_hash_format",
+      sql`${table.emailUnsubscribeTokenHash} IS NULL OR ${table.emailUnsubscribeTokenHash} ~ '^[0-9a-f]{64}$'`,
+    ),
   ],
 );
 
@@ -153,13 +216,21 @@ export const projects = pgTable(
     }),
     /** Last issue number handed out; see `allocate` in services/issues.ts. Never decremented. */
     issueCounter: integer("issue_counter").notNull().default(0),
+    /**
+     * INC-1: last incident number handed out (`INC-<n>`, per project); see
+     * `allocateIncidentNumber` in services/incident-numbers.ts. Never decremented.
+     */
+    incidentCounter: integer("incident_counter").notNull().default(0),
     sprintLengthDays: integer("sprint_length_days").notNull().default(14),
+    /** SPR-5: completing a sprint creates its retro doc from the built-in template. */
+    autoRetro: boolean("auto_retro").notNull().default(false),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     ...timestamps,
   },
   (table) => [
     check("projects_key_format", sql`${table.key} ~ '^[A-Z]{2,5}$'`),
     check("projects_issue_counter_nonneg", sql`${table.issueCounter} >= 0`),
+    check("projects_incident_counter_nonneg", sql`${table.incidentCounter} >= 0`),
   ],
 );
 
@@ -190,6 +261,8 @@ export const statuses = pgTable(
     category: statusCategoryEnum("category").notNull(),
     position: integer("position").notNull(),
     isDefaultFor: statusDefaultForEnum("is_default_for"),
+    /** BRD-5: the board column turns amber above this many issues. Null: no limit. */
+    wipLimit: integer("wip_limit"),
     ...timestamps,
   },
   (table) => [
@@ -198,6 +271,10 @@ export const statuses = pgTable(
     uniqueIndex("statuses_project_default_unique")
       .on(table.projectId, table.isDefaultFor)
       .where(sql`${table.isDefaultFor} IS NOT NULL`),
+    check(
+      "statuses_wip_limit_range",
+      sql`${table.wipLimit} IS NULL OR ${table.wipLimit} BETWEEN 1 AND 999`,
+    ),
   ],
 );
 
@@ -230,6 +307,10 @@ export const sprints = pgTable(
     endDate: date("end_date"),
     state: sprintStateEnum("state").notNull().default("planned"),
     closedAt: timestamp("closed_at", { withTimezone: true }),
+    /** SPR-5: the retro doc made on completion (`projects.auto_retro`) or linked by hand. */
+    retroDocId: uuid("retro_doc_id").references((): AnyPgColumn => docs.id, {
+      onDelete: "set null",
+    }),
     ...timestamps,
   },
   (table) => [
@@ -249,14 +330,28 @@ export const releases = pgTable(
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    /** REL-1 (P2). */
+    description: text("description"),
     releaseDate: date("release_date"),
     state: releaseStateEnum("state").notNull().default("unreleased"),
+    /**
+     * When it was marked released; set exactly while `state = 'released'` (CHECK). 0005
+     * backfills it for rows released before the column existed.
+     */
+    releasedAt: timestamp("released_at", { withTimezone: true }),
+    /** REL-2: the generated release-notes doc. */
     notesDocId: uuid("notes_doc_id").references((): AnyPgColumn => docs.id, {
       onDelete: "set null",
     }),
     ...timestamps,
   },
-  (table) => [uniqueIndex("releases_project_name_unique").on(table.projectId, table.name)],
+  (table) => [
+    uniqueIndex("releases_project_name_unique").on(table.projectId, table.name),
+    check(
+      "releases_released_at_state",
+      sql`(${table.state} = 'released') = (${table.releasedAt} IS NOT NULL)`,
+    ),
+  ],
 );
 
 // ── Issues (ISS-*) ───────────────────────────────────────────────────────────────────────
@@ -290,6 +385,7 @@ export const issues = pgTable(
     sprintId: uuid("sprint_id").references(() => sprints.id, { onDelete: "set null" }),
     releaseId: uuid("release_id").references(() => releases.id, { onDelete: "set null" }),
     storyPoints: integer("story_points"),
+    /** RDM-1 roadmap bar: an epic runs from `start_date` to `due_date` (its target date). */
     dueDate: date("due_date"),
     startDate: date("start_date"),
     /**
@@ -316,6 +412,10 @@ export const issues = pgTable(
       .on(table.assigneeId)
       .where(sql`${table.resolvedAt} IS NULL`),
     index("issues_parent_idx").on(table.parentId),
+    // REL-1/2: a release's issues ("Fix version"), and clearing them when it is deleted.
+    index("issues_release_idx")
+      .on(table.releaseId)
+      .where(sql`${table.releaseId} IS NOT NULL`),
     index("issues_search_idx").using("gin", table.search),
     check("issues_number_positive", sql`${table.number} > 0`),
     check("issues_priority_range", sql`${table.priority} BETWEEN 0 AND 3`),
@@ -408,6 +508,22 @@ export const comments = pgTable(
     body: jsonb("body").$type<RichTextDoc>().notNull(),
     bodyText: text("body_text").notNull().default(""),
     editedAt: timestamp("edited_at", { withTimezone: true }),
+    /**
+     * DOC-13 inline comments (doc comments only, CHECK): the id of the comment mark in the
+     * doc JSON (`DOC_COMMENT_ANCHOR_ID_PATTERN`) and the selection quoted when commenting.
+     * Null on page-level doc comments (DOC-11) and on issue comments. A reply carries no
+     * anchor of its own; it belongs to its `parent_id` thread.
+     */
+    anchorId: text("anchor_id"),
+    anchorText: text("anchor_text"),
+    /** DOC-13: resolving a thread hides its mark; set on the thread's top comment. */
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedBy: uuid("resolved_by").references(() => users.id, { onDelete: "set null" }),
+    /**
+     * Thread replies point at the top comment. A composite FK
+     * (`comments_parent_same_entity_fk`) makes the parent live on the same entity.
+     */
+    parentId: uuid("parent_id"),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
     search: tsvector("search").generatedAlwaysAs(
       sql`to_tsvector('english'::regconfig, coalesce("body_text", ''))`,
@@ -417,6 +533,43 @@ export const comments = pgTable(
   (table) => [
     index("comments_entity_idx").on(table.entityType, table.entityId, table.createdAt),
     index("comments_search_idx").using("gin", table.search),
+    // DOC-13: the threads on one mark (and the open marks of a doc).
+    index("comments_entity_anchor_idx")
+      .on(table.entityType, table.entityId, table.anchorId)
+      .where(sql`${table.anchorId} IS NOT NULL`),
+    index("comments_parent_idx")
+      .on(table.parentId)
+      .where(sql`${table.parentId} IS NOT NULL`),
+    // Target of the same-entity parent FK below.
+    unique("comments_id_entity_unique").on(table.id, table.entityType, table.entityId),
+    foreignKey({
+      name: "comments_parent_same_entity_fk",
+      columns: [table.parentId, table.entityType, table.entityId],
+      foreignColumns: [table.id, table.entityType, table.entityId],
+    }).onDelete("cascade"),
+    // 'doc' has been a comment_entity_type value since 0001, so this CHECK is safe in 0005.
+    check(
+      "comments_anchor_doc_only",
+      sql`(${table.anchorId} IS NULL AND ${table.anchorText} IS NULL) OR ${table.entityType} = 'doc'`,
+    ),
+    check(
+      "comments_anchor_format",
+      sql`${table.anchorId} IS NULL OR ${table.anchorId} ~ '^[A-Za-z0-9_-]{1,64}$'`,
+    ),
+    check(
+      "comments_anchor_text_needs_anchor",
+      sql`${table.anchorText} IS NULL OR (${table.anchorId} IS NOT NULL AND char_length(${table.anchorText}) <= ${sql.raw(String(DOC_COMMENT_ANCHOR_TEXT_MAX))})`,
+    ),
+    check(
+      "comments_resolved_by_needs_resolved_at",
+      sql`${table.resolvedBy} IS NULL OR ${table.resolvedAt} IS NOT NULL`,
+    ),
+    check("comments_not_own_parent", sql`${table.parentId} IS DISTINCT FROM ${table.id}`),
+    // A reply belongs to its thread: the anchor and the resolution live on the top comment.
+    check(
+      "comments_reply_plain",
+      sql`${table.parentId} IS NULL OR (${table.anchorId} IS NULL AND ${table.anchorText} IS NULL AND ${table.resolvedAt} IS NULL)`,
+    ),
   ],
 );
 
@@ -891,6 +1044,264 @@ export const diagramVersions = pgTable(
   ],
 );
 
+// ── Phase 3 (P2) foundation, migration 0005 ──────────────────────────────────────────────
+
+/**
+ * SVC-1 service registry: where each service runs and where to look (app, logs, dashboards,
+ * DB console). `environments` and `links` are JSON arrays (CHECK); every URL in them is
+ * validated with `parseSafeUrl` (`lib/links/safe-url.ts`) before it is written.
+ *
+ * NEVER store credentials in this table: there is deliberately no secrets column, and no
+ * password, token, API key or connection string may go into `notes`, `description` or a URL
+ * (SPEC §4.14 "No secrets", S-6). Secrets live only in the platforms' own env settings.
+ *
+ * The slug stays taken while a service is soft-deleted, so restoring it never conflicts.
+ */
+export const services = pgTable(
+  "services",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    /** URL key, e.g. `inventory-api` (`SERVICE_SLUG_PATTERN`). */
+    slug: text("slug").notNull(),
+    description: text("description"),
+    /** `Owner/repo`, e.g. `Stockkart/inventory-api`. */
+    repo: text("repo"),
+    /** Runtime / host, e.g. "DigitalOcean App Platform" or "Vercel". */
+    runtime: text("runtime"),
+    ownerId: uuid("owner_id").references(() => users.id, { onDelete: "set null" }),
+    environments: jsonb("environments")
+      .$type<ServiceEnvironment[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    links: jsonb("links")
+      .$type<ServiceLink[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    notes: text("notes"),
+    /** List order per project; a fractional key like `docs.position`. */
+    position: fractionalKey("position").notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("services_project_slug_unique").on(table.projectId, table.slug),
+    index("services_project_position_idx").on(table.projectId, table.position),
+    check(
+      "services_slug_format",
+      sql`char_length(${table.slug}) <= ${sql.raw(String(SERVICE_SLUG_MAX))} AND ${table.slug} ~ '^[a-z0-9]+(-[a-z0-9]+)*$'`,
+    ),
+    check(
+      "services_repo_format",
+      sql`${table.repo} IS NULL OR ${table.repo} ~ '^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$'`,
+    ),
+    check(
+      "services_json_arrays",
+      sql`jsonb_typeof(${table.environments}) = 'array' AND jsonb_typeof(${table.links}) = 'array'
+        AND jsonb_array_length(${table.environments}) <= ${sql.raw(String(SERVICE_MAX_ENVIRONMENTS))}
+        AND jsonb_array_length(${table.links}) <= ${sql.raw(String(SERVICE_MAX_LINKS))}`,
+    ),
+  ],
+);
+
+/**
+ * INC-1 incidents, numbered per project like issues (`INC-<n>`, from
+ * `projects.incident_counter`; `allocateIncidentNumber`). Follow-up issues (INC-2) are
+ * `entity_links` rows (`incident` → `issue`); the postmortem is `postmortem_doc_id`.
+ * `resolved_at` is set exactly while `status = 'resolved'`.
+ */
+export const incidents = pgTable(
+  "incidents",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    number: integer("number").notNull(),
+    title: text("title").notNull(),
+    severity: incidentSeverityEnum("severity").notNull(),
+    status: incidentStatusEnum("status").notNull().default("investigating"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    mitigatedAt: timestamp("mitigated_at", { withTimezone: true }),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    commanderId: uuid("commander_id").references(() => users.id, { onDelete: "set null" }),
+    /** Plain text; feeds `search`. */
+    summary: text("summary").notNull().default(""),
+    postmortemDocId: uuid("postmortem_doc_id").references(() => docs.id, {
+      onDelete: "set null",
+    }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    search: tsvector("search").generatedAlwaysAs(
+      sql`setweight(to_tsvector('english'::regconfig, coalesce("title", '')), 'A') || setweight(to_tsvector('english'::regconfig, coalesce("summary", '')), 'B')`,
+    ),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("incidents_project_number_unique").on(table.projectId, table.number),
+    index("incidents_project_started_idx").on(table.projectId, table.startedAt.desc()),
+    index("incidents_search_idx").using("gin", table.search),
+    check("incidents_number_positive", sql`${table.number} > 0`),
+    check(
+      "incidents_title_length",
+      sql`char_length(${table.title}) BETWEEN 1 AND ${sql.raw(String(INCIDENT_TITLE_MAX))}`,
+    ),
+    check(
+      "incidents_resolved_at_status",
+      sql`(${table.status} = 'resolved') = (${table.resolvedAt} IS NOT NULL)`,
+    ),
+    // Mitigated means "when" is known; an incident may go straight to resolved, though.
+    check(
+      "incidents_mitigated_at_status",
+      sql`${table.status} <> 'mitigated' OR ${table.mitigatedAt} IS NOT NULL`,
+    ),
+    check(
+      "incidents_times_ordered",
+      sql`(${table.mitigatedAt} IS NULL OR ${table.mitigatedAt} >= ${table.startedAt})
+        AND (${table.resolvedAt} IS NULL
+          OR ${table.resolvedAt} >= coalesce(${table.mitigatedAt}, ${table.startedAt}))`,
+    ),
+  ],
+);
+
+/** INC-1 affected services. A join table, so no `id`/`updated_at`. */
+export const incidentServices = pgTable(
+  "incident_services",
+  {
+    incidentId: uuid("incident_id")
+      .notNull()
+      .references(() => incidents.id, { onDelete: "cascade" }),
+    serviceId: uuid("service_id")
+      .notNull()
+      .references(() => services.id, { onDelete: "cascade" }),
+    createdAt,
+  },
+  (table) => [
+    primaryKey({ columns: [table.incidentId, table.serviceId] }),
+    index("incident_services_service_idx").on(table.serviceId),
+  ],
+);
+
+/**
+ * INC-1 timeline notes, in `at` order (when it happened, which may be before it was
+ * written). Append-only, so no `updated_at`.
+ */
+export const incidentTimeline = pgTable(
+  "incident_timeline",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    incidentId: uuid("incident_id")
+      .notNull()
+      .references(() => incidents.id, { onDelete: "cascade" }),
+    at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
+    authorId: uuid("author_id").references(() => users.id, { onDelete: "set null" }),
+    kind: incidentTimelineKindEnum("kind").notNull(),
+    body: text("body").notNull(),
+    createdAt,
+  },
+  (table) => [
+    index("incident_timeline_incident_at_idx").on(table.incidentId, table.at),
+    check(
+      "incident_timeline_body_length",
+      sql`char_length(${table.body}) BETWEEN 1 AND ${sql.raw(String(INCIDENT_TIMELINE_BODY_MAX))}`,
+    ),
+  ],
+);
+
+/**
+ * NTF-2 digest sends, one row per user, kind and period: inserting the `pending` row first
+ * (`ON CONFLICT DO NOTHING`) claims the period, so a retried or overlapping cron run never
+ * emails twice. Derive each `period_start` from `users.last_digest_at` (not from the
+ * calendar), so changing the frequency never produces overlapping periods. Holds no email
+ * content or address; `error_code` is a short provider code.
+ */
+export const emailDeliveries = pgTable(
+  "email_deliveries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    kind: emailDeliveryKindEnum("kind").notNull(),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    /** Set exactly when `status = 'sent'`. */
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    /** The provider's message id (Resend), for support lookups. */
+    providerId: text("provider_id"),
+    status: emailDeliveryStatusEnum("status").notNull().default("pending"),
+    errorCode: text("error_code"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("email_deliveries_user_kind_period_unique").on(
+      table.userId,
+      table.kind,
+      table.periodStart,
+    ),
+    check("email_deliveries_period_order", sql`${table.periodEnd} > ${table.periodStart}`),
+    check(
+      "email_deliveries_sent_at_status",
+      sql`(${table.status} = 'sent') = (${table.sentAt} IS NOT NULL)`,
+    ),
+    check(
+      "email_deliveries_error_code",
+      sql`${table.errorCode} IS NULL OR (${table.status} = 'failed' AND char_length(${table.errorCode}) <= ${sql.raw(String(EMAIL_ERROR_CODE_MAX))})`,
+    ),
+  ],
+);
+
+/**
+ * IMP-4 CSV imports of issues: one row per upload, `previewed` → `applied` | `failed`. It
+ * records the history and makes apply idempotent (`UPDATE … WHERE status = 'previewed'` in
+ * the statement that creates the issues). The raw CSV is never stored; `report` holds the
+ * per-row outcome (bounded by a CHECK). Written twice at most, so no `updated_at`.
+ */
+export const imports = pgTable(
+  "imports",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    kind: importKindEnum("kind").notNull(),
+    filename: text("filename").notNull(),
+    createdBy: uuid("created_by").references(() => users.id, { onDelete: "set null" }),
+    status: importStatusEnum("status").notNull().default("previewed"),
+    rowCount: integer("row_count").notNull().default(0),
+    createdCount: integer("created_count").notNull().default(0),
+    errorCount: integer("error_count").notNull().default(0),
+    report: jsonb("report")
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    createdAt,
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("imports_project_created_idx").on(table.projectId, table.createdAt.desc()),
+    check(
+      "imports_counts_valid",
+      sql`${table.rowCount} >= 0 AND ${table.createdCount} >= 0 AND ${table.errorCount} >= 0
+        AND ${table.createdCount} + ${table.errorCount} <= ${table.rowCount}`,
+    ),
+    check(
+      "imports_applied_at_status",
+      sql`(${table.status} = 'applied') = (${table.appliedAt} IS NOT NULL)`,
+    ),
+    check(
+      "imports_filename_length",
+      sql`char_length(${table.filename}) BETWEEN 1 AND ${sql.raw(String(IMPORT_FILENAME_MAX))}`,
+    ),
+    check(
+      "imports_report_size",
+      sql`octet_length(${table.report}::text) < ${sql.raw(String(IMPORT_REPORT_MAX_BYTES))}`,
+    ),
+  ],
+);
+
 export type UserRow = typeof users.$inferSelect;
 export type ProjectRow = typeof projects.$inferSelect;
 export type StatusRow = typeof statuses.$inferSelect;
@@ -901,3 +1312,9 @@ export type NotificationRow = typeof notifications.$inferSelect;
 export type SavedViewRow = typeof savedViews.$inferSelect;
 export type AttachmentRow = typeof attachments.$inferSelect;
 export type DiagramRow = typeof diagrams.$inferSelect;
+export type ServiceRow = typeof services.$inferSelect;
+export type IncidentRow = typeof incidents.$inferSelect;
+export type IncidentTimelineRow = typeof incidentTimeline.$inferSelect;
+export type EmailDeliveryRow = typeof emailDeliveries.$inferSelect;
+export type ImportRow = typeof imports.$inferSelect;
+export type ReleaseRow = typeof releases.$inferSelect;

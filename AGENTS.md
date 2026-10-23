@@ -45,13 +45,17 @@ src/
                           notifications/, settings/profile/
   app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, backlog/, board/, docs/
                           (tree layout, list, docs/[id] editor), adrs/, sprints/ (list,
-                          sprints/[sprintId]), diagrams/ (grid, diagrams/[id] editor), and a
-                          "coming soon" [section] placeholder for
-                          the rest (roadmap, …)
+                          sprints/[sprintId]), diagrams/ (grid, diagrams/[id] editor), roadmap/
+                          (RDM-1/2), releases/ (list, releases/[releaseId]; REL-1/2),
+                          incidents/ (list, incidents/[key] = INC-n; INC-1/2), services/ (list,
+                          services/[slug]; SVC-1), settings/ (PRJ-3, IMP-4 Import tab), trash/;
+                          [section] only 404s unknown sections (inside the app shell)
   app/api/auth/           Auth.js route handlers
   app/api/webhooks/github GitHub org webhook (GH-1…GH-3): HMAC-verified, logic in server/github/
   app/api/files/          authed file downloads (S-5): [id] (attachments) and
                           thumbnail/diagram/[id]; 302 to a presigned R2 URL (≤ 5 min)
+  app/api/cron/digest     NTF-2 digest job (Vercel Cron, Bearer CRON_SECRET; public path)
+  app/unsubscribe         NTF-2 one-click unsubscribe (token in the link; public path)
   proxy.ts                default-deny gate (Next.js 16 name for middleware.ts)
   env.ts                  Zod-validated server env (throws on import if invalid)
   server/auth/            Auth.js config, inventory-api client, rate limit, session policy
@@ -61,6 +65,8 @@ src/
                           CTEs (NTF-1); watchers.ts (ISS-11); mentions.ts (MY-1)
   server/storage/         private R2 bucket (S-5): presigned upload/download, key layout,
                           fail-closed StorageNotConfigured; index.ts wires env
+  server/email/           NTF-2: Resend sender (fetch), digest job, unsubscribe, route
+                          factories; index.ts wires env (fail closed without Resend)
   server/db/              Drizzle schema, client, seed, AppDatabase type
   server/import/          handbook import (IMP-1…3), driven by scripts/import-handbook.ts
   server/github/          webhook: signature check, Zod payloads, pure event → plan rules
@@ -73,7 +79,9 @@ src/
   features/               feature UI (shell/, issue/, planning/, sprints/, todos/, search/,
                           docs/, editor/, notifications/, diagrams/, settings/project/ (PRJ-3), views/
                           (VW-3 saved views), bulk/ (ISS-12 selection + bulk bar), trash/
-                          (ISS-13))
+                          (ISS-13), roadmap/ (RDM-1/2), releases/ (REL-1/2), import/ (IMP-4
+                          CSV import tab), incidents/ (INC-1/2), service-registry/ (SVC-1),
+                          docs/comments/ (DOC-11/13 comment panel))
   features/shell/shortcuts.ts  the one keyboard-shortcut registry (§9.5): handlers match
                           keys with `matchesShortcut`, the `?` dialog lists it; add new
                           shortcuts there
@@ -154,6 +162,57 @@ e2e/                      Playwright smoke tests
     transaction, so no later SQL migration may use `'attachment'` (default, index predicate,
     CHECK, backfill) until 0004 is applied everywhere on its own; a fresh database that
     applies both at once would fail. App queries may use it freely.
+- Migration `0005_p2_foundation` holds the schema of the P2 slices, so **they add no
+  migration either** (see "P2 slice notes" below for who owns what):
+  - `services` (SVC-1): project, name, `slug` (unique per project, even while
+    soft-deleted; CHECK format), description, `repo` (`Owner/repo` CHECK), `runtime`,
+    `owner_id`, `environments` / `links` jsonb arrays (CHECK: arrays of ≤ 50; types in
+    `lib/service-registry/constants.ts`), `notes`, fractional `position`, soft delete.
+    **No secrets column, and no credentials anywhere in a row** (notes and URLs included).
+  - `incidents` (INC-1): per-project `number` from `projects.incident_counter`, `title`
+    (1…200 chars), `severity` `sev1|sev2|sev3`, `status`
+    `investigating|mitigated|resolved`, `started_at`, `mitigated_at` (required while
+    `mitigated`), `resolved_at` (CHECK: set exactly while `resolved`; times ordered
+    started ≤ mitigated ≤ resolved), `commander_id`, `summary` (plain text),
+    `postmortem_doc_id`, soft delete, generated `search` (title A, summary B) + GIN.
+    `incident_services` (PK both, cascade; same-project is the app's check) and
+    `incident_timeline` (`at`, `author_id`, `kind` `note|status_change|action`, `body`
+    1…10 000 chars; append-only; index `(incident_id, at)`). Follow-up issues are
+    `entity_links` (`incident` → `issue`).
+  - `comments` (DOC-13): `anchor_id` (mark id, `^[A-Za-z0-9_-]{1,64}$`), `anchor_text`
+    (≤ 500 chars, needs `anchor_id`), `resolved_at` / `resolved_by`, `parent_id` (threads,
+    cascade). CHECK: anchors only on `entity_type = 'doc'`; replies carry no anchor or
+    resolution (`comments_reply_plain`). A composite FK `(parent_id, entity_type,
+entity_id)` → `comments (id, entity_type, entity_id)` keeps a reply on its thread's
+    entity. Page-level doc comments (DOC-11) keep `anchor_id` null. Partial index
+    `(entity_type, entity_id, anchor_id) WHERE anchor_id IS NOT NULL`.
+  - `users.digest_frequency` (`daily|weekly`, default daily), `users.last_digest_at`,
+    `users.email_unsubscribe_token_hash` (sha-256 hex, unique, CHECK format) and
+    `email_deliveries` (user, `kind` `digest`, period, `sent_at`, `provider_id`, `status`
+    `pending|sent|failed|skipped` (default `pending`), `error_code`; unique
+    `(user_id, kind, period_start)`) for NTF-2.
+  - `imports` (IMP-4): project, `kind` `issues_csv`, filename, `created_by`, `status`
+    `previewed|applied|failed`, counts (CHECK consistent), `report` jsonb (< 1 MB),
+    `created_at`, `applied_at` (set exactly while `applied`). The raw CSV is never stored.
+  - `statuses.wip_limit` (BRD-5, null or 1…999), `sprints.retro_doc_id` and
+    `projects.auto_retro` (SPR-5), `releases.description` / `releases.released_at`
+    (REL-1; set exactly while `released`, backfilled by 0005), `projects.incident_counter`,
+    and a partial index `issues (release_id)` for a release's issues (REL-1/2).
+  - `entity_type` gains `service` and `release` (`incident` existed since 0001), and
+    `notification_type` gains `comment_on_doc` (DOC-13) and `incident_commander` (INC-1).
+    They are added with `ALTER TYPE … ADD VALUE` inside the migration transaction, so — as
+    with `'attachment'` — no later SQL migration may use them until 0005 is applied
+    everywhere on its own. App queries may use them freely.
+  - Two hand edits in the generated 0005 SQL (keep them if it is ever regenerated): the
+    `comments_id_entity_unique` constraint is moved above the FK that references it, and
+    `released_at` is backfilled before its CHECK is added.
+  - ISS-14 clone/convert needs nothing new: link a clone to its source with a `relates`
+    issue link and log the source in the `created` activity's `meta`; a type change is an
+    `activity` row with `field = 'type'`.
+  - Issue roadmap dates need nothing new: an epic's bar is `issues.start_date` →
+    `issues.due_date` (both `date`), and RDM-2 dependencies are `issue_links` `blocks` rows.
+  - The postmortem, release-notes and sprint-retro doc templates are already seeded
+    built-ins (`kind = 'doc'`, subtypes `postmortem`, `release_notes`, `retro`).
 - @user mentions: `extractUserMentionIds(doc)` (`lib/mentions.ts`) reads `mention` nodes;
   `userMentionSyncCtes` / `userMentionSyncStatement` (`services/sql.ts`) keep the
   `to_type = 'user'` mention links in sync, like the issue-key ones, and RETURN the newly
@@ -191,6 +250,103 @@ e2e/                      Playwright smoke tests
   (`saveDoc` in `services/docs.ts`); losing returns the winner's copy, never overwrites.
   Tree moves and deletes take a per-project advisory lock in the same transaction, so the
   cycle check sees the tree as it is. Mermaid SVG is inserted only after DOMPurify (S-8).
+
+## P2 slice notes
+
+**P2 status: all four slices (A roadmap, B releases, C incidents, D doc comments + digest)
+are merged** on top of migration 0005, still without a migration of their own. Where they
+meet, both behaviours are kept: `createIssue` takes a fix version (B) and a clone source
+(A) in its one statement; `updateIssueField` has both `schedule` (A) and `release` (B);
+the issue page batches the clone/convert menu, the fix version, "From incident INC-n" and
+the P1 panels in ONE round trip; the bell and the digest format `incident_commander` (C)
+and `comment_on_doc` (D); generated postmortems (C) and release notes (B) are ordinary docs,
+so the comment panel (D) works on them. `services/p2-cross-slice.db.test.ts` and
+`features/incidents/follow-ups.test.tsx` pin these seams; keep them green when changing a
+slice. The table below is the original split, kept as the map of who owns what.
+
+Four slices build on migration 0005 in parallel worktrees. **None of them adds a
+migration**; if one seems needed, stop and talk to the owner. Each slice owns the new files
+under its paths; shared files get small, append-only edits (one line per registry, one
+wiring line in `services/index.ts`, one nav entry), so merges stay trivial.
+
+| Slice                                                                              | Owns                                                                                                                                                                                                                                                                         | Touches (append-only)                                                                                                                                                                                         |
+| ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A Roadmap (RDM-1/2), WIP limits (BRD-5), clone/convert (ISS-14), retro doc (SPR-5) | `app/(app)/[projectKey]/roadmap/`, `features/roadmap/`, `lib/roadmap/`, `services/roadmap-queries.ts`                                                                                                                                                                        | board column header (`features/planning/`), `services/project-settings.ts` (WIP limit, `auto_retro`), `services/issues.ts` + `actions/issues.ts` (clone/convert), `services/sprints.ts` (retro on completion) |
+| B Releases (REL-1/2), CSV import (IMP-4)                                           | `app/(app)/[projectKey]/releases/`, `features/releases/`, `lib/releases/`, `services/releases.ts`, `services/release-queries.ts`, `actions/releases.ts`, `features/import/`, `services/imports.ts`, `actions/imports.ts`                                                     | `lib/imports/constants.ts`, the issue "Fix version" field (`features/issue/`)                                                                                                                                 |
+| C Incidents (INC-1/2), services (SVC-1)                                            | `app/(app)/[projectKey]/incidents/`, `app/(app)/[projectKey]/services/`, `features/incidents/`, `features/service-registry/`, `services/incidents.ts`, `services/incident-queries.ts`, `services/service-registry.ts`, `actions/incidents.ts`, `actions/service-registry.ts` | `lib/incidents/`, `lib/service-registry/`, `services/incident-numbers.ts`, search kinds (`lib/search/`)                                                                                                       |
+| D Inline doc comments (DOC-13), email digest (NTF-2)                               | `features/editor/extensions/comment-mark.ts` (+ its rich-text-nodes and renderer entries), `features/docs/comments/`, `server/email/`, the digest job and unsubscribe route                                                                                                  | `services/comments.ts`, `features/settings/profile/` (frequency), `env.ts` + `.env.example` (Resend), `lib/notifications/constants.ts`                                                                        |
+
+Slice A also owns the new `services/sprint-retros.ts`, `lib/sprints/retro.ts`,
+`lib/issues/convert.ts`, `lib/planning/wip.ts` and `lib/settings/wip-limit.ts`.
+
+Gotchas:
+
+- **Enum gotcha.** `entity_type` values `service` and `release`, and `notification_type`
+  values `comment_on_doc` and `incident_commander`, arrive in 0005 via
+  `ALTER TYPE … ADD VALUE`; Postgres refuses to use a value in the transaction that added it,
+  and drizzle-kit applies all pending migrations in one transaction. App code may use them;
+  a future migration must not (default, CHECK, index predicate, backfill) until 0005 is
+  applied everywhere.
+- **Incident numbers** come only from `allocateIncidentNumber`
+  (`services/incident-numbers.ts`): one statement that bumps `projects.incident_counter`,
+  inserts the incident and logs `created`. Never `max(number) + 1`. Validate input with Zod
+  first (severity, a real commander): a bad value surfaces as a raw Postgres error. Notify
+  a new commander with `incident_commander`.
+- **Status ⇔ timestamp CHECKs.** `incidents.resolved_at` is set exactly while
+  `status = 'resolved'` (reopening clears it) and `mitigated` needs `mitigated_at`; likewise
+  `imports.applied_at` ⇔ `applied`, `email_deliveries.sent_at` ⇔ `sent` (`error_code`
+  only on `failed`), and `releases.released_at` ⇔ `released`. Write both columns in the
+  same UPDATE.
+- **No secrets in the registry.** Validate every service link and environment URL with
+  `parseSafeUrl` / `safeUrlSchema` (`lib/links/safe-url.ts`: absolute http(s), no
+  `user:password@`, no `javascript:`/`data:`, no invisible characters). Never add a
+  secrets column or field. These URLs may point at `localhost` or private hosts: only show
+  them as links, never fetch them from the server (SSRF).
+- **Inline comments.** Anchors live in the doc JSON as a mark with a stable id; the row
+  keeps `anchor_id` and the quoted `anchor_text`, never character offsets. Replies set
+  `parent_id` to the thread's top comment and carry no anchor or resolution (CHECK); the
+  composite FK keeps them on the same doc. Resolve on the top comment. Notify with
+  `comment_on_doc`.
+  Implemented (slice D): the mark is `features/editor/comment-anchor-mark.ts`; the editor
+  asks the page with a cancelable `hq:comment-anchor-request` DOM event
+  (`comment-anchor-events.ts`) and adds the mark only if the doc page's panel
+  (`features/docs/comments/`) accepts it. The panel highlights open anchors with a
+  generated `<style>` (resolved ones stay plain) and orders threads with
+  `anchorIdsInOrder` of the live content. Marks render through `MARK_RENDERERS`
+  (`renderers/index.ts`), a mark registry next to the node one.
+- **Digest idempotency and unsubscribe.** Claim a period by inserting a `pending`
+  `email_deliveries` row first (`ON CONFLICT DO NOTHING`), send, then set `sent` / `failed`;
+  reclaim a stale `pending` row (crashed send) by age. Derive `period_start` from
+  `users.last_digest_at`, so a frequency change never makes overlapping periods. Store only
+  the sha-256 of the unsubscribe token; look users up by hash. A public unsubscribe or cron
+  route is a change to `access-policy.ts` and needs the owner's sign-off plus its own auth
+  (signed token / cron secret), per the ground rules.
+- **CSV import** applies once: `UPDATE imports … WHERE status = 'previewed'` in the
+  transaction that creates the issues (allocating numbers like `createIssue`). Keep the
+  report small (CHECK < 1 MB) and never store the file.
+  Built (slice B): the browser parses the file (`lib/imports/csv.ts`, our own RFC 4180
+  reader) and sends only the mapped cells; `services/imports.ts` claims the import and
+  creates labels (statement 1), then numbers all rows with ONE `issue_counter` bump
+  (statement 2, gated on `xmin`), in one transaction. Export later must write cells
+  through `escapeCsvCell` (CSV injection).
+- **Retro and release-notes docs** use the seeded built-in templates (`retro`,
+  `release_notes`, `postmortem`); `sprints.retro_doc_id`, `releases.notes_doc_id` and
+  `incidents.postmortem_doc_id` are set null only on a hard delete, so treat a soft-deleted
+  doc as missing when reading them.
+- **Roadmap dates** (slice A) are written with `updateIssueField` field `schedule`
+  (`{ startDate, dueDate }`, start ≤ due): one statement, one `startDate` / `dueDate`
+  activity row per changed date; the plain `dueDate` field refuses a date before the start.
+  The sprint retro (`services/sprint-retros.ts`) runs right after the completion's
+  transaction, idempotently (docs-tree lock + sprint row lock, then "no live retro yet");
+  reuse `ensureRetro` rather than inserting retro docs elsewhere.
+- **Slice C as built.** `lib/service-registry/secrets.ts` is the "No secrets" heuristic
+  (credential URLs, token prefixes, `password=…`, 32+ char hex/base64): the Zod schemas run
+  it on every field and `assertNoSecrets` repeats it in the service. Declaring an incident
+  passes the services, the first timeline entry and the commander's bell entry to
+  `allocateIncidentNumber` as `extraCtes` (one statement). The postmortem is created under
+  the `hq.docs_tree:<projectId>` lock in a `RunAtomic`, under a root "Postmortems" page.
+  INC-1 lets people edit and delete their own `note`/`action` timeline entries (logged as
+  `timeline_edited` / `timeline_deleted` activity); `status_change` entries stay as written.
 
 ## File storage (R2)
 

@@ -5,6 +5,8 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 
 import { requireProject, resolveProjectKey } from "@/features/issue/project-route";
+import { ImportPanel } from "@/features/import/import-panel";
+import { AutoRetroToggle } from "@/features/settings/project/auto-retro-toggle";
 import { ComponentEditor } from "@/features/settings/project/component-editor";
 import { GeneralForm } from "@/features/settings/project/general-form";
 import { LabelEditor } from "@/features/settings/project/label-editor";
@@ -12,7 +14,7 @@ import { SettingsTabs } from "@/features/settings/project/settings-tabs";
 import { WorkflowEditor } from "@/features/settings/project/workflow-editor";
 import { SETTINGS_TABS } from "@/lib/settings/constants";
 import { requirePageSession } from "@/server/auth/require-session";
-import { settingsQueries } from "@/server/services";
+import { importQueries, settingsQueries } from "@/server/services";
 import { projectIdByKey } from "@/server/services/sql";
 
 interface Props {
@@ -25,7 +27,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return { title: `Project settings · ${projectKey.toUpperCase()}` };
 }
 
-/** PRJ-2/PRJ-3 project settings: General, Workflow, Labels, Components. One round trip. */
+/** PRJ-2/PRJ-3 project settings: General, Workflow, Labels, Components; IMP-4 Import. One round trip. */
 export default async function ProjectSettingsPage({ params, searchParams }: Props) {
   // Layouts and pages render in parallel, so each page checks the session itself too.
   await requirePageSession();
@@ -33,9 +35,11 @@ export default async function ProjectSettingsPage({ params, searchParams }: Prop
   const raw = await searchParams;
   const tab = z.enum(SETTINGS_TABS).catch("general").parse(raw.tab);
   const key = resolveProjectKey(projectKey, `/settings${tab === "general" ? "" : `?tab=${tab}`}`);
-  const [project, settings] = await Promise.all([
+  const [project, settings, imports] = await Promise.all([
     requireProject(key),
     settingsQueries.getSettings(projectIdByKey(key)),
+    // IMP-4 import history (Import tab), same batch.
+    importQueries.listImports(projectIdByKey(key)),
   ]);
   if (!settings) notFound();
 
@@ -54,10 +58,16 @@ export default async function ProjectSettingsPage({ params, searchParams }: Prop
       <SettingsTabs
         initialTab={tab}
         panels={{
-          general: <GeneralForm project={settings.project} users={settings.users} />,
+          general: (
+            <div className="flex flex-col gap-6">
+              <GeneralForm project={settings.project} users={settings.users} />
+              <AutoRetroToggle projectKey={project.key} autoRetro={settings.project.autoRetro} />
+            </div>
+          ),
           workflow: <WorkflowEditor projectKey={project.key} statuses={settings.statuses} />,
           labels: <LabelEditor projectKey={project.key} labels={settings.labels} />,
           components: <ComponentEditor projectKey={project.key} components={settings.components} />,
+          import: <ImportPanel projectKey={project.key} history={imports} />,
         }}
       />
     </div>

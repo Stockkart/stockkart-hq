@@ -1,9 +1,10 @@
 "use client";
 
-import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Columns3 } from "lucide-react";
 import Link from "next/link";
 import { useOptimistic, useRef, useState, useTransition } from "react";
 
+import { MultiSelect } from "@/components/ui/select";
 import { applyBulkChange } from "@/features/bulk/apply";
 import { BulkBar, type BulkOptions } from "@/features/bulk/bulk-bar";
 import { RowCheckbox, SelectAllCheckbox } from "@/features/bulk/checkboxes";
@@ -23,6 +24,7 @@ import { bulkEditIssuesAction } from "@/server/actions/bulk";
 
 import { callAction, RelativeTime } from "./client-utils";
 import { Avatar, IssueTypeIcon, PriorityLabel, StatusBadge } from "./issue-badges";
+import { useOptionalColumns } from "./optional-columns";
 
 interface IssueListProps {
   issues: PlanningIssue[];
@@ -80,6 +82,11 @@ export function IssueList({
   const [announcement, setAnnouncement] = useState("");
   const selection = useRowSelection(shown.map((issue) => issue.id));
   useSelectShortcut(container, (id) => selection.toggle(id));
+  // REL-1: the optional "Fix version" column (only where the page passes the releases).
+  const releases = bulkOptions.releases;
+  const columns = useOptionalColumns();
+  const showRelease = releases !== undefined && columns.shown.includes("release");
+  const releaseNames = new Map((releases ?? []).map((release) => [release.id, release.name]));
 
   function runBulk(change: BulkChange, description: string) {
     const ids = selection.selectedIds;
@@ -150,6 +157,25 @@ export function IssueList({
         onSelectAll={selection.selectAll}
         onClear={selection.clear}
       />
+      {releases ? (
+        <div className="flex justify-end">
+          <MultiSelect
+            variant="chip"
+            label="Columns"
+            aria-label="Optional columns"
+            value={columns.shown}
+            options={[{ value: "release" as const, label: "Fix version" }]}
+            onChange={(_next, change) => columns.toggle(change.value, change.selected)}
+          >
+            {() => (
+              <>
+                <Columns3 aria-hidden="true" />
+                Columns
+              </>
+            )}
+          </MultiSelect>
+        </div>
+      ) : null}
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-sm">
           <caption className="sr-only">
@@ -196,6 +222,11 @@ export function IssueList({
                   </th>
                 );
               })}
+              {showRelease ? (
+                <th scope="col" className="w-36 px-3 py-2 font-medium">
+                  Fix version
+                </th>
+              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -259,6 +290,13 @@ export function IssueList({
                   <td className="px-3 py-2 whitespace-nowrap text-muted-foreground">
                     <RelativeTime date={issue.updatedAt} />
                   </td>
+                  {showRelease ? (
+                    <td className="max-w-0 truncate px-3 py-2">
+                      {(issue.releaseId && releaseNames.get(issue.releaseId)) ?? (
+                        <span className="text-muted-foreground">–</span>
+                      )}
+                    </td>
+                  ) : null}
                 </tr>
               );
             })}

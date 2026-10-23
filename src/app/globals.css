@@ -66,6 +66,11 @@
   --chart-ideal: oklch(0.55 0 0);
   --chart-scope: oklch(0.58 0.15 55);
   --chart-completed: oklch(0.52 0.14 155);
+  /* DOC-13 open comment anchors: a pale background under the normal text colour (≥ 12:1)
+     plus an underline (≥ 3:1 against it), so the highlight never relies on colour alone. */
+  --comment-highlight: oklch(0.95 0.07 95);
+  --comment-highlight-active: oklch(0.89 0.12 92);
+  --comment-underline: oklch(0.5 0.13 60);
 }
 
 .dark {
@@ -96,6 +101,9 @@
   --chart-ideal: oklch(0.7 0 0);
   --chart-scope: oklch(0.78 0.13 70);
   --chart-completed: oklch(0.75 0.14 155);
+  --comment-highlight: oklch(0.38 0.08 80);
+  --comment-highlight-active: oklch(0.46 0.1 80);
+  --comment-underline: oklch(0.85 0.14 88);
 }
 
 @layer base {
@@ -214,5 +222,13 @@
   }
   .rich-text aside[data-type="callout"][data-tone="warning"] {
     @apply border-amber-500 bg-amber-500/10;
+  }
+  /* DOC-13: the floating "Comment" button next to a selection in the doc editor. The
+     anchors' highlight comes from the comments panel (open threads only). */
+  .comment-anchor-button {
+    @apply absolute z-10 rounded-md border bg-primary px-2 py-1 text-xs font-medium text-primary-foreground shadow-sm outline-none hover:opacity-90 focus-visible:ring-[3px] focus-visible:ring-ring/50;
+  }
+  .comment-anchor-button[hidden] {
+    @apply hidden;
   }
 }

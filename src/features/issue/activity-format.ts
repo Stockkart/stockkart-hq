@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import {
+  ISSUE_TYPE_LABELS,
+  ISSUE_TYPES,
   LINK_RELATION_LABELS,
   LINK_RELATIONS,
   PRIORITIES,
@@ -16,6 +18,8 @@ export interface ActivityLookups {
   components: Map<string, string>;
   /** Open sprints by id; a closed or deleted sprint shows as "an earlier sprint". */
   sprints?: Map<string, string>;
+  /** REL-1 releases by id; a deleted one shows as "a deleted release". */
+  releases?: Map<string, string>;
   issueKeys: Record<string, string>;
 }
 
@@ -39,8 +43,11 @@ const FIELD_LABELS: Record<string, string> = {
   component: "component",
   storyPoints: "story points",
   dueDate: "due date",
+  startDate: "start date",
+  type: "type",
   parent: "parent",
   sprint: "sprint",
+  release: "fix version",
 };
 
 const metaSchema = z
@@ -51,6 +58,13 @@ const metaSchema = z
     reason: z.string().optional(),
     /** The name of a status or component deleted in project settings. */
     fromName: z.string().optional(),
+    /** ISS-14: the issue a clone was made from (on its `created` row) … */
+    clonedFromKey: z.string().optional(),
+    /** … and the clone (on the original's `cloned` row). */
+    cloneKey: z.string().optional(),
+    /** IMP-4: created by a CSV import (`source = 'csv_import'`) of this file. */
+    source: z.string().optional(),
+    filename: z.string().optional(),
   })
   .catch({});
 
@@ -59,6 +73,7 @@ const REASON_NOTES: Record<string, string> = {
   component_deleted: "the component was deleted in project settings",
   label_deleted: "the label was deleted in project settings",
   parent_deleted: "restored from the trash while its parent is deleted",
+  release_deleted: "the release was deleted",
 };
 
 /** GH-3 activity: written by the webhook with `actor_id` null and this meta. */
@@ -89,6 +104,12 @@ function display(field: string | null, value: string | null, lookups: ActivityLo
       return lookups.issueKeys[value] ?? "a deleted issue";
     case "sprint":
       return lookups.sprints?.get(value) ?? "an earlier sprint";
+    case "type": {
+      const type = ISSUE_TYPES.find((t) => t === value);
+      return type === undefined ? value : ISSUE_TYPE_LABELS[type];
+    }
+    case "release":
+      return lookups.releases?.get(value) ?? "a deleted release";
     case "priority": {
       const priority = PRIORITIES.find((p) => String(p) === value);
       return priority === undefined ? value : PRIORITY_LABELS[priority];
@@ -118,7 +139,20 @@ export function describeActivity(entry: ActivityView, lookups: ActivityLookups):
   const meta = metaSchema.parse(entry.meta ?? {});
   switch (entry.action) {
     case "created":
-      return { verb: "created the issue", from: null, to: null };
+      if (meta.clonedFromKey) {
+        return { verb: "created the issue as a copy of", from: null, to: meta.clonedFromKey };
+      }
+      return {
+        verb: "created the issue",
+        from: null,
+        to: null,
+        note:
+          meta.source === "csv_import"
+            ? `via CSV import${meta.filename ? ` ${meta.filename}` : ""}`
+            : undefined,
+      };
+    case "cloned":
+      return { verb: "cloned the issue as", from: null, to: meta.cloneKey ?? "a new issue" };
     case "deleted":
       return { verb: "deleted the issue", from: null, to: null };
     case "restored":

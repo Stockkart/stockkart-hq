@@ -18,11 +18,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ISSUE_TYPE_LABELS, type IssueType } from "@/lib/issues/constants";
+import { type ConvertSubject } from "@/lib/issues/convert";
 import { branchName } from "@/lib/issues/keys";
 import { TITLE_MAX } from "@/lib/issues/schemas";
 import { deleteIssueAction, updateIssueFieldAction } from "@/server/actions/issues";
 
 import { callAction } from "./client-utils";
+import { IssueActionsMenu } from "./issue-actions-menu";
 import { IssueTypeIcon } from "./issue-badges";
 
 interface IssueHeaderProps {
@@ -31,10 +33,19 @@ interface IssueHeaderProps {
   projectKey: string;
   type: IssueType;
   title: string;
+  /** ISS-14 "Convert type": the parent's and the live children's types. */
+  convert: ConvertSubject;
 }
 
-/** §5.4 header: key · type, inline-editable title, "Copy branch" (GH-5) and delete. */
-export function IssueHeader({ issueId, issueKey, projectKey, type, title }: IssueHeaderProps) {
+/** §5.4 header: key · type, inline-editable title, "Copy branch" (GH-5), "⋯" and delete. */
+export function IssueHeader({
+  issueId,
+  issueKey,
+  projectKey,
+  type,
+  title,
+  convert,
+}: IssueHeaderProps) {
   return (
     <header className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -58,6 +69,12 @@ export function IssueHeader({ issueId, issueKey, projectKey, type, title }: Issu
         </nav>
         <div className="flex items-center gap-1">
           <CopyBranchButton branch={branchName(issueKey, title)} />
+          <IssueActionsMenu
+            issueId={issueId}
+            issueKey={issueKey}
+            projectKey={projectKey}
+            subject={convert}
+          />
           <DeleteIssueButton issueId={issueId} issueKey={issueKey} projectKey={projectKey} />
         </div>
       </div>

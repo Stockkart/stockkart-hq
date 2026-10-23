@@ -24,6 +24,7 @@ describe("issue filter params (VW-1, VW-2)", () => {
         assignee: `me,none,${B}`,
         component: B,
         label: `${A},${B}`,
+        release: `none,${B}`,
         q: "  outbox   retries ",
       }),
     ).toEqual({
@@ -33,6 +34,7 @@ describe("issue filter params (VW-1, VW-2)", () => {
       assignees: ["me", "none", B],
       components: [B],
       labels: [A, B],
+      releases: ["none", B],
       text: "outbox retries",
     });
   });
@@ -83,5 +85,13 @@ describe("issue filter params (VW-1, VW-2)", () => {
   it("knows when any filter is active", () => {
     expect(hasActiveFilters(EMPTY_FILTERS)).toBe(false);
     expect(hasActiveFilters({ ...EMPTY_FILTERS, assignees: ["me"] })).toBe(true);
+    expect(hasActiveFilters({ ...EMPTY_FILTERS, releases: ["none"] })).toBe(true);
+  });
+
+  it("reads the fix-version filter (REL-1) and drops values that are not ids or none", () => {
+    const filters = parseIssueFilters({ release: `${A},none,latest,${A}` });
+    expect(filters.releases).toEqual([A, "none"]);
+    expect(filtersToSearchParams(filters).toString()).toBe(`release=${A}%2Cnone`);
+    expect(parseIssueFilters(filtersToSearchParams(filters))).toEqual(filters);
   });
 });

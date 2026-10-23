@@ -14,10 +14,12 @@ import {
   renameComponentInput,
   renameLabelInput,
   renameStatusInput,
+  setAutoRetroInput,
   setComponentRepoInput,
   setLabelColorInput,
   setStatusCategoryInput,
   setStatusDefaultInput,
+  setStatusWipLimitInput,
   updateProjectInput,
 } from "@/lib/settings/schemas";
 import { requireSession } from "@/server/auth/require-session";
@@ -111,6 +113,28 @@ export async function setStatusDefaultAction(input: unknown): Promise<ActionResu
     setStatusDefaultInput,
     input,
     (data) => done(projectSettingsService.setStatusDefault(session.user.id, data)),
+    [PROJECT_SETTINGS],
+  );
+}
+
+/** BRD-5: a board column's WIP limit (the board header and its amber state). */
+export async function setStatusWipLimitAction(input: unknown): Promise<ActionResult> {
+  const session = await requireSession();
+  return run(
+    setStatusWipLimitInput,
+    input,
+    (data) => done(projectSettingsService.setStatusWipLimit(session.user.id, data)),
+    [PROJECT_SETTINGS, BOARD],
+  );
+}
+
+/** SPR-5: the "make a retro doc on completion" toggle (General). */
+export async function setAutoRetroAction(input: unknown): Promise<ActionResult> {
+  const session = await requireSession();
+  return run(
+    setAutoRetroInput,
+    input,
+    (data) => done(projectSettingsService.setAutoRetro(session.user.id, data)),
     [PROJECT_SETTINGS],
   );
 }

@@ -17,7 +17,17 @@ with optimistic locking, tables, callouts and Mermaid diagrams, ADRs with number
 log, and a one-time handbook import. Sprints (SPR-1…4) are in too: sprint sections on the
 backlog with Start/Complete, a board scoped to the active sprint, and a sprints page with a
 burndown and velocity reconstructed from the activity log. The database schema covers all of
-Phase 1; roadmap, diagrams, incidents and services are still "coming soon".
+Phase 1 and Phase 2 (migrations 0000–0005).
+
+**P2 status** (all four slices merged): the roadmap (RDM-1/2) shows the epics on a timeline
+with their progress and `blocks` dependencies; board columns can have a WIP limit (BRD-5),
+issues can be cloned or converted (ISS-14), and completing a sprint can make its retro doc
+(SPR-5). Releases (REL-1/2) track fix versions and generate release notes, and project
+settings import issues from CSV (IMP-4). Incidents (INC-1/2) have a timeline, follow-up
+issues and postmortems, next to a service registry (SVC-1). Docs take page-level and inline
+comment threads (DOC-11/13), and an opt-in email digest of unread notifications goes out
+through Resend (NTF-2, below). Every sidebar section is built; an unknown project section is
+a 404.
 
 ## Stack
 
@@ -94,6 +104,8 @@ nobody can sign in.
 | `AUTH_URL`                                                               | no       | Public URL of the app. Not needed on Vercel. Set it for `next start` elsewhere, and leave it unset rather than empty                                                                                                 |
 | `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` | no       | Private Cloudflare R2 bucket for attachments and diagram thumbnails (see "File storage (R2)"). Unset or incomplete: the app runs, file routes answer 503 and uploads are refused. Backups use GitHub secrets instead |
 | `GITHUB_WEBHOOK_SECRET`                                                  | no       | GitHub webhook HMAC secret (`openssl rand -hex 32`). Unset: the app runs, the webhook answers 503 and does nothing                                                                                                   |
+| `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `APP_BASE_URL`                    | no       | Email digest (NTF-2) through Resend; see "Email digest". All three or none: until each is set no email is sent and the profile says "Email isn't set up"                                                             |
+| `CRON_SECRET`                                                            | no       | Bearer secret of the daily digest job (`openssl rand -hex 32`, ≥ 32 characters). Unset: `/api/cron/digest` answers 503 and does nothing                                                                              |
 | `HQ_LOG_QUERIES`                                                         | no       | `1` logs every database round trip per request (counts and ms only, never SQL). Off by default; see "Performance"                                                                                                    |
 
 Generate `AUTH_SECRET` with:
@@ -141,6 +153,14 @@ openssl rand -base64 32
 
 Schema changes: edit `src/server/db/schema.ts`, run `pnpm db:generate --name <change>`,
 review and commit the SQL in `drizzle/`, then migrate `dev` before `main`.
+
+Migration `0005_p2_foundation` adds the P2 tables up front: `services` (service registry,
+no secrets), `incidents` with `incident_services` and `incident_timeline`,
+`email_deliveries` (digest idempotency) and `imports` (CSV import history; the file itself
+is not stored), plus inline-comment columns on `comments`, `statuses.wip_limit`,
+`sprints.retro_doc_id`, `projects.auto_retro` / `incident_counter`, release
+`description` / `released_at`, and the digest settings on `users`. AGENTS.md
+("P2 slice notes") lists what each P2 slice owns.
 
 ### Database tests
 
@@ -300,6 +320,79 @@ GITHUB_WEBHOOK_SECRET='<same value as the server>' pnpm exec tsx scripts/send-te
   --event pr-opened --key STK-1 --pr 7      # also: ping, create, push, pr-merged
 ```
 
+## Email digest (NTF-2)
+
+Opted-in users (Settings → Profile: "Email me a digest", daily or weekly on Mondays) get an
+email with their unread notifications since the last digest (up to 50, then "and N more"),
+with links into HQ. Nothing is sent when there is nothing new. Off by default. Turning it
+on starts the first period at that moment (`last_digest_at`), so the first email never
+holds a backlog from before the opt-in; after that `last_digest_at` moves only when a
+period is sent or skipped.
+
+**Fail closed.** Until `RESEND_API_KEY`, `RESEND_FROM_EMAIL` and `APP_BASE_URL` are all
+set, no email is ever sent, the job answers 503 and the profile shows "Email isn't set up".
+Choices made meanwhile are kept.
+
+Setup (owner):
+
+1. Create a [Resend](https://resend.com) account and **verify a sending domain** (Resend →
+   Domains; add the DNS records it shows). "You must add and verify at least one domain to
+   send emails with Resend"; the shared `resend.dev` sender only delivers to the account's
+   own address ([domains](https://resend.com/docs/dashboard/domains/introduction),
+   [403 on resend.dev](https://resend.com/docs/knowledge-base/403-error-resend-dev-domain),
+   checked 2026-10-22). Verify DKIM too: mail clients only offer one-click unsubscribe on
+   DKIM-signed mail (RFC 8058 §4).
+2. Create an API key with "Sending access" only. In Vercel (Production), set
+   `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (`Stockkart HQ <hq@mail.your-domain>`, on the
+   verified domain) and `APP_BASE_URL` (the public https origin, e.g.
+   `https://hq.example.com`, used for every link in the email).
+3. Generate `CRON_SECRET` with `openssl rand -hex 32` and set it in Vercel (Production).
+   Vercel Cron sends it as `Authorization: Bearer <CRON_SECRET>` on each run
+   ([manage cron jobs](https://vercel.com/docs/cron-jobs/manage-cron-jobs), checked
+   2026-10-22).
+4. **The digest is disabled for now: `vercel.json` has no `crons` entry.** To enable it,
+   add `"crons": [{ "path": "/api/cron/digest", "schedule": "0 1 * * *" }]` to
+   `vercel.json` and redeploy. That schedules `GET /api/cron/digest` daily at 01:00
+   UTC (09:00 in Singapore). Vercel calls cron paths with **GET**, only on production
+   deployments, at any time within the scheduled hour on Hobby, and may occasionally call
+   twice ([cron jobs](https://vercel.com/docs/cron-jobs),
+   [usage and pricing](https://vercel.com/docs/cron-jobs/usage-and-pricing), checked
+   2026-10-22). Hobby allows daily jobs only.
+
+Run it by hand (same auth; POST works too):
+
+```bash
+curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://hq.example.com/api/cron/digest
+```
+
+The answer holds counts only (`due`, `sent`, `skipped`, `failed`, `busy`, `deferred`).
+
+How it stays safe:
+
+- **Once per period.** Each send first claims `(user, digest, period_start)` in
+  `email_deliveries` (unique), so overlapping or repeated runs send at most once; the
+  Resend call carries an `Idempotency-Key`, times out after 10 s and is retried once on a 5xx.
+  A failed send keeps its period and is retried by the next run (weekly ones too, without
+  waiting for Monday, once they have sent a first digest); `last_digest_at` only moves on
+  sent or skipped. A run stops starting sends after ~35 s (the function allows 60 s); the
+  rest wait for their next due run. Logs hold ids, counts and error codes, never addresses
+  or content.
+- **Unsubscribe.** Every email has a one-click link (`/unsubscribe?token=…`) plus
+  `List-Unsubscribe` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click` headers. The
+  token is 32 random bytes; only its sha-256 is stored, and each sent digest replaces it
+  (older links stop working; a failed send keeps the previous link valid). `GET /unsubscribe` only asks "Unsubscribe?"; the `POST` from that
+  button (or the mail client) turns the digest off. It is rate limited per IP, answers the
+  same for unknown tokens and shows nothing about the account.
+- `/api/cron/digest` and `/unsubscribe` are the only public paths added (exact paths in
+  `access-policy.ts`); each authenticates requests itself.
+
+**Free tier (approximate; confirm on Resend's pricing page before relying on it).** The
+quota docs list 100 emails/day and 3,000/month on the free plan (each recipient counts),
+up to 3 verified domains, and 10 API requests per second
+([account quotas and limits](https://resend.com/docs/knowledge-base/account-quotas-and-limits),
+checked 2026-10-22; the pricing page itself could not be read, so these numbers are
+**unverified** against it). One digest per user per day stays far below that.
+
 ## Deploying to Vercel
 
 1. Import the GitHub repo in Vercel (framework preset: Next.js; Vercel runs `pnpm install`
@@ -450,6 +543,9 @@ into a new Neon branch, never straight over `main`).
       webhook as in "GitHub integration" and check its `ping` in Recent Deliveries.
 - [ ] Apply migration `0004_p1_foundation` (watchers, notifications, saved views,
       attachments, diagrams) to each Neon branch, then set up R2 as in "File storage (R2)".
+- [ ] Email digest (optional): verify a Resend sending domain, set `RESEND_API_KEY`,
+      `RESEND_FROM_EMAIL`, `APP_BASE_URL` and `CRON_SECRET` in Vercel as in "Email digest",
+      then check `/unsubscribe` and `/api/cron/digest` (without the header: 401) after deploy.
 
 ## Security notes
 

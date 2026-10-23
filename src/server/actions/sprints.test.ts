@@ -14,6 +14,7 @@ const sprintService = vi.hoisted(() => ({
   deleteSprint: vi.fn(),
   startSprint: vi.fn(),
   completeSprint: vi.fn(),
+  createRetro: vi.fn(),
 }));
 const planningService = vi.hoisted(() => ({ moveIssueToSprint: vi.fn() }));
 vi.mock("@/server/services", () => ({ sprintService, planningService }));
@@ -37,6 +38,7 @@ const validInputs: [Name, unknown][] = [
   ["startSprintAction", { sprintId: ID }],
   ["completeSprintAction", { sprintId: ID, carryTo: "backlog" }],
   ["moveIssueToSprintAction", { issueId: ID, sprintId: null }],
+  ["createSprintRetroAction", { sprintId: ID }],
 ];
 
 const allMocks = () => [...Object.values(sprintService), ...Object.values(planningService)];
@@ -63,7 +65,7 @@ describe("sprint server actions (SPR-1/2, BLG-3)", () => {
     expect(revalidatePath).not.toHaveBeenCalled();
   });
 
-  it.each(validInputs)(
+  it.each(validInputs.filter(([name]) => name !== "createSprintRetroAction"))(
     "%s refreshes the sprint views, not the project subtree",
     async (name, input) => {
       authMock.mockResolvedValue(session);
@@ -75,6 +77,20 @@ describe("sprint server actions (SPR-1/2, BLG-3)", () => {
       expect(paths).not.toContain("/[projectKey]");
     },
   );
+
+  it("refreshes the sprint pages and the docs tree for a retro (SPR-5)", async () => {
+    authMock.mockResolvedValue(session);
+    revalidatePath.mockClear();
+    await expect(actions.createSprintRetroAction({ sprintId: ID })).resolves.toMatchObject({
+      ok: true,
+    });
+    expect(sprintService.createRetro).toHaveBeenCalledWith(USER, ID);
+    expect(revalidatePath.mock.calls).toEqual([
+      ["/[projectKey]/sprints", "page"],
+      ["/[projectKey]/sprints/[sprintId]", "page"],
+      ["/[projectKey]/docs", "layout"],
+    ]);
+  });
 
   it("acts as the signed-in user", async () => {
     authMock.mockResolvedValue(session);

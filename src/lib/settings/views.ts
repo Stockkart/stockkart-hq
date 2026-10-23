@@ -11,6 +11,8 @@ export interface ProjectGeneral {
   leadId: string | null;
   defaultAssigneeId: string | null;
   sprintLengthDays: number;
+  /** SPR-5: make a retro doc when a sprint is completed. */
+  autoRetro: boolean;
 }
 
 export interface StatusSetting {
@@ -19,6 +21,8 @@ export interface StatusSetting {
   category: StatusCategory;
   position: number;
   isDefaultFor: StatusDefaultFor | null;
+  /** BRD-5: the board column's WIP limit, or null for none. */
+  wipLimit: number | null;
   /** Live issues in this status. */
   issueCount: number;
   /** Issues in the trash that keep this status (a delete moves them too). */

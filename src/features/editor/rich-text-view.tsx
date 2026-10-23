@@ -5,7 +5,7 @@ import { issuePath, splitIssueRefs } from "@/lib/issues/keys";
 import { type RichTextMark, type RichTextNode } from "@/lib/rich-text";
 import { cn } from "@/lib/utils";
 
-import { NODE_RENDERERS } from "./renderers";
+import { MARK_RENDERERS, NODE_RENDERERS } from "./renderers";
 import { isSafeHref } from "./safe-href";
 
 /**
@@ -65,8 +65,11 @@ function applyMark(mark: RichTextMark, child: ReactNode, key: number): ReactNode
         </a>
       );
     }
-    default:
-      return child;
+    default: {
+      // Marks added by editor extensions (DOC-13 comment anchors): renderers/.
+      const render = MARK_RENDERERS.get(mark.type);
+      return render ? render({ mark, index: key, children: child }) : child;
+    }
   }
 }
 

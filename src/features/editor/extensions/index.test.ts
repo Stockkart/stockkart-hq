@@ -15,6 +15,8 @@ describe("editor feature registry", () => {
       "mention",
       "attachments",
       "diagramEmbed",
+      // DOC-13 inline comment anchors: doc editors only.
+      "commentAnchor",
     ]);
     // @mentions (ISS-7, DOC-9) and attachments (ISS-9, DOC-8) are in every editor.
     expect(featuresFor("issue").map((feature) => feature.name)).toEqual(["mention", "attachments"]);
@@ -30,6 +32,7 @@ describe("editor feature registry", () => {
       "mention",
       ...attachmentExtensions,
       "diagramEmbed",
+      "commentAnchor",
     ]);
     expect(featureExtensions({ variant: "issue", projectKeys: [] }).map((e) => e.name)).toEqual([
       "mention",
@@ -41,6 +44,8 @@ describe("editor feature registry", () => {
     expect(labels(featureToolbarGroups("doc"))).toEqual([
       ["Callout", "Insert table", "Mermaid diagram", "Attach file", "Insert diagram"],
       ["Add row below", "Add column right", "Delete row", "Delete table"],
+      // DOC-13: its own group (keyboard path to commenting through the toolbar).
+      ["Comment on selection (Ctrl+Alt+M or ⌘⌥M)"],
     ]);
     expect(labels(featureToolbarGroups("comment"))).toEqual([["Attach file"]]);
   });

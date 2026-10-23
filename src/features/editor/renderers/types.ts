@@ -1,6 +1,6 @@
 import { type ReactNode } from "react";
 
-import { type RichTextNode } from "@/lib/rich-text";
+import { type RichTextMark, type RichTextNode } from "@/lib/rich-text";
 
 /**
  * Read-only rendering of one node type added by an editor extension (`RichTextView`). Works
@@ -20,3 +20,20 @@ export type NodeRenderer = (props: NodeRenderProps) => ReactNode;
 
 /** One file's renderers, keyed by node type (`node.type`). */
 export type NodeRenderers = Readonly<Record<string, NodeRenderer>>;
+
+/**
+ * Read-only rendering of a mark added by an editor extension (e.g. DOC-13 `commentAnchor`):
+ * wraps the already-rendered text. Same rules as node renderers (React elements only,
+ * validate every attr). Core marks (bold, links, …) are built into `RichTextView`.
+ */
+export interface MarkRenderProps {
+  mark: RichTextMark;
+  /** React key for the returned element. */
+  index: number;
+  children: ReactNode;
+}
+
+export type MarkRenderer = (props: MarkRenderProps) => ReactNode;
+
+/** One file's mark renderers, keyed by mark type (`mark.type`). */
+export type MarkRenderers = Readonly<Record<string, MarkRenderer>>;

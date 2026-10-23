@@ -10,6 +10,7 @@ const LABELS: Record<SettingsTab, string> = {
   workflow: "Workflow",
   labels: "Labels",
   components: "Components",
+  import: "Import",
 };
 
 /**

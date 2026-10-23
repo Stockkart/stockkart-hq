@@ -19,6 +19,7 @@ import {
   docQueries,
   fileQueries,
   githubQueries,
+  incidentQueries,
   issueQueries,
   watcherService,
 } from "@/server/services";
@@ -67,6 +68,7 @@ export default async function IssuePage({ params }: Props) {
     development,
     watchers,
     attachments,
+    incidents,
   ] = await Promise.all([
     requireProject(projectRouteKey),
     issueQueries.getIssue(projectId, ref.number),
@@ -86,6 +88,8 @@ export default async function IssuePage({ params }: Props) {
     watcherService.list(issueId),
     // ISS-9 attachments panel; same batch.
     fileQueries.listAttachments("issue", issueId),
+    // INC-2 "From incident INC-n"; same batch.
+    incidentQueries.incidentsLinkingTo(issueId),
   ]);
   if (!issue) notFound();
   const parentOptions = issue.type === "subtask" ? subtaskParents : meta.epics;
@@ -100,6 +104,11 @@ export default async function IssuePage({ params }: Props) {
         projectKey={project.key}
         type={issue.type}
         title={issue.title}
+        convert={{
+          type: issue.type,
+          parentType: issue.parent?.type ?? null,
+          childTypes: children.map((child) => child.type),
+        }}
       />
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_18rem]">
         {/* Files pasted into the description or a new comment attach to the issue (ISS-9). */}
@@ -131,6 +140,7 @@ export default async function IssuePage({ params }: Props) {
               links={links}
               mentions={mentions}
               docs={docs}
+              incidents={incidents}
             />
             <IssueTabs
               issueId={issue.id}

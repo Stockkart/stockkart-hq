@@ -28,12 +28,14 @@ import { whenIdle } from "@/lib/idle";
 import { matchesShortcut } from "@/features/shell/shortcuts";
 import { PROJECT_KEY_PATTERN } from "@/lib/issues/keys";
 import { TITLE_MAX } from "@/lib/issues/schemas";
+import { type ReleaseOption } from "@/lib/releases/views";
 import { isEmptyDoc, type RichTextDoc } from "@/lib/rich-text";
 import { type SprintOption } from "@/lib/sprints/views";
 import { createIssueAction, loadIssueTemplatesAction } from "@/server/actions/issues";
+import { loadReleaseOptionsAction } from "@/server/actions/releases";
 import { promoteTodoAction } from "@/server/actions/todos";
 
-import { priorityOptions, sprintOptions, typeOptions } from "./field-options";
+import { priorityOptions, releaseOptions, sprintOptions, typeOptions } from "./field-options";
 import { shouldIgnoreShortcut } from "./keyboard";
 import {
   isQuickCreateEvent,
@@ -75,6 +77,9 @@ export function QuickCreate({
   const [type, setType] = useState<IssueType>("task");
   const [priority, setPriority] = useState<Priority>(DEFAULT_PRIORITY);
   const [sprintId, setSprintId] = useState<string | null>(null);
+  // REL-1 fix versions per project key, fetched when the dialog is about to open.
+  const [releasesByProject, setReleasesByProject] = useState<Record<string, ReleaseOption[]>>({});
+  const [releaseId, setReleaseId] = useState<string | null>(null);
   // Starts from the default type's template when the templates came with the page.
   const [description, setDescription] = useState<RichTextDoc | null>(
     initialTemplates?.task ?? null,
@@ -96,6 +101,7 @@ export function QuickCreate({
     type: useId(),
     priority: useId(),
     sprint: useId(),
+    release: useId(),
     description: useId(),
   };
 
@@ -105,6 +111,19 @@ export function QuickCreate({
   const sprints = sprintOptionsByProject?.[projectKey] ?? [];
   // A pick from another project's list (the user navigated) falls back to the backlog.
   const sprint = sprints.some((option) => option.id === sprintId) ? sprintId : null;
+  const releases = releasesByProject[projectKey] ?? [];
+  const release = releases.some((option) => option.id === releaseId) ? releaseId : null;
+
+  /** Loads (or refreshes) the project's fix versions; the picker shows what it has meanwhile. */
+  const loadReleases = useCallback((key: string) => {
+    loadReleaseOptionsAction({ projectKey: key })
+      .then((result) => {
+        if (result.ok) setReleasesByProject((current) => ({ ...current, [key]: result.data }));
+      })
+      .catch(() => {
+        // Without them the picker is empty; the next open tries again.
+      });
+  }, []);
 
   // Latest values for the async template load below.
   const current = useRef({
@@ -153,7 +172,8 @@ export function QuickCreate({
   const openDialog = useCallback(() => {
     setOpen(true);
     preload();
-  }, [preload]);
+    loadReleases(projectKey);
+  }, [preload, loadReleases, projectKey]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -170,6 +190,7 @@ export function QuickCreate({
     setType("task");
     setPriority(DEFAULT_PRIORITY);
     setSprintId(null);
+    setReleaseId(null);
     setDescription(null);
     setDescriptionEdited(false);
     setEditorKey((key) => key + 1);
@@ -223,6 +244,8 @@ export function QuickCreate({
         priority,
         // BLG-3: only when one was picked (omitted = the backlog).
         ...(sprint ? { sprintId: sprint } : {}),
+        // REL-1: only when one was picked (omitted = no fix version).
+        ...(release ? { releaseId: release } : {}),
         description: description && !isEmptyDoc(description) ? description : null,
       };
       const result = promoteTodoId
@@ -341,6 +364,18 @@ export function QuickCreate({
                   clearLabel="Backlog"
                   placeholder="Backlog"
                   onChange={setSprintId}
+                />
+              </div>
+              <div className="flex min-w-36 flex-col gap-1.5">
+                <Label htmlFor={ids.release}>Fix version</Label>
+                <Select
+                  id={ids.release}
+                  label="Fix version"
+                  value={release}
+                  options={releaseOptions(releases)}
+                  clearLabel="None"
+                  placeholder="None"
+                  onChange={setReleaseId}
                 />
               </div>
             </div>

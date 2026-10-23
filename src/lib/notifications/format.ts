@@ -14,7 +14,7 @@ export function notificationActor(view: Pick<NotificationView, "actorName" | "fr
 /** One line without the actor, e.g. "assigned you STK-12" or "moved STK-3 to Done". */
 export function notificationText(view: NotificationView): string {
   const target = view.target;
-  const what = target ? (target.kind === "issue" ? target.key : `“${target.title}”`) : null;
+  const what = target ? (target.kind === "doc" ? `“${target.title}”` : target.key) : null;
   switch (view.type) {
     case "assigned":
       return what ? `assigned you ${what}` : "assigned you an issue that was deleted";
@@ -26,6 +26,12 @@ export function notificationText(view: NotificationView): string {
       return view.commentId ? `mentioned you in a comment on ${what}` : `mentioned you in ${what}`;
     case "comment_on_watched":
       return what ? `commented on ${what}` : "commented on an issue that was deleted";
+    case "comment_on_doc":
+      return what ? `commented on ${what}` : "commented on a doc that was deleted";
+    case "incident_commander":
+      return what
+        ? `made you the commander of ${what}`
+        : "made you the commander of an incident that was deleted";
     case "status_on_watched": {
       const subject = what ?? "an issue that was deleted";
       if (view.statusFrom && view.statusTo) {
@@ -38,12 +44,10 @@ export function notificationText(view: NotificationView): string {
   }
 }
 
-/** The link a notification opens; comments jump to the comment. Null when deleted. */
+/** The link a notification opens; comments jump to the comment (issue tab or doc panel). */
 export function notificationHref(view: Pick<NotificationView, "target" | "commentId">) {
   if (!view.target) return null;
-  return view.commentId && view.target.kind === "issue"
-    ? `${view.target.href}#comment-${view.commentId}`
-    : view.target.href;
+  return view.commentId ? `${view.target.href}#comment-${view.commentId}` : view.target.href;
 }
 
 /** The unread badge text, or null for none. */

@@ -54,12 +54,50 @@ describe("proxy (middleware) denies anonymous access", () => {
     expect(response.headers.get("x-middleware-next")).toBe("1");
   });
 
-  it.each(["/api/auth/session", "/api/auth/csrf", "/api/auth/providers", "/api/webhooks/github"])(
-    "lets %s through without a session",
-    async (path) => {
-      const response = await send(path);
-      expect(response.status).toBe(200);
-      expect(response.headers.get("x-middleware-next")).toBe("1");
-    },
-  );
+  it.each([
+    "/api/auth/session",
+    "/api/auth/csrf",
+    "/api/auth/providers",
+    "/api/webhooks/github",
+    // NTF-2: they authenticate themselves (cron secret, unsubscribe token).
+    "/api/cron/digest",
+    "/unsubscribe",
+  ])("lets %s through without a session", async (path) => {
+    const response = await send(path);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-middleware-next")).toBe("1");
+  });
+
+  it.each([
+    ["/api/cron/digest/x", 401],
+    ["/api/cron/other", 401],
+    ["/unsubscribe/x", 307],
+    // Near misses stay gated too: the exemptions are exact, case and slash included.
+    ["/api/cron/digest/", 401],
+    ["/api/cron", 401],
+    ["/unsubscribe/", 307],
+    ["/Unsubscribe", 307],
+    ["/unsubscribex", 307],
+  ])("keeps %s behind the session gate (exact-path exemptions)", async (path, status) => {
+    expect((await send(path)).status).toBe(status);
+  });
+
+  // The P2 slices' pages (roadmap, releases, incidents, services, CSV import, doc comments)
+  // added no exemptions: each redirects an anonymous visitor to /login.
+  it.each([
+    "/STK/roadmap",
+    "/STK/releases",
+    "/STK/releases/3f1e2d3c-4b5a-4968-8776-5544332211aa",
+    "/STK/incidents",
+    "/STK/incidents/INC-1",
+    "/STK/services",
+    "/STK/services/api",
+    "/STK/settings?tab=import",
+    "/STK/docs/3f1e2d3c-4b5a-4968-8776-5544332211aa",
+    "/STK/unknown-section",
+  ])("redirects the P2 page %s to /login", async (path) => {
+    const response = await send(path);
+    expect(response.status).toBe(307);
+    expect(locationPath(response)).toBe("/login");
+  });
 });

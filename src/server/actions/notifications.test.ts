@@ -11,6 +11,7 @@ const notificationService = vi.hoisted(() => ({
   markRead: vi.fn(),
   markAllRead: vi.fn(),
   setNotifyEmail: vi.fn(),
+  setDigestFrequency: vi.fn(),
 }));
 const notificationQueries = vi.hoisted(() => ({ latest: vi.fn(), unreadCount: vi.fn() }));
 const watcherService = vi.hoisted(() => ({ setWatching: vi.fn() }));
@@ -26,6 +27,7 @@ const {
   loadBellAction,
   markAllNotificationsReadAction,
   markNotificationReadAction,
+  setDigestFrequencyAction,
   setNotifyEmailAction,
 } = await import("./notifications");
 const { listMentionUsersAction, setWatchingAction } = await import("./watchers");
@@ -142,6 +144,24 @@ describe("notification and watcher actions (NTF-1, NTF-2, ISS-11)", () => {
     expect(paths()).toEqual(["/settings/profile"]);
     await expect(setNotifyEmailAction({ enabled: "yes" })).resolves.toMatchObject({ ok: false });
     expect(notificationService.setNotifyEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores the digest frequency for the session user, and validates it (NTF-2)", async () => {
+    authMock.mockResolvedValue(null);
+    await expect(setDigestFrequencyAction({ frequency: "weekly" })).rejects.toBeInstanceOf(
+      UnauthorizedError,
+    );
+    expect(notificationService.setDigestFrequency).not.toHaveBeenCalled();
+    authMock.mockResolvedValue(session);
+    notificationService.setDigestFrequency.mockResolvedValue({ digestFrequency: "weekly" });
+    await expect(
+      setDigestFrequencyAction({ frequency: "weekly", userId: SOMEONE }),
+    ).resolves.toEqual({ ok: true, data: { digestFrequency: "weekly" } });
+    expect(notificationService.setDigestFrequency).toHaveBeenCalledWith(ME, "weekly");
+    await expect(setDigestFrequencyAction({ frequency: "hourly" })).resolves.toMatchObject({
+      ok: false,
+    });
+    expect(notificationService.setDigestFrequency).toHaveBeenCalledTimes(1);
   });
 
   it("watches as the session user and refreshes the issue page", async () => {

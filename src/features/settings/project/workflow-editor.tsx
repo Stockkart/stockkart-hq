@@ -43,8 +43,9 @@ import {
   type StatusDefaultFor,
 } from "@/lib/issues/constants";
 import { applyMove, availableMoves, dropOnto, moveBy, type MoveKind } from "@/lib/planning/reorder";
-import { STATUS_NAME_MAX } from "@/lib/settings/constants";
+import { STATUS_NAME_MAX, WIP_LIMIT_MAX } from "@/lib/settings/constants";
 import { type StatusSetting } from "@/lib/settings/views";
+import { parseWipLimitText } from "@/lib/settings/wip-limit";
 import { WONT_DO_STATUS_NAME } from "@/lib/sprints/constants";
 import {
   createStatusAction,
@@ -53,6 +54,7 @@ import {
   renameStatusAction,
   setStatusCategoryAction,
   setStatusDefaultAction,
+  setStatusWipLimitAction,
 } from "@/server/actions/settings";
 
 import { InlineText } from "./inline-text";
@@ -77,6 +79,7 @@ type Change =
   | { kind: "rename"; id: string; name: string }
   | { kind: "category"; id: string; category: StatusCategory }
   | { kind: "default"; id: string; defaultFor: StatusDefaultFor }
+  | { kind: "wip"; id: string; wipLimit: number | null }
   | { kind: "move"; id: string; afterId: string | null }
   | { kind: "delete"; id: string; moveTo: string | null };
 
@@ -88,6 +91,8 @@ function reduce(statuses: StatusSetting[], change: Change): StatusSetting[] {
       return statuses.map((s) => (s.id === change.id ? { ...s, name: change.name } : s));
     case "category":
       return statuses.map((s) => (s.id === change.id ? { ...s, category: change.category } : s));
+    case "wip":
+      return statuses.map((s) => (s.id === change.id ? { ...s, wipLimit: change.wipLimit } : s));
     case "default":
       return statuses.map((s) =>
         s.id === change.id
@@ -117,7 +122,8 @@ function reduce(statuses: StatusSetting[], change: Change): StatusSetting[] {
 
 /**
  * PRJ-3 workflow: add, rename, reorder (drag, or the row menu), change category, set the
- * default for bugs / other issues, and delete (moving its issues to another status when it
+ * default for bugs / other issues, set a column's WIP limit (BRD-5), and delete (moving its
+ * issues to another status when it
  * is in use). Every change is optimistic; the server enforces the rules (one status per
  * category at least, one default per kind) and a refused change rolls back with its reason.
  */
@@ -175,7 +181,8 @@ export function WorkflowEditor({
         </h2>
         <p className="text-sm text-muted-foreground">
           Board columns, in this order. Reports count by category; “{WONT_DO_STATUS_NAME}” is left
-          out of velocity by its name, so it keeps it.
+          out of velocity by its name, so it keeps it. A WIP limit (1–{WIP_LIMIT_MAX}, empty for
+          none) turns the board column amber when it holds more issues.
         </p>
       </div>
       <p aria-live="polite" className="sr-only">
@@ -216,6 +223,15 @@ export function WorkflowEditor({
                     `${status.name}: ${DEFAULT_LABELS[defaultFor].toLowerCase()}`,
                   )
                 }
+                onWipLimit={(wipLimit) =>
+                  run(
+                    { kind: "wip", id: status.id, wipLimit },
+                    () => setStatusWipLimitAction({ statusId: status.id, wipLimit }),
+                    wipLimit === null
+                      ? `${status.name} has no WIP limit`
+                      : `${status.name}: WIP limit ${wipLimit}`,
+                  )
+                }
                 onDelete={() => setDeleting(status)}
               />
             ))}
@@ -233,6 +249,7 @@ export function WorkflowEditor({
                 category,
                 position: shown.length,
                 isDefaultFor: null,
+                wipLimit: null,
                 issueCount: 0,
                 trashedCount: 0,
               },
@@ -267,6 +284,7 @@ function StatusRow({
   onRename,
   onCategory,
   onDefault,
+  onWipLimit,
   onDelete,
 }: {
   status: StatusSetting;
@@ -275,6 +293,7 @@ function StatusRow({
   onRename: (name: string) => void;
   onCategory: (category: StatusCategory) => void;
   onDefault: (kind: StatusDefaultFor) => void;
+  onWipLimit: (limit: number | null) => void;
   onDelete: () => void;
 }) {
   const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition } =
@@ -315,6 +334,22 @@ function StatusRow({
         disabled={pending}
         onChange={(next) => {
           if (next && next !== status.category) onCategory(next);
+        }}
+      />
+      <InlineText
+        label={`WIP limit of ${status.name} (empty for none)`}
+        value={status.wipLimit === null ? "" : String(status.wipLimit)}
+        placeholder="No limit"
+        maxLength={3}
+        className="w-24"
+        disabled={pending}
+        validate={(next) => {
+          const parsed = parseWipLimitText(next);
+          return parsed.ok ? null : parsed.error;
+        }}
+        onCommit={(next) => {
+          const parsed = parseWipLimitText(next);
+          if (parsed.ok) onWipLimit(parsed.value);
         }}
       />
       <span className="flex-1 text-xs text-muted-foreground">

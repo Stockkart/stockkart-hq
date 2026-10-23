@@ -230,7 +230,13 @@ describeDb("sprints (Postgres)", () => {
     await setStatus(wont, "Won't Do");
 
     const result = await sprintService().completeSprint(actor, { sprintId: id, carryTo: "next" });
-    expect(result).toEqual({ carried: 1, targetSprintId: next, completedPoints: 5 });
+    expect(result).toEqual({
+      carried: 1,
+      targetSprintId: next,
+      completedPoints: 5,
+      // SPR-5: auto_retro is off by default.
+      retroDocId: null,
+    });
     expect(await sprintOf(open)).toBe(next);
     expect(await sprintOf(done)).toBe(id);
     expect(await sprintOf(wont)).toBe(id);
@@ -239,6 +245,7 @@ describeDb("sprints (Postgres)", () => {
     const [completed] = await sprintActivity(id, "sprint_completed");
     expect(completed?.meta).toEqual({
       completedPoints: 5,
+      completedIssueIds: [done],
       carriedIssueIds: [open],
       carriedTo: next,
     });
@@ -282,7 +289,12 @@ describeDb("sprints (Postgres)", () => {
     await sprintService().startSprint(actor, id);
     await setStatus(done, "Done");
     const result = await sprintService().completeSprint(actor, { sprintId: id, carryTo: "next" });
-    expect(result).toEqual({ carried: 0, targetSprintId: null, completedPoints: 3 });
+    expect(result).toEqual({
+      carried: 0,
+      targetSprintId: null,
+      completedPoints: 3,
+      retroDocId: null,
+    });
     expect(await db.select().from(sprints).where(eq(sprints.state, "planned"))).toEqual([]);
   });
 
@@ -297,7 +309,12 @@ describeDb("sprints (Postgres)", () => {
       sprintId: id,
       carryTo: "backlog",
     });
-    expect(result).toEqual({ carried: 1, targetSprintId: null, completedPoints: 0 });
+    expect(result).toEqual({
+      carried: 1,
+      targetSprintId: null,
+      completedPoints: 0,
+      retroDocId: null,
+    });
     expect(await sprintOf(open)).toBeNull();
     expect((await issueSprintChanges(open)).at(-1)).toEqual({ from: id, to: null });
   });

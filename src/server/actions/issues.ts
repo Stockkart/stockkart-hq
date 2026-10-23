@@ -7,7 +7,9 @@ import { type IssueType } from "@/lib/issues/constants";
 import {
   addLabelInput,
   addLinkInput,
+  cloneIssueInput,
   commentIdInput,
+  convertIssueTypeInput,
   createCommentInput,
   createIssueInput,
   editCommentInput,
@@ -27,10 +29,13 @@ import {
   BACKLOG,
   BOARD,
   DOC_PAGE,
+  INCIDENT_PAGE,
   ISSUE_LIST,
   ISSUE_PAGE,
   ISSUE_VIEWS,
   refreshPages,
+  RELEASE_VIEWS,
+  ROADMAP,
   SPRINT_PAGE,
   SPRINTS,
   TODOS,
@@ -57,14 +62,24 @@ function run<S extends z.ZodType, T>(
 }
 
 /** Field changes also show in the Linked issues panel of doc pages, and (status, points,
- * sprint) in the sprint tallies and burndowns. */
-const FIELD_PAGES = [...ISSUE_VIEWS, DOC_PAGE, SPRINTS, SPRINT_PAGE];
+ * sprint) in the sprint tallies and burndowns, and (status, points, fix version) in the
+ * release progress (REL-1), and (title, status) in an incident's follow-ups (INC-2). */
+const FIELD_PAGES = [
+  ...ISSUE_VIEWS,
+  DOC_PAGE,
+  SPRINTS,
+  SPRINT_PAGE,
+  ...RELEASE_VIEWS,
+  INCIDENT_PAGE,
+];
 /** A deleted issue also leaves the ADR log's links and a promoted todo's link. */
 const DELETE_PAGES = [...FIELD_PAGES, ADR_LOG, TODOS];
 /** Labels show on the issue, the lists and in the filter options. */
 const LABEL_PAGES = [ISSUE_PAGE, ISSUE_LIST, BACKLOG, BOARD];
 /** Links and comments (and the mentions in them) show on issue pages only. */
 const ISSUE_PAGE_ONLY = [ISSUE_PAGE];
+/** Links also draw the roadmap's dependency arrows (RDM-2, `blocks` between epics). */
+const LINK_PAGES = [ISSUE_PAGE, ROADMAP];
 
 export async function createIssueAction(input: unknown): Promise<ActionResult<CreatedIssue>> {
   const session = await requireSession();
@@ -72,8 +87,8 @@ export async function createIssueAction(input: unknown): Promise<ActionResult<Cr
     createIssueInput,
     input,
     (data) => issueService.createIssue(session.user.id, data),
-    // A new issue may go straight into a sprint (BLG-3).
-    [...ISSUE_VIEWS, SPRINTS, SPRINT_PAGE],
+    // A new issue may go straight into a sprint (BLG-3) or a fix version (REL-1).
+    [...ISSUE_VIEWS, SPRINTS, SPRINT_PAGE, ...RELEASE_VIEWS],
   );
 }
 
@@ -116,7 +131,7 @@ export async function addLinkAction(input: unknown): Promise<ActionResult<{ link
     addLinkInput,
     input,
     (data) => issueService.addLink(session.user.id, data),
-    ISSUE_PAGE_ONLY,
+    LINK_PAGES,
   );
 }
 
@@ -129,7 +144,31 @@ export async function removeLinkAction(input: unknown): Promise<ActionResult> {
       await issueService.removeLink(session.user.id, data);
       return undefined;
     },
-    ISSUE_PAGE_ONLY,
+    LINK_PAGES,
+  );
+}
+
+/** ISS-14: a copy of the issue, linked to it with `relates`; the client opens the copy. */
+export async function cloneIssueAction(input: unknown): Promise<ActionResult<CreatedIssue>> {
+  const session = await requireSession();
+  return run(
+    cloneIssueInput,
+    input,
+    (data) => issueService.cloneIssue(session.user.id, data),
+    // A new issue (like create), a new link on the original's page, and the doc links of
+    // the copied description's issue keys (DOC-9).
+    [...ISSUE_VIEWS, SPRINTS, SPRINT_PAGE, DOC_PAGE],
+  );
+}
+
+/** ISS-14: change the issue's type within the ISS-3 parent rules. */
+export async function convertIssueTypeAction(input: unknown): Promise<ActionResult<FieldChange>> {
+  const session = await requireSession();
+  return run(
+    convertIssueTypeInput,
+    input,
+    (data) => issueService.convertIssueType(session.user.id, data),
+    FIELD_PAGES,
   );
 }
 

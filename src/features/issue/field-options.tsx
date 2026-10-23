@@ -7,6 +7,7 @@ import {
   PRIORITY_LABELS,
 } from "@/lib/issues/constants";
 import { type IssueSummary, type LabelView, type StatusOption } from "@/lib/issues/views";
+import { type ReleaseOption } from "@/lib/releases/views";
 import { type SprintOption } from "@/lib/sprints/views";
 
 import { Avatar, IssueTypeGlyph, PriorityGlyph, StatusGlyph } from "./issue-badges";
@@ -75,6 +76,18 @@ export function sprintOptions(
   }
   return options;
 }
+
+/**
+ * REL-1 "Fix version" picker: unreleased releases first (as `getProjectMeta` orders them),
+ * released ones marked so. Assigning a released one is allowed (a late fix to a shipped
+ * version), so they stay pickable.
+ */
+export const releaseOptions = (releases: ReleaseOption[]): SelectOption<string>[] =>
+  releases.map((release) => ({
+    value: release.id,
+    label: release.name,
+    detail: release.state === "released" ? "Released" : undefined,
+  }));
 
 /** A label's colour as a dot (grey when it has none). */
 export function LabelDot({ color }: { color: string | null }) {

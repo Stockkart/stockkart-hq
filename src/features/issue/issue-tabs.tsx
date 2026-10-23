@@ -295,6 +295,7 @@ function ActivityList({
       users: new Map(meta.users.map((user) => [user.id, user.name])),
       components: new Map(meta.components.map((component) => [component.id, component.name])),
       sprints: new Map(meta.sprints.map((sprint) => [sprint.id, sprint.name])),
+      releases: new Map(meta.releases.map((release) => [release.id, release.name])),
       issueKeys,
     }),
     [meta, issueKeys],

@@ -13,6 +13,8 @@ import { LazyRichTextEditor } from "@/features/editor/lazy-rich-text-editor";
 import { callAction } from "@/features/issue/client-utils";
 import { userOptions } from "@/features/issue/field-options";
 import { withoutPendingUploads } from "@/lib/attachments/nodes";
+import { anchorIdsInOrder } from "@/lib/doc-comments/anchors";
+import { type DocThreadView } from "@/lib/doc-comments/views";
 import { splitAdrTitle } from "@/lib/docs/adr";
 import {
   ADR_STATUS_LABELS,
@@ -46,6 +48,7 @@ import {
   type SaverState,
 } from "./autosaver";
 import { DeleteDocDialog } from "./doc-dialogs";
+import { DocCommentsPanel } from "./comments/doc-comments-panel";
 import { DocSidePanel } from "./doc-side-panel";
 import { LazyDraftBanner } from "./draft-banner";
 import { clearDraft, type DocDraft, saveDraft } from "./draft-store";
@@ -62,6 +65,8 @@ export interface DocEditorProps {
   childCount: number;
   /** ISS-9 attachments panel, shown below the editor. */
   attachmentsPanel?: ReactNode;
+  /** DOC-11 / DOC-13 comment threads, shown first in the side panel. */
+  comments?: { threads: DocThreadView[]; currentUser: { id: string; name: string } };
 }
 
 /** Issue references that count as mentions; a change means the Linked issues panel changed. */
@@ -69,6 +74,11 @@ function refsKey(content: RichTextDoc, projectKeys: readonly string[]): string {
   return extractIssueRefs(extractPlainText(content, { skipCode: true }), projectKeys)
     .map((ref) => `${ref.projectKey}-${ref.number}`)
     .join(",");
+}
+
+/** Keeps the anchor list's identity while it is unchanged (no re-render per keystroke). */
+function sameOrder(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 async function saveRequest(docId: string, request: SaveRequest): Promise<SaveResponse> {
@@ -171,8 +181,12 @@ export function DocEditor({
   versions,
   childCount,
   attachmentsPanel,
+  comments,
 }: DocEditorProps) {
   const router = useRouter();
+  // DOC-13: where the comment anchors are in the CURRENT content (orders threads, finds
+  // orphans the moment their text is deleted).
+  const [anchorOrder, setAnchorOrder] = useState(() => anchorIdsInOrder(doc.content));
   const isAdr = doc.type === "adr";
   const adrParts = isAdr ? splitAdrTitle(doc.title) : null;
   // ADR titles keep their "NNNN. " prefix; only the rest is editable.
@@ -254,6 +268,7 @@ export function DocEditor({
     const parts = isAdr ? splitAdrTitle(draft.title) : null;
     setTitleText(parts ? parts.title : draft.title);
     setEditorContent(draft.content);
+    setAnchorOrder(anchorIdsInOrder(draft.content));
     setEditorKey((key) => key + 1);
     // Saved like any edit: against the current version, so a newer save still conflicts.
     saver.change({ content: draft.content, title: draft.title });
@@ -265,6 +280,7 @@ export function DocEditor({
     const parts = isAdr ? splitAdrTitle(latest.title) : null;
     setTitleText(parts ? parts.title : latest.title);
     setEditorContent(latest.content);
+    setAnchorOrder(anchorIdsInOrder(latest.content));
     // A new key remounts the editor with the winner's content.
     setEditorKey((key) => key + 1);
     router.refresh();
@@ -388,7 +404,11 @@ export function DocEditor({
           placeholder="Write the doc. Mention issues as STK-123."
           className="min-h-[60vh]"
           // An upload placeholder is never saved; the finished image triggers its own change.
-          onChange={(content) => saver.change({ content: withoutPendingUploads(content) })}
+          onChange={(content) => {
+            saver.change({ content: withoutPendingUploads(content) });
+            const order = anchorIdsInOrder(content);
+            setAnchorOrder((current) => (sameOrder(current, order) ? current : order));
+          }}
         />
 
         {attachmentsPanel}
@@ -402,6 +422,17 @@ export function DocEditor({
         createdAt={doc.createdAt}
         updatedAt={doc.updatedAt}
         updatedByName={doc.updatedByName}
+        before={
+          comments ? (
+            <DocCommentsPanel
+              docId={doc.id}
+              threads={comments.threads}
+              anchorOrder={anchorOrder}
+              projectKeys={projectKeys}
+              currentUser={comments.currentUser}
+            />
+          ) : null
+        }
       />
 
       <DeleteDocDialog

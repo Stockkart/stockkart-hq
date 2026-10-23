@@ -25,6 +25,8 @@ export const bulkChangeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("assignee"), assigneeId: id.nullable() }),
   /** BLG-3: a planned or active sprint, or null for the backlog. */
   z.object({ kind: z.literal("sprint"), sprintId: id.nullable() }),
+  /** REL-1 "Fix version": a release of the project, or null for none. */
+  z.object({ kind: z.literal("release"), releaseId: id.nullable() }),
   z.object({ kind: z.literal("addLabels"), labelIds }),
   z.object({ kind: z.literal("removeLabels"), labelIds }),
   /** Soft delete (ISS-13: restorable from the trash for 30 days). */

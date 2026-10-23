@@ -12,6 +12,8 @@ import {
   PROJECT_DESCRIPTION_MAX,
   PROJECT_NAME_MAX,
   STATUS_NAME_MAX,
+  WIP_LIMIT_MAX,
+  WIP_LIMIT_MIN,
 } from "./constants";
 
 /**
@@ -74,6 +76,19 @@ export const moveStatusInput = z
 export const deleteStatusInput = z
   .object({ statusId: id, moveToStatusId: id.nullish() })
   .refine((value) => value.statusId !== value.moveToStatusId, "Pick another status");
+/** BRD-5: the column's WIP limit, 1…999 (the DB CHECK's range), or null for none. */
+export const setStatusWipLimitInput = z.object({
+  statusId: id,
+  wipLimit: z
+    .number("Enter a whole number")
+    .int("Enter a whole number")
+    .min(WIP_LIMIT_MIN, `At least ${WIP_LIMIT_MIN}`)
+    .max(WIP_LIMIT_MAX, `At most ${WIP_LIMIT_MAX}`)
+    .nullable(),
+});
+
+/** SPR-5: make a retro doc when a sprint is completed. */
+export const setAutoRetroInput = z.object({ projectKey, autoRetro: z.boolean() });
 
 // ── Labels ───────────────────────────────────────────────────────────────────────────────
 

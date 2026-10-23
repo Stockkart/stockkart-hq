@@ -1,6 +1,7 @@
 import { mergeRegistries } from "@/lib/registry";
 
 import { attachmentPlainText } from "./attachments";
+import { commentAnchorPlainText } from "./comment-mark";
 import { diagramEmbedPlainText } from "./diagram-embed";
 import { calloutPlainText, mermaidPlainText, tablePlainText } from "./doc-blocks";
 import { mentionPlainText } from "./mentions";
@@ -18,6 +19,7 @@ const RULES: readonly PlainTextRules[] = [
   mentionPlainText,
   attachmentPlainText,
   diagramEmbedPlainText,
+  commentAnchorPlainText,
   // A new node adds one line here.
 ];
 

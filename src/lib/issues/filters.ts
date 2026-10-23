@@ -20,6 +20,8 @@ const MAX_VALUES = 50;
 export const ASSIGNEE_NONE = "none";
 export const ASSIGNEE_ME = "me";
 export type AssigneeFilter = string;
+/** REL-1 fix-version filter: `none` = issues without a fix version. */
+export const RELEASE_NONE = "none";
 
 export interface IssueFilters {
   types: IssueType[];
@@ -28,6 +30,8 @@ export interface IssueFilters {
   assignees: AssigneeFilter[];
   components: string[];
   labels: string[];
+  /** REL-1 fix versions (`release=<id>,none`): release ids or `RELEASE_NONE`. */
+  releases: string[];
   text: string;
 }
 
@@ -38,6 +42,7 @@ export const EMPTY_FILTERS: IssueFilters = {
   assignees: [],
   components: [],
   labels: [],
+  releases: [],
   text: "",
 };
 
@@ -105,6 +110,7 @@ const priority = z
   .transform(Number)
   .pipe(z.literal([...PRIORITIES]));
 const assignee = z.union([z.literal(ASSIGNEE_NONE), z.literal(ASSIGNEE_ME), uuid]);
+const release = z.union([z.literal(RELEASE_NONE), uuid]);
 
 export function parseIssueFilters(params: RawParams): IssueFilters {
   const text = (singleParam(params, "q") ?? "").replace(/\s+/g, " ").trim();
@@ -115,6 +121,7 @@ export function parseIssueFilters(params: RawParams): IssueFilters {
     assignees: listParam(params, "assignee", assignee),
     components: listParam(params, "component", uuid),
     labels: listParam(params, "label", uuid),
+    releases: listParam(params, "release", release),
     // Over-long text is ignored rather than cut, like every other invalid value.
     text: text.length <= TEXT_FILTER_MAX ? text : "",
   };
@@ -140,7 +147,8 @@ export function hasActiveFilters(filters: IssueFilters): boolean {
     filters.priorities.length > 0 ||
     filters.assignees.length > 0 ||
     filters.components.length > 0 ||
-    filters.labels.length > 0
+    filters.labels.length > 0 ||
+    filters.releases.length > 0
   );
 }
 
@@ -160,6 +168,7 @@ export function filtersToSearchParams(
     ["assignee", filters.assignees],
     ["component", filters.components],
     ["label", filters.labels],
+    ["release", filters.releases],
   ];
   for (const [name, values] of lists) {
     if (values.length > 0) params.set(name, values.join(","));

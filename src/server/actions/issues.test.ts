@@ -16,6 +16,8 @@ const issueService = vi.hoisted(() => ({
   addLink: vi.fn(),
   removeLink: vi.fn(),
   deleteIssue: vi.fn(),
+  cloneIssue: vi.fn(),
+  convertIssueType: vi.fn(),
 }));
 const commentService = vi.hoisted(() => ({
   createComment: vi.fn(),
@@ -47,6 +49,8 @@ const validInputs: [Exclude<keyof typeof actions, "loadIssueTemplatesAction">, u
   ["createCommentAction", { issueId: ID, body: doc }],
   ["editCommentAction", { commentId: ID, body: doc }],
   ["deleteCommentAction", { commentId: ID }],
+  ["cloneIssueAction", { issueId: ID }],
+  ["convertIssueTypeAction", { issueId: ID, type: "bug" }],
 ];
 
 const allMocks = () => [...Object.values(issueService), ...Object.values(commentService)];
@@ -104,20 +108,74 @@ describe("issue server actions", () => {
       expect(revalidatePath).toHaveBeenCalled();
       for (const [path, type] of revalidatePath.mock.calls) {
         expect(type).toBe("page");
-        // Sprint pages show tallies and burndowns of issue fields (SPR-1…3).
+        // Sprint pages show tallies and burndowns of issue fields (SPR-1…3); the roadmap
+        // shows epics' fields, dates and links (RDM-1/2); release pages show the progress
+        // of their fix versions (REL-1); an incident page lists its follow-ups (INC-2).
         expect(path).toMatch(
-          /^\/(\[projectKey\]\/(issues|backlog|board|adrs|docs\/\[id\]|sprints)|my-work|todos)/,
+          /^\/(\[projectKey\]\/(issues|backlog|board|adrs|docs\/\[id\]|sprints|roadmap|releases|incidents\/\[key\])|my-work|todos)/,
         );
         expect(path).not.toBe("/[projectKey]");
       }
     },
   );
 
-  it("refreshes just the issue page for links and comments", async () => {
+  it("refreshes an incident page (its follow-ups) on field changes and deletes", async () => {
+    authMock.mockResolvedValue(session);
+    for (const call of [
+      () => actions.updateIssueFieldAction({ issueId: ID, field: "priority", value: 1 }),
+      () => actions.deleteIssueAction({ issueId: ID }),
+    ]) {
+      revalidatePath.mockReset();
+      await call();
+      expect(revalidatePath).toHaveBeenCalledWith("/[projectKey]/incidents/[key]", "page");
+    }
+  });
+
+  it("refreshes the issue page and the roadmap (RDM-2 arrows) for links", async () => {
     authMock.mockResolvedValue(session);
     revalidatePath.mockReset();
     await actions.addLinkAction({ issueId: ID, relation: "blocks", targetKey: "STK-1" });
+    expect(revalidatePath.mock.calls).toEqual([
+      ["/[projectKey]/issues/[key]", "page"],
+      ["/[projectKey]/roadmap", "page"],
+    ]);
+  });
+
+  it("refreshes just the issue page for comments", async () => {
+    authMock.mockResolvedValue(session);
+    revalidatePath.mockReset();
+    await actions.createCommentAction({ issueId: ID, body: { type: "doc", content: [] } });
     expect(revalidatePath.mock.calls).toEqual([["/[projectKey]/issues/[key]", "page"]]);
+  });
+
+  it("saves a roadmap schedule (RDM-1) and refuses an end before the start", async () => {
+    authMock.mockResolvedValue(session);
+    const value = { startDate: "2026-06-01", dueDate: "2026-06-14" };
+    await expect(
+      actions.updateIssueFieldAction({ issueId: ID, field: "schedule", value }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(issueService.updateIssueField).toHaveBeenCalledWith(ID, {
+      issueId: ID,
+      field: "schedule",
+      value,
+    });
+    issueService.updateIssueField.mockClear();
+    await expect(
+      actions.updateIssueFieldAction({
+        issueId: ID,
+        field: "schedule",
+        value: { startDate: "2026-06-14", dueDate: "2026-06-01" },
+      }),
+    ).resolves.toEqual({ ok: false, error: "The end date is before the start date" });
+    expect(issueService.updateIssueField).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown type to convert to (ISS-14)", async () => {
+    authMock.mockResolvedValue(session);
+    await expect(
+      actions.convertIssueTypeAction({ issueId: ID, type: "saga" }),
+    ).resolves.toMatchObject({ ok: false });
+    expect(issueService.convertIssueType).not.toHaveBeenCalled();
   });
 
   it("does not refresh anything when the input is rejected", async () => {

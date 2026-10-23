@@ -1,15 +1,25 @@
-import { and, count, desc, eq, isNull, type SQL, sql } from "drizzle-orm";
+import { and, count, desc, eq, gt, isNull, lte, type SQL, sql } from "drizzle-orm";
 import { alias as pgAlias } from "drizzle-orm/pg-core";
 
+import { formatIncidentKey } from "@/lib/incidents/constants";
+import { incidentPath } from "@/lib/incidents/rules";
 import { formatIssueKey, issuePath } from "@/lib/issues/keys";
-import { type NotificationType } from "@/lib/notifications/constants";
+import { type DigestFrequency, type NotificationType } from "@/lib/notifications/constants";
 import {
   type NotificationPage,
   type NotificationTarget,
   type NotificationView,
 } from "@/lib/notifications/views";
 import { directRead, type Read } from "@/server/db/read-batch";
-import { docs, issues, notifications, projects, statuses, users } from "@/server/db/schema";
+import {
+  docs,
+  incidents,
+  issues,
+  notifications,
+  projects,
+  statuses,
+  users,
+} from "@/server/db/schema";
 import { type AppDatabase } from "@/server/db/types";
 
 /**
@@ -28,6 +38,7 @@ const metaUuid = (key: string): SQL =>
 const actor = pgAlias(users, "notification_actor");
 const issueProject = pgAlias(projects, "notification_issue_project");
 const docProject = pgAlias(projects, "notification_doc_project");
+const incidentProject = pgAlias(projects, "notification_incident_project");
 const fromStatus = pgAlias(statuses, "notification_from_status");
 const toStatus = pgAlias(statuses, "notification_to_status");
 
@@ -44,6 +55,9 @@ interface Row {
   docId: string | null;
   docTitle: string | null;
   docProjectKey: string | null;
+  incidentNumber: number | null;
+  incidentTitle: string | null;
+  incidentProjectKey: string | null;
   statusFrom: string | null;
   statusTo: string | null;
 }
@@ -59,6 +73,15 @@ function targetOf(row: Row): NotificationTarget | null {
   }
   if (row.docId !== null && row.docTitle !== null && row.docProjectKey !== null) {
     return { kind: "doc", title: row.docTitle, href: `/${row.docProjectKey}/docs/${row.docId}` };
+  }
+  // INC-1 `incident_commander`.
+  if (row.incidentNumber !== null && row.incidentTitle !== null && row.incidentProjectKey) {
+    return {
+      kind: "incident",
+      key: formatIncidentKey(row.incidentNumber),
+      title: row.incidentTitle,
+      href: incidentPath(row.incidentProjectKey, row.incidentNumber),
+    };
   }
   return null;
 }
@@ -87,7 +110,7 @@ export function createNotificationQueries(
   { read = directRead }: { read?: Read } = {},
 ) {
   /** The user's notifications, newest first, with their target and names resolved. */
-  function listQuery(userId: string, limit: number, offset: number) {
+  function listQuery(userId: string, limit: number, offset: number, where?: SQL) {
     return db
       .select({
         id: notifications.id,
@@ -102,6 +125,9 @@ export function createNotificationQueries(
         docId: docs.id,
         docTitle: docs.title,
         docProjectKey: docProject.key,
+        incidentNumber: incidents.number,
+        incidentTitle: incidents.title,
+        incidentProjectKey: incidentProject.key,
         statusFrom: fromStatus.name,
         statusTo: toStatus.name,
       })
@@ -125,9 +151,18 @@ export function createNotificationQueries(
         ),
       )
       .leftJoin(docProject, eq(docProject.id, docs.projectId))
+      .leftJoin(
+        incidents,
+        and(
+          eq(notifications.entityType, "incident"),
+          eq(incidents.id, notifications.entityId),
+          isNull(incidents.deletedAt),
+        ),
+      )
+      .leftJoin(incidentProject, eq(incidentProject.id, incidents.projectId))
       .leftJoin(fromStatus, eq(fromStatus.id, metaUuid("from")))
       .leftJoin(toStatus, eq(toStatus.id, metaUuid("to")))
-      .where(eq(notifications.userId, userId))
+      .where(and(eq(notifications.userId, userId), where))
       .orderBy(desc(notifications.createdAt), desc(notifications.id))
       .limit(limit)
       .offset(offset);
@@ -158,7 +193,7 @@ export function createNotificationQueries(
       return { items: rows.slice(0, size).map(toView), page, hasMore: rows.length > size, asOf };
     },
 
-    /** NTF-2: the user's email-digest opt-in (stored only for now). */
+    /** NTF-2: the user's email-digest opt-in. */
     async notifyEmail(userId: string): Promise<boolean> {
       const [row] = await read(
         db
@@ -168,6 +203,47 @@ export function createNotificationQueries(
           .limit(1),
       );
       return row?.notifyEmail ?? false;
+    },
+
+    /** NTF-2: the user's email-digest settings (opt-in and cadence). */
+    async digestSettings(
+      userId: string,
+    ): Promise<{ notifyEmail: boolean; digestFrequency: DigestFrequency }> {
+      const [row] = await read(
+        db
+          .select({ notifyEmail: users.notifyEmail, digestFrequency: users.digestFrequency })
+          .from(users)
+          .where(eq(users.id, userId))
+          .limit(1),
+      );
+      return row ?? { notifyEmail: false, digestFrequency: "daily" };
+    },
+
+    /**
+     * NTF-2 digest items: the user's UNREAD notifications created in the period
+     * (`after` < created_at ≤ `upTo`), newest first, at most `limit`, plus how many there
+     * are in all (for "and N more"). Read in one round trip.
+     */
+    async unreadInPeriod(
+      userId: string,
+      period: { after: Date; upTo: Date },
+      limit: number,
+    ): Promise<{ items: NotificationView[]; total: number }> {
+      const inPeriod = and(
+        isNull(notifications.readAt),
+        gt(notifications.createdAt, period.after),
+        lte(notifications.createdAt, period.upTo),
+      );
+      const [rows, [counted]] = await Promise.all([
+        read(listQuery(userId, limit, 0, inPeriod)),
+        read(
+          db
+            .select({ total: count() })
+            .from(notifications)
+            .where(and(eq(notifications.userId, userId), inPeriod)),
+        ),
+      ]);
+      return { items: rows.map(toView), total: counted?.total ?? 0 };
     },
   };
 }
