@@ -1,21 +1,38 @@
-import { and, desc, eq, isNull, type SQL, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull, type SQL, sql } from "drizzle-orm";
 import { generateKeyBetween, generateNKeysBetween } from "fractional-indexing";
 import { z } from "zod";
 
-import { adrTitle, splitAdrTitle } from "@/lib/docs/adr";
+import { adrTitle, formatAdrNumber, splitAdrTitle } from "@/lib/docs/adr";
+import { restoredContent } from "@/lib/docs/anchor-marks";
 import { type DocType, isDocType } from "@/lib/docs/constants";
+import {
+  defaultHandbookPath,
+  handbookPathFor,
+  handbookRelativeLink,
+} from "@/lib/docs/handbook-path";
 import {
   type createAdrInput,
   type createDocInput,
   type moveDocInput,
+  type restoreDocVersionInput,
   type saveDocInput,
+  type supersedeAdrInput,
   type updateDocMetaInput,
 } from "@/lib/docs/schemas";
+import { withSupersedesBullet } from "@/lib/docs/supersede";
 import { compareSiblings, siblingsOf } from "@/lib/docs/tree";
 import { formatIssueKey, parseIssueKey } from "@/lib/issues/keys";
 import { extractUserMentionIds } from "@/lib/mentions";
 import { emptyDoc, extractPlainText, type RichTextDoc } from "@/lib/rich-text";
-import { docs, issues, projects, templates, users } from "@/server/db/schema";
+import {
+  comments,
+  docs,
+  docVersions,
+  issues,
+  projects,
+  templates,
+  users,
+} from "@/server/db/schema";
 import { directRead, type Read } from "@/server/db/read-batch";
 import { type AppDatabase, type RunAtomic } from "@/server/db/types";
 
@@ -37,6 +54,8 @@ export type CreateAdrData = z.output<typeof createAdrInput>;
 export type SaveDocData = z.output<typeof saveDocInput>;
 export type UpdateDocMetaData = z.output<typeof updateDocMetaInput>;
 export type MoveDocData = z.output<typeof moveDocInput>;
+export type RestoreDocVersionData = z.output<typeof restoreDocVersionInput>;
+export type SupersedeAdrData = z.output<typeof supersedeAdrInput>;
 
 /** §7.4: a save keeps a snapshot when the last one is older than this (or on "Save version"). */
 export const SNAPSHOT_INTERVAL_MINUTES = 10;
@@ -186,6 +205,59 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
     return row ?? null;
   }
 
+  /**
+   * ADR-3: the ADR to supersede, as `handbookPathFor` needs it. Refuses a non-ADR and an
+   * ADR that already has a successor (supersede that one instead).
+   */
+  async function adrForSupersede(docId: string) {
+    const result = await read(
+      db.execute(sql`
+        SELECT d.id::text, d.project_id::text AS "projectId", d.type::text, d.title,
+          d.adr_number AS "adrNumber", d.adr_status::text AS "adrStatus",
+          d.source_path AS "sourcePath", d.handbook_path AS "handbookPath",
+          s.adr_number AS "successorNumber"
+        FROM docs d
+        LEFT JOIN docs s ON s.id = d.adr_superseded_by AND s.deleted_at IS NULL
+        WHERE d.id = ${docId}::uuid AND d.deleted_at IS NULL
+      `),
+    );
+    const [row] = rowsOf(
+      result,
+      z.object({
+        id: z.string(),
+        projectId: z.string(),
+        type: z.string(),
+        title: z.string(),
+        adrNumber: z.number().nullable(),
+        adrStatus: z.string().nullable(),
+        sourcePath: z.string().nullable(),
+        handbookPath: z.string().nullable(),
+        successorNumber: z.number().nullable(),
+      }),
+    );
+    if (!row) throw notFound("Doc");
+    if (row.type !== "adr" || row.adrNumber === null) {
+      throw invalid("Only ADRs can be superseded");
+    }
+    if (row.adrStatus === "superseded") {
+      throw conflict(
+        row.successorNumber === null
+          ? "This ADR is already superseded"
+          : `Already superseded by ADR-${formatAdrNumber(row.successorNumber)}`,
+      );
+    }
+    return {
+      id: row.id,
+      projectId: row.projectId,
+      type: "adr" as const,
+      title: row.title,
+      adrNumber: row.adrNumber,
+      adrStatus: row.adrStatus,
+      sourcePath: row.sourcePath,
+      handbookPath: row.handbookPath,
+    };
+  }
+
   /** Per-project lock for tree changes, held until the transaction ends. */
   const treeLock = (projectId: string) =>
     sql`SELECT pg_advisory_xact_lock(hashtextextended(${`hq.docs_tree:${projectId}`}, 0))`;
@@ -194,7 +266,7 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
    * Inserts a doc, its first version snapshot (so history starts at v1), a `created` activity
    * row and its mention links, in ONE statement. The parent is re-checked at write time.
    */
-  async function insertDoc(
+  async function insertDocRow(
     actorId: string,
     values: {
       projectId: string;
@@ -204,9 +276,19 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
       content: RichTextDoc;
       templateId: string | null;
       adrNumber?: number;
+      /** Fixes the new id (a CTE in `before` may need to reference it). */
+      id?: string;
+      /**
+       * Data-modifying CTEs that run before the insert (`name AS (…)`, comma-separated, no
+       * trailing comma), and a condition on them that the insert also needs: e.g. ADR-3
+       * marks the old ADR superseded and inserts only if that UPDATE matched.
+       */
+      before?: { ctes: SQL; gate: SQL };
+      /** CTEs after the insert (`name AS (…)`, comma-separated, no trailing comma). */
+      after?: SQL;
     },
-  ): Promise<CreatedDoc> {
-    const id = crypto.randomUUID();
+  ): Promise<CreatedDoc | null> {
+    const id = values.id ?? crypto.randomUUID();
     const position = await endPosition(values.projectId, values.parentId);
     const refs = docRefs(values.content, await allProjectKeys());
     const isAdr = values.adrNumber !== undefined;
@@ -215,7 +297,8 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
           AND p.project_id = ${values.projectId}::uuid AND p.deleted_at IS NULL)`
       : sql`TRUE`;
     const result = await db.execute(sql`
-      WITH inserted AS (
+      WITH ${values.before ? sql`${values.before.ctes},` : sql``}
+      inserted AS (
         INSERT INTO docs (id, project_id, parent_id, type, title, content, content_text,
           owner_id, updated_by, position, template_id, adr_number, adr_status)
         SELECT ${id}::uuid, ${values.projectId}::uuid, ${uuidOrNull(values.parentId)},
@@ -223,7 +306,7 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
           ${extractPlainText(values.content)}, ${actorId}::uuid, ${actorId}::uuid, ${position},
           ${uuidOrNull(values.templateId)}, ${isAdr ? values.adrNumber : null}::int,
           ${isAdr ? "proposed" : null}::adr_status
-        WHERE ${parentGate}
+        WHERE ${parentGate} AND ${values.before?.gate ?? sql`TRUE`}
         RETURNING id, version, title, content
       ),
       first_version AS (
@@ -251,15 +334,193 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
         userIds: extractUserMentionIds(values.content),
         actorId: null,
         gate: sql`EXISTS (SELECT 1 FROM inserted)`,
-      })}
+      })}${values.after ? sql`, ${values.after}` : sql``}
       SELECT id::text, version, title FROM inserted
     `);
     const [row] = rowsOf(
       result,
       z.object({ id: z.string(), version: z.number(), title: z.string() }),
     );
+    if (!row) {
+      // Refused by a `before` gate: the caller re-reads to say why.
+      if (values.before) return null;
+      throw notFound("Parent doc");
+    }
+    return row;
+  }
+
+  /** `insertDocRow` without a `before` gate: refused only for a missing parent. */
+  async function insertDoc(
+    actorId: string,
+    values: Omit<Parameters<typeof insertDocRow>[1], "before">,
+  ): Promise<CreatedDoc> {
+    const row = await insertDocRow(actorId, values);
     if (!row) throw notFound("Parent doc");
     return row;
+  }
+
+  /**
+   * ADR-1 numbering, shared by "New ADR" and ADR-3 supersede: number = highest in the
+   * project + 1 (deleted ADRs included: numbers are never reused). Two concurrent creators
+   * can read the same maximum; the unique (project_id, adr_number) index rejects the second,
+   * which re-reads and retries. The new ADR goes next to the highest-numbered live ADR (e.g.
+   * under "Decisions" after the import). `build` makes the insert for a number; it returns
+   * null when its own gate refused it.
+   */
+  async function allocateAdr(
+    projectId: string,
+    build: (number: number, parentId: string | null) => Promise<CreatedDoc | null>,
+  ): Promise<(CreatedDoc & { number: number }) | null> {
+    const [latest] = await db
+      .select({ parentId: docs.parentId })
+      .from(docs)
+      .where(and(eq(docs.projectId, projectId), eq(docs.type, "adr"), isNull(docs.deletedAt)))
+      .orderBy(desc(docs.adrNumber))
+      .limit(1);
+    const parentId = latest?.parentId ?? null;
+
+    for (let attempt = 1; ; attempt += 1) {
+      const [max] = await db
+        .select({ max: sql<number | null>`max(${docs.adrNumber})` })
+        .from(docs)
+        .where(eq(docs.projectId, projectId));
+      const number = (max?.max ?? 0) + 1;
+      await options.beforeAdrInsert?.();
+      try {
+        const created = await build(number, parentId);
+        return created ? { ...created, number } : null;
+      } catch (error) {
+        const info = pgErrorInfo(error);
+        const taken =
+          info?.code === UNIQUE_VIOLATION && info.constraint === "docs_project_adr_number_unique";
+        if (!taken) throw error;
+        if (attempt >= ADR_ATTEMPTS) throw conflict("Too many concurrent ADRs; try again");
+        // Jitter so racing creators do not collide again on the next attempt.
+        await sleep(Math.random() * 20 * attempt);
+      }
+    }
+  }
+
+  /**
+   * §7.4 locked content write, shared by autosave and DOC-10 restore: `UPDATE … WHERE id
+   * AND version = base` bumps the version; a snapshot is kept if the last one is over 10
+   * minutes old (or `snapshot`). If no row matched, someone saved first: return their
+   * version so the editor can show the conflict banner.
+   *
+   * The mention sync is the second statement of the same transaction. Its gate checks
+   * `xmin` (the id of the transaction that last wrote the row): only if THIS transaction
+   * wrote the doc does it resync, so a lost save never replaces the winner's links, and the
+   * row lock taken by the update keeps other savers out until the sync commits.
+   */
+  async function lockedSave(
+    actorId: string,
+    doc: { id: string; type: DocType; adrNumber: number | null },
+    input: {
+      baseVersion: number;
+      content: RichTextDoc;
+      title: string | undefined;
+      snapshot: boolean;
+      projectKeys: string[];
+      /** An extra activity row in the same statement (to_value = the new version). */
+      activity?: { action: string; field: string; fromValue: string };
+    },
+  ): Promise<SaveDocResult> {
+    const text = extractPlainText(input.content);
+    const refs = docRefs(input.content, input.projectKeys);
+    // ADR titles always keep their own "NNNN. " prefix (ADR-1), whatever the client sent.
+    const title =
+      input.title !== undefined && doc.type === "adr" && doc.adrNumber !== null
+        ? adrTitle(doc.adrNumber, splitAdrTitle(input.title)?.title || input.title)
+        : input.title;
+    const activity = input.activity
+      ? sql`,
+        extra_activity AS (
+          INSERT INTO activity (entity_type, entity_id, actor_id, action, field, from_value,
+            to_value)
+          SELECT 'doc', u.id, ${actorId}::uuid, ${input.activity.action}, ${input.activity.field},
+            ${input.activity.fromValue}, u.version::text
+          FROM updated u
+        )`
+      : sql``;
+    const write = sql`
+      WITH updated AS (
+        UPDATE docs SET content = ${jsonbOrNull(input.content)}, content_text = ${text},
+          title = COALESCE(${title ?? null}::text, title), version = version + 1,
+          updated_by = ${actorId}::uuid, updated_at = now()
+        WHERE id = ${doc.id}::uuid AND version = ${input.baseVersion}::int
+          AND deleted_at IS NULL
+        RETURNING id, version, title, content
+      ),
+      last_snapshot AS (
+        SELECT max(created_at) AS at FROM doc_versions WHERE doc_id = ${doc.id}::uuid
+      ),
+      snapshot AS (
+        INSERT INTO doc_versions (doc_id, version, title, content, author_id)
+        SELECT u.id, u.version, u.title, u.content, ${actorId}::uuid
+        FROM updated u, last_snapshot l
+        WHERE ${input.snapshot}::boolean OR l.at IS NULL
+          OR l.at < now() - make_interval(mins => ${SNAPSHOT_INTERVAL_MINUTES}::int)
+        RETURNING version
+      )${activity}
+      SELECT u.version, EXISTS (SELECT 1 FROM snapshot) AS snapshotted FROM updated u
+    `;
+    const writtenHere = sql`EXISTS (SELECT 1 FROM docs WHERE id = ${doc.id}::uuid
+      AND xmin = pg_current_xact_id()::xid)`;
+    const sync = mentionSyncStatement({
+      fromType: "doc",
+      fromId: doc.id,
+      refs,
+      actorId,
+      gate: writtenHere,
+    });
+    const [result] = await options.runAtomic([
+      write,
+      sync,
+      // NTF-1: only users this save newly @mentions are notified (same xmin gate).
+      userMentionNotifyStatement(
+        {
+          fromType: "doc",
+          fromId: doc.id,
+          userIds: extractUserMentionIds(input.content),
+          actorId,
+          gate: writtenHere,
+        },
+        {
+          type: sql`'mentioned_in_doc'`,
+          entityType: sql`'doc'`,
+          entityId: sql`${doc.id}::uuid`,
+          meta: sql`'{}'::jsonb`,
+        },
+      ),
+    ]);
+    const [row] = rowsOf(result, z.object({ version: z.number(), snapshotted: z.boolean() }));
+    if (row) return { status: "saved", version: row.version, snapshotted: row.snapshotted };
+    return { status: "conflict", latest: await latestOf(doc.id) };
+  }
+
+  /** The winner's copy after a lost optimistic-lock race. */
+  async function latestOf(docId: string): Promise<LatestDoc> {
+    const [latest] = await db
+      .select({
+        version: docs.version,
+        title: docs.title,
+        content: docs.content,
+        updatedByName: users.name,
+        updatedAt: docs.updatedAt,
+        deletedAt: docs.deletedAt,
+      })
+      .from(docs)
+      .leftJoin(users, eq(users.id, docs.updatedBy))
+      .where(eq(docs.id, docId))
+      .limit(1);
+    if (!latest || latest.deletedAt) throw notFound("Doc");
+    return {
+      version: latest.version,
+      title: latest.title,
+      content: latest.content,
+      updatedByName: latest.updatedByName,
+      updatedAt: latest.updatedAt,
+    };
   }
 
   /**
@@ -313,144 +574,157 @@ export function createDocService(db: AppDatabase, options: DocServiceOptions) {
     ): Promise<CreatedDoc & { number: number }> {
       const project = await projectByKey(input.projectKey);
       const template = await adrTemplate();
-      const [latest] = await db
-        .select({ parentId: docs.parentId })
-        .from(docs)
-        .where(and(eq(docs.projectId, project.id), eq(docs.type, "adr"), isNull(docs.deletedAt)))
-        .orderBy(desc(docs.adrNumber))
-        .limit(1);
-      const parentId = latest?.parentId ?? null;
-
-      for (let attempt = 1; ; attempt += 1) {
-        const [max] = await db
-          .select({ max: sql<number | null>`max(${docs.adrNumber})` })
-          .from(docs)
-          .where(eq(docs.projectId, project.id));
-        const number = (max?.max ?? 0) + 1;
-        await options.beforeAdrInsert?.();
-        try {
-          const created = await insertDoc(actorId, {
-            projectId: project.id,
-            parentId,
-            type: "adr",
-            title: adrTitle(number, input.title),
-            content: template?.content ?? emptyDoc(),
-            templateId: template?.id ?? null,
-            adrNumber: number,
-          });
-          return { ...created, number };
-        } catch (error) {
-          const info = pgErrorInfo(error);
-          const taken =
-            info?.code === UNIQUE_VIOLATION && info.constraint === "docs_project_adr_number_unique";
-          if (!taken) throw error;
-          if (attempt >= ADR_ATTEMPTS) throw conflict("Too many concurrent ADRs; try again");
-          // Jitter so racing creators do not collide again on the next attempt.
-          await sleep(Math.random() * 20 * attempt);
-        }
-      }
+      const created = await allocateAdr(project.id, (number, parentId) =>
+        insertDoc(actorId, {
+          projectId: project.id,
+          parentId,
+          type: "adr",
+          title: adrTitle(number, input.title),
+          content: template?.content ?? emptyDoc(),
+          templateId: template?.id ?? null,
+          adrNumber: number,
+        }),
+      );
+      // `insertDoc` never returns null (it throws for a missing parent).
+      if (!created) throw notFound("Parent doc");
+      return created;
     },
 
     /**
-     * §7.4 optimistic locking: `UPDATE … WHERE id AND version = base` bumps the version; a
-     * snapshot is kept if the last one is over 10 minutes old (or on "Save version"). If no
-     * row matched, someone saved first: return their version so the editor can show the
-     * conflict banner. "Keep mine" calls this again with that version as the base, so it
-     * still loses (and reports) if a third save landed meanwhile.
-     *
-     * The mention sync is the second statement of the same transaction. Its gate checks
-     * `xmin` (the id of the transaction that last wrote the row): only if THIS transaction
-     * wrote the doc does it resync, so a lost save never replaces the winner's links, and the
-     * row lock taken by the update keeps other savers out until the sync commits.
+     * ADR-3 "Supersede with new ADR…": ONE statement marks the old ADR superseded by a new
+     * id and inserts that ADR (next number, the ADR template with "Supersedes: [NNNN](…)" in
+     * its Context, status Proposed), with activity on both. The UPDATE runs first and the
+     * insert is gated on it, so an ADR superseded meanwhile (or deleted) gets no orphan
+     * successor; the FK to the new id is checked at the end of the statement.
+     */
+    async supersedeAdr(
+      actorId: string,
+      input: SupersedeAdrData,
+    ): Promise<CreatedDoc & { number: number }> {
+      const old = await adrForSupersede(input.docId);
+      const template = await adrTemplate();
+      const oldPath = handbookPathFor(old);
+      const created = await allocateAdr(old.projectId, (number, parentId) => {
+        const id = crypto.randomUUID();
+        const title = adrTitle(number, input.title);
+        const newPath = defaultHandbookPath({ type: "adr", title, adrNumber: number });
+        const content = withSupersedesBullet(template?.content ?? null, {
+          number: old.adrNumber,
+          href: handbookRelativeLink(newPath, oldPath),
+        });
+        return insertDocRow(actorId, {
+          id,
+          projectId: old.projectId,
+          parentId,
+          type: "adr",
+          title,
+          content,
+          templateId: template?.id ?? null,
+          adrNumber: number,
+          before: {
+            ctes: sql`
+              superseded AS (
+                UPDATE docs SET adr_status = 'superseded', adr_superseded_by = ${id}::uuid,
+                  updated_by = ${actorId}::uuid, updated_at = now()
+                WHERE id = ${old.id}::uuid AND type = 'adr' AND deleted_at IS NULL
+                  AND adr_status IS DISTINCT FROM 'superseded'
+                RETURNING id
+              )`,
+            gate: sql`EXISTS (SELECT 1 FROM superseded)`,
+          },
+          after: sql`
+            old_activity AS (
+              INSERT INTO activity (entity_type, entity_id, actor_id, action, field, from_value,
+                to_value)
+              SELECT 'doc', s.id, ${actorId}::uuid, 'updated', f.field, f.from_value,
+                f.to_value
+              FROM superseded s, (VALUES
+                ('adrStatus', ${old.adrStatus}::text, 'superseded'),
+                ('adrSupersededBy', NULL::text, ${id}::text)
+              ) AS f(field, from_value, to_value)
+              WHERE EXISTS (SELECT 1 FROM inserted)
+            ),
+            new_activity AS (
+              INSERT INTO activity (entity_type, entity_id, actor_id, action, field, to_value)
+              SELECT 'doc', i.id, ${actorId}::uuid, 'supersedes', 'adrSupersedes', ${old.id}::text
+              FROM inserted i
+            )`,
+        });
+      });
+      if (created) return created;
+      // The gate refused: superseded (or deleted) since the read above. Say which.
+      const now = await adrForSupersede(input.docId);
+      throw conflict(`ADR ${formatAdrNumber(now.adrNumber)} changed meanwhile; try again`);
+    },
+
+    /**
+     * §7.4 autosave (see `lockedSave`). "Keep mine" calls this again with the winner's
+     * version as the base, so it still loses (and reports) if a third save landed meanwhile.
      */
     async saveDoc(actorId: string, input: SaveDocData): Promise<SaveDocResult> {
       // Both reads in one round trip (autosave runs every few seconds while typing).
       const [doc, projectKeys] = await allInOrder([liveDoc(input.docId), allProjectKeys()]);
-      const text = extractPlainText(input.content);
-      const refs = docRefs(input.content, projectKeys);
-      // ADR titles always keep their own "NNNN. " prefix (ADR-1), whatever the client sent.
-      const title =
-        input.title !== undefined && doc.type === "adr" && doc.adrNumber !== null
-          ? adrTitle(doc.adrNumber, splitAdrTitle(input.title)?.title || input.title)
-          : input.title;
-      const write = sql`
-        WITH updated AS (
-          UPDATE docs SET content = ${jsonbOrNull(input.content)}, content_text = ${text},
-            title = COALESCE(${title ?? null}::text, title), version = version + 1,
-            updated_by = ${actorId}::uuid, updated_at = now()
-          WHERE id = ${doc.id}::uuid AND version = ${input.baseVersion}::int
-            AND deleted_at IS NULL
-          RETURNING id, version, title, content
-        ),
-        last_snapshot AS (
-          SELECT max(created_at) AS at FROM doc_versions WHERE doc_id = ${doc.id}::uuid
-        ),
-        snapshot AS (
-          INSERT INTO doc_versions (doc_id, version, title, content, author_id)
-          SELECT u.id, u.version, u.title, u.content, ${actorId}::uuid
-          FROM updated u, last_snapshot l
-          WHERE ${input.snapshot}::boolean OR l.at IS NULL
-            OR l.at < now() - make_interval(mins => ${SNAPSHOT_INTERVAL_MINUTES}::int)
-          RETURNING version
-        )
-        SELECT u.version, EXISTS (SELECT 1 FROM snapshot) AS snapshotted FROM updated u
-      `;
-      const sync = mentionSyncStatement({
-        fromType: "doc",
-        fromId: doc.id,
-        refs,
-        actorId,
-        gate: sql`EXISTS (SELECT 1 FROM docs WHERE id = ${doc.id}::uuid
-          AND xmin = pg_current_xact_id()::xid)`,
+      return lockedSave(actorId, doc, {
+        baseVersion: input.baseVersion,
+        content: input.content,
+        title: input.title,
+        snapshot: input.snapshot,
+        projectKeys,
       });
-      const [result] = await options.runAtomic([
-        write,
-        sync,
-        // NTF-1: only users this save newly @mentions are notified (same xmin gate).
-        userMentionNotifyStatement(
-          {
-            fromType: "doc",
-            fromId: doc.id,
-            userIds: extractUserMentionIds(input.content),
-            actorId,
-            gate: sql`EXISTS (SELECT 1 FROM docs WHERE id = ${doc.id}::uuid
-              AND xmin = pg_current_xact_id()::xid)`,
-          },
-          {
-            type: sql`'mentioned_in_doc'`,
-            entityType: sql`'doc'`,
-            entityId: sql`${doc.id}::uuid`,
-            meta: sql`'{}'::jsonb`,
-          },
+    },
+
+    /**
+     * DOC-10 restore: a NEW version with the old snapshot's title and content (the history
+     * is never rewritten), always snapshotted, locked on `baseVersion` like a save, so a
+     * newer save than the one the person saw is a conflict (the banner), never overwritten.
+     * Logs `restored` (field `version`, from = the restored version, to = the new one).
+     * Comment anchors that still exist are kept (`restoredContent`).
+     */
+    async restoreVersion(actorId: string, input: RestoreDocVersionData): Promise<SaveDocResult> {
+      const [doc, projectKeys, versionRows, current, anchorRows] = await allInOrder([
+        liveDoc(input.docId),
+        allProjectKeys(),
+        read(
+          db
+            .select({ title: docVersions.title, content: docVersions.content })
+            .from(docVersions)
+            .where(and(eq(docVersions.docId, input.docId), eq(docVersions.version, input.version)))
+            .limit(1),
+        ),
+        read(
+          db.select({ content: docs.content }).from(docs).where(eq(docs.id, input.docId)).limit(1),
+        ),
+        // Anchors of live threads (top comments only carry one, CHECK `comments_reply_plain`).
+        read(
+          db
+            .select({ anchorId: comments.anchorId })
+            .from(comments)
+            .where(
+              and(
+                eq(comments.entityType, "doc"),
+                eq(comments.entityId, input.docId),
+                isNotNull(comments.anchorId),
+                isNull(comments.deletedAt),
+              ),
+            ),
         ),
       ]);
-      const [row] = rowsOf(result, z.object({ version: z.number(), snapshotted: z.boolean() }));
-      if (row) return { status: "saved", version: row.version, snapshotted: row.snapshotted };
-
-      const [latest] = await db
-        .select({
-          version: docs.version,
-          title: docs.title,
-          content: docs.content,
-          updatedByName: users.name,
-          updatedAt: docs.updatedAt,
-          deletedAt: docs.deletedAt,
-        })
-        .from(docs)
-        .leftJoin(users, eq(users.id, docs.updatedBy))
-        .where(eq(docs.id, doc.id))
-        .limit(1);
-      if (!latest || latest.deletedAt) throw notFound("Doc");
-      return {
-        status: "conflict",
-        latest: {
-          version: latest.version,
-          title: latest.title,
-          content: latest.content,
-          updatedByName: latest.updatedByName,
-          updatedAt: latest.updatedAt,
-        },
-      };
+      const [old] = versionRows;
+      if (!old) throw notFound(`Version ${input.version}`);
+      const threads = new Set(anchorRows.flatMap((row) => (row.anchorId ? [row.anchorId] : [])));
+      const content = restoredContent(
+        old.content ?? emptyDoc(),
+        current[0]?.content ?? null,
+        threads,
+      );
+      return lockedSave(actorId, doc, {
+        baseVersion: input.baseVersion,
+        content,
+        title: old.title,
+        snapshot: true,
+        projectKeys,
+        activity: { action: "restored", field: "version", fromValue: String(input.version) },
+      });
     },
 
     /**

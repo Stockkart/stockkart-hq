@@ -81,3 +81,25 @@ export const linkIssueInput = z.object({
 });
 
 export const unlinkIssueInput = z.object({ docId: id, linkId: id });
+
+/** DOC-10: a version number of a doc's history. */
+const versionNumber = z.number().int().positive();
+
+/** DOC-10 read-only preview / diff of one snapshot. */
+export const docVersionInput = z.object({ docId: id, version: versionNumber });
+
+/**
+ * DOC-10 restore: a NEW version with the old one's title and content, locked on
+ * `baseVersion` like a save (never rewrites the history).
+ */
+export const restoreDocVersionInput = z.object({
+  docId: id,
+  version: versionNumber,
+  baseVersion: versionNumber,
+});
+
+/** ADR-3 "Supersede with new ADR…": the new ADR's title (the server adds its number). */
+export const supersedeAdrInput = z.object({
+  docId: id,
+  title: title.pipe(z.string().max(DOC_TITLE_MAX - 6, "Title is too long")),
+});
