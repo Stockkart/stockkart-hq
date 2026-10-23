@@ -64,13 +64,16 @@ export function PublishDialog({
   const [loading, startLoading] = useTransition();
   const [publishing, startPublishing] = useTransition();
 
-  function request(nextPath: string) {
+  /** `nextPath` undefined: the doc's own path, as the server resolves it now (adopted). */
+  function request(nextPath: string | undefined) {
     startLoading(async () => {
       setError(null);
       try {
         const result = await handbookPublishPreviewAction({ docId, path: nextPath });
         if (result.ok) {
           setPreview(result.data);
+          // The default path follows the SAVED title (a rename in edit mode included).
+          if (nextPath === undefined) setPath(result.data.path);
           setOverwrite(false);
           setSpecial(false);
           // A new preview needs a new look at the content.
@@ -99,12 +102,12 @@ export function PublishDialog({
   // are saved first, so the preview (and the publish) is of what the person sees.
   useEffect(() => {
     if (!prepare) {
-      request(initialPath);
+      request(undefined);
       return;
     }
     startLoading(async () => {
       if (await prepare()) {
-        request(initialPath);
+        request(undefined);
       } else {
         setUnsaved(true);
         setError(SAVE_FIRST_MESSAGE);
@@ -137,6 +140,8 @@ export function PublishDialog({
             : [],
           acknowledgedPublic: acknowledged,
           confirmSpecialPath: preview.specialPath && special,
+          // Only the version this preview showed may be published (see the schema).
+          expectedVersion: preview.version,
         }),
       );
       if (!outcome) return;
@@ -207,7 +212,7 @@ export function PublishDialog({
                 label={`Changes to ${preview.path}`}
                 oldLabel="handbook"
                 newLabel="HQ"
-                className="max-h-80 overflow-y-auto"
+                scrollable
               />
             ) : (
               <p className="text-sm text-muted-foreground">

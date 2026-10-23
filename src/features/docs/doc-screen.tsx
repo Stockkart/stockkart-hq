@@ -350,6 +350,8 @@ export function DocScreen({
     flush: async () => {
       const controller = editing ? editor.current : null;
       if (!controller) return true;
+      // A running upload lands (and autosaves) later: what is saved now is not all yet.
+      if (controller.uploading()) return false;
       const state = await controller.flush();
       return state.status === "saved";
     },

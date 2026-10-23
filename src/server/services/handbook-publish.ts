@@ -37,6 +37,8 @@ const READ_CONCURRENCY = 5;
 export const DRIFT_MESSAGE = "Changed in the handbook since your last sync: pull first";
 export const REMOVED_MESSAGE =
   "Removed from the handbook since your last sync: confirm in the publish dialog to add it back";
+export const PREVIEW_STALE_MESSAGE =
+  "The doc was saved again since this preview: check it again before publishing";
 
 /** Paths GitHub gives a meaning to, or the ADR template: the dialog asks before writing them. */
 export function isSpecialHandbookPath(path: string): boolean {
@@ -187,6 +189,7 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
       const localSha = gitBlobSha(markdown);
       return {
         docId: row.id,
+        version: row.version,
         path,
         markdown,
         remote: remote ? { sha: remote.sha, diff: lineDiff(remote.content, markdown) } : null,
@@ -223,6 +226,13 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
       if (!projectId || !projectKey || projectKey !== input.projectKey) throw notFound("Doc");
       if (docsInOrder.some((row) => row.projectId !== projectId)) {
         throw invalid("Publish docs of one project at a time");
+      }
+      // The single-doc dialog reviewed one version: anything saved since is not reviewed.
+      if (
+        input.expectedVersion !== undefined &&
+        docsInOrder.some((row) => row.version !== input.expectedVersion)
+      ) {
+        throw conflict(PREVIEW_STALE_MESSAGE);
       }
 
       const outcome: PublishOutcome = { pr: null, published: [], unchanged: [], refused: [] };

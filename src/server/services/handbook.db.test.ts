@@ -26,7 +26,12 @@ import { createDocQueries } from "./doc-queries";
 import { createDocService } from "./docs";
 import { createFileQueries } from "./files";
 import { createGithubService } from "./github";
-import { createHandbookPublishService, DRIFT_MESSAGE, REMOVED_MESSAGE } from "./handbook-publish";
+import {
+  createHandbookPublishService,
+  DRIFT_MESSAGE,
+  PREVIEW_STALE_MESSAGE,
+  REMOVED_MESSAGE,
+} from "./handbook-publish";
 import { CHECK_RATE_LIMITED_MESSAGE, createHandbookPullService } from "./handbook-pull";
 import { createHandbookQueries } from "./handbook-queries";
 import { createIssueQueries } from "./issue-queries";
@@ -933,6 +938,30 @@ describeDb("handbook sync (Postgres)", () => {
   /** The doc page's badge: what `getDoc` says (the merged page reads nothing else). */
   const badge = async (id: string) =>
     (await createDocQueries(db).getDoc(projectIdByKey("STK"), id))?.handbook?.status;
+
+  it("publishes only the previewed version: a save since the preview is refused", async () => {
+    const doc = await newDoc("Reviewed only", "Reviewed text.");
+    const reviewed = await publishService().preview(actor, { docId: doc.id });
+    expect(reviewed.version).toBe(doc.version);
+    // Saved after the preview (another tab, a rename …): never published unreviewed.
+    const later = await edit(doc.id, doc.version, "Unreviewed text.");
+    const single = (expectedVersion: number) =>
+      publishService().publish(actor, {
+        projectKey: "STK",
+        docIds: [doc.id],
+        overwrite: [],
+        acknowledgedPublic: true,
+        confirmSpecialPath: false,
+        expectedVersion,
+      });
+    await expect(single(reviewed.version)).rejects.toThrow(PREVIEW_STALE_MESSAGE);
+    expect(await publicationOf(doc.id)).toBeUndefined();
+    const again = await publishService().preview(actor, { docId: doc.id });
+    expect(again).toMatchObject({ version: later.version });
+    expect(again.markdown).toContain("Unreviewed text.");
+    expect((await single(again.version)).pr).not.toBeNull();
+    expect(await publicationOf(doc.id)).toMatchObject({ docVersion: later.version });
+  });
 
   it("docs UX seams: superseding an ADR moves its version, so it is Changed in HQ", async () => {
     const old = await docService().createAdr(actor, { projectKey: "STK", title: "Use cron" });

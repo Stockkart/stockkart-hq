@@ -94,6 +94,7 @@ const preview = (patch: Record<string, unknown> = {}) => ({
   ok: true,
   data: {
     docId: DOC_ID,
+    version: 3,
     path: "RUNBOOK.md",
     markdown: "# Runbook\n\nText.\n",
     remote: null,
@@ -306,8 +307,25 @@ describe("handbook doc actions (DOC-14)", () => {
         overwrite: [{ docId: DOC_ID, remoteSha: REMOTE }],
         acknowledgedPublic: true,
         confirmSpecialPath: false,
+        expectedVersion: 3,
       }),
     );
+  });
+
+  it("previews the doc's own path as the server resolves it now (after a rename)", async () => {
+    const user = userEvent.setup();
+    actions.handbookPublishPreviewAction.mockResolvedValue(preview({ path: "RENAMED.md" }));
+    // The page loaded with the old title's path.
+    render(<DocScreen {...props(sync("changed_in_hq", { path: "RUNBOOK.md" }))} />);
+    await choose(user, /^Publish to handbook/);
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() =>
+      expect(within(dialog).getByLabelText("Path in the repo")).toHaveValue("RENAMED.md"),
+    );
+    expect(actions.handbookPublishPreviewAction).toHaveBeenCalledWith({
+      docId: DOC_ID,
+      path: undefined,
+    });
   });
 
   it("refuses an invalid path before asking the server", async () => {

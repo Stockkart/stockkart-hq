@@ -30,15 +30,15 @@ export function LineDiffView({
   oldLabel,
   newLabel,
   label = `Changes from ${oldLabel} to ${newLabel}`,
-  className,
+  scrollable = false,
 }: {
   hunks: readonly LineDiffHunk[];
   oldLabel: string;
   newLabel: string;
   /** The listing's accessible name. */
   label?: string;
-  /** Extra classes for the listing (e.g. a max height inside a dialog). */
-  className?: string;
+  /** A fixed-height listing that scrolls (inside a dialog), focusable for keyboard scrolling. */
+  scrollable?: boolean;
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(new Set());
   const { added, removed } = diffSummary(hunks);
@@ -59,7 +59,12 @@ export function LineDiffView({
       </p>
       <ol
         aria-label={label}
-        className={cn("overflow-x-auto rounded-md border font-mono text-xs leading-5", className)}
+        tabIndex={scrollable ? 0 : undefined}
+        className={cn(
+          "overflow-x-auto rounded-md border font-mono text-xs leading-5",
+          scrollable &&
+            "max-h-80 overflow-y-auto outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        )}
       >
         {hunks.map((hunk, index) => {
           if (hunk.collapsed && !expanded.has(index)) {

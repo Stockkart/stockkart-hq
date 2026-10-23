@@ -111,7 +111,7 @@ export function PullDialog({
                   label={`Changes to ${preview.path}`}
                   oldLabel="HQ"
                   newLabel="handbook"
-                  className="max-h-80 overflow-y-auto"
+                  scrollable
                 />
               ) : null}
             </>

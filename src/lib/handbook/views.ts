@@ -46,6 +46,8 @@ export interface HandbookPublicationView {
 /** Publish dialog contents (server action, on demand: it asks GitHub). */
 export interface PublishPreview {
   docId: string;
+  /** The saved doc version the markdown was exported from (sent back on publish). */
+  version: number;
   path: string;
   markdown: string;
   /** The file on the default branch, if it exists. */

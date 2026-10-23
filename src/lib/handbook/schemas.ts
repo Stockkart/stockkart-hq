@@ -50,9 +50,18 @@ export const publishInput = z
     }),
     /** Single-doc dialog: the person confirmed a path GitHub gives a meaning to. */
     confirmSpecialPath: z.boolean().default(false),
+    /**
+     * Single-doc dialog: the doc version its preview showed. The publish is refused if the
+     * saved doc moved on since (another save, rename or tab), so only reviewed content goes
+     * to the public repo.
+     */
+    expectedVersion: z.number().int().positive().optional(),
   })
   .refine((input) => input.path === undefined || input.docIds.length === 1, {
     message: "A path can only be set when publishing one doc",
+  })
+  .refine((input) => input.expectedVersion === undefined || input.docIds.length === 1, {
+    message: "An expected version can only be set when publishing one doc",
   })
   .refine((input) => new Set(input.docIds).size === input.docIds.length, {
     message: "A doc is listed twice",

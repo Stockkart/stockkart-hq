@@ -520,8 +520,10 @@ and conflict rules; keep these seams intact:
   (env only). `HandbookHeaderBadge` is in `DOC_HEADER_BADGES` and recomputes the status for
   the version saved on the page (`statusAtVersion`); `publishToHandbookAction` /
   `pullFromHandbookAction` (`handbook-doc-actions.tsx`) are in `DOC_ACTIONS`. Publish never
-  sends unsaved content: the server exports the stored `docs.version`, and the dialog runs
-  `context.flush()` before its preview ("Save first" if that fails). Pull runs
+  sends unsaved content: the server exports the stored `docs.version`, the dialog runs
+  `context.flush()` before its preview ("Save first" if that fails or an upload is still
+  running), and the publish carries the previewed version (`expectedVersion`), refused with
+  `PREVIEW_STALE_MESSAGE` if the doc was saved again since. Pull runs
   `context.toReadMode()` first, so the applied version shows in read mode and no editor is
   left on the old version.
 

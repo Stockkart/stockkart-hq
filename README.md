@@ -414,7 +414,8 @@ pull requests, so the sync (DOC-14) works both ways and never overwrites anythin
   Settings → Handbook, at most 50 docs) opens ONE pull request through a GitHub App: a fresh
   `hq/publish-<yyyymmdd>-<id>` branch with every file in ONE commit. HQ never pushes to the
   default branch or to a branch a person made. It publishes the doc's **saved** version: from
-  edit mode the dialog saves pending edits first, and says "Save first" if that save fails.
+  edit mode the dialog saves pending edits first, and says "Save first" if that save fails;
+  a doc saved again after its preview (another tab, a rename) is refused until checked again.
 - **Repo → HQ**: the org webhook's pushes to the default branch mark the touched docs; "Review
   & pull" shows the diff and applies the file as a new HQ version. From edit mode it first
   saves and leaves edit mode, so the pulled version shows in read mode.
