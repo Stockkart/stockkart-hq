@@ -107,7 +107,7 @@ nobody can sign in.
 | `GITHUB_APP_ID`, `GITHUB_APP_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`  | no       | Engineering handbook sync (DOC-14) GitHub App; see "Engineering handbook sync". All three or none: until each is set, publish and pull refuse with "Handbook sync isn't set up". The PEM key may use literal `\n`    |
 | `HANDBOOK_REPO`                                                          | no       | `Owner/repo` of the handbook (default `Stockkart/engineering-handbook`; must be in the Stockkart org). The only repo the App client can address                                                                      |
 | `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `APP_BASE_URL`                    | no       | Email digest (NTF-2) through Resend; see "Email digest". All three or none: until each is set no email is sent and the profile says "Email isn't set up"                                                             |
-| `CRON_SECRET`                                                            | no       | Bearer secret of the daily digest job (`openssl rand -hex 32`, ≥ 32 characters). Unset: `/api/cron/digest` answers 503 and does nothing                                                                              |
+| `CRON_SECRET`                                                            | no       | Bearer secret of the cron jobs (`openssl rand -hex 32`, ≥ 32 characters): the digest and the COST-7 monthly reminder. Unset: `/api/cron/digest` and `/api/cron/monthly` answer 503 and do nothing                    |
 | `HQ_LOG_QUERIES`                                                         | no       | `1` logs every database round trip per request (counts and ms only, never SQL). Off by default; see "Performance"                                                                                                    |
 
 Generate `AUTH_SECRET` with:
@@ -529,8 +529,9 @@ Setup (owner):
    Vercel Cron sends it as `Authorization: Bearer <CRON_SECRET>` on each run
    ([manage cron jobs](https://vercel.com/docs/cron-jobs/manage-cron-jobs), checked
    2026-10-22).
-4. **The digest is disabled for now: `vercel.json` has no `crons` entry.** To enable it,
-   add `"crons": [{ "path": "/api/cron/digest", "schedule": "0 1 * * *" }]` to
+4. **The digest is disabled for now: `vercel.json` has no digest entry in `crons`** (only
+   the COST-7 `/api/cron/monthly` job). To enable it, add
+   `{ "path": "/api/cron/digest", "schedule": "0 1 * * *" }` to the `crons` array in
    `vercel.json` and redeploy. That schedules `GET /api/cron/digest` daily at 01:00
    UTC (09:00 in Singapore). Vercel calls cron paths with **GET**, only on production
    deployments, at any time within the scheduled hour on Hobby, and may occasionally call
@@ -563,7 +564,8 @@ How it stays safe:
   button (or the mail client) turns the digest off. It is rate limited per IP, answers the
   same for unknown tokens and shows nothing about the account.
 - `/api/cron/digest` and `/unsubscribe` are the only public paths added (exact paths in
-  `access-policy.ts`); each authenticates requests itself.
+  `access-policy.ts`); each authenticates requests itself. (COST-7 later added
+  `/api/cron/monthly`, with the same cron-secret auth.)
 
 **Free tier (approximate; confirm on Resend's pricing page before relying on it).** The
 quota docs list 100 emails/day and 3,000/month on the free plan (each recipient counts),
@@ -571,6 +573,68 @@ up to 3 verified domains, and 10 API requests per second
 ([account quotas and limits](https://resend.com/docs/knowledge-base/account-quotas-and-limits),
 checked 2026-10-22; the pricing page itself could not be read, so these numbers are
 **unverified** against it). One digest per user per day stays far below that.
+
+## Costs (IMR)
+
+`/STK/costs` (sidebar "Costs", palette "Go to Costs") tracks what running Stockkart costs:
+the **IMR** (infrastructure monthly run-rate) and the cash paid each month. SPEC
+"Costs (IMR)" (COST-1…COST-9) has the rules; in short:
+
+- **Items** tab: what Stockkart pays for (name, vendor, category, billing cycle
+  monthly / yearly / usage, currency INR or USD, optional expected amount, renewal date,
+  linked service from the registry, notes). "Add Stockkart defaults" adds DigitalOcean App
+  Platform, MongoDB Atlas, Vercel, Neon, Cloudflare R2, the domain, Resend, OpenAI, Gemini,
+  AWS Textract, GitHub, Grafana Cloud and Razorpay fees, without amounts, linked to the
+  registry's default services where they exist; pressing it again adds nothing. Archive
+  an item you stopped paying for (its past months still count); drag or use "Move up/down"
+  to reorder.
+- **Month** tab (default: this month, `?month=YYYY-MM`, ‹ › to switch): type each item's
+  amount inline (Enter or leaving the field saves; Esc reverts), pick actual / estimate /
+  no charge, add a note. "Copy last month" pre-fills the missing monthly and usage rows as
+  estimates. The top shows **IMR this month** (actuals + estimates, yearly items ÷ 12),
+  **cash out this month**, the budget bar (amber when over) and the change vs last month.
+  "Show run-rate" spreads yearly items over 12 months in the table.
+- **Year** tab: items × months with row and column totals, the year total, the average
+  IMR and the highest month, plus a stacked chart by category ("Show table" for the same
+  numbers as a table).
+- **Settings** tab: base currency (fixed once entries exist), monthly budget, reminder day
+  (1–28), reminder recipients (default: the project lead) and a default "1 USD = x INR"
+  rate. The rate only pre-fills new entries; each entry stores its own rate, editable on
+  the Month tab. **HQ never fetches exchange rates.**
+- **Export CSV** on the Month and Year tabs: `GET /STK/costs/export?month=YYYY-MM` or
+  `?year=YYYY` (signed-in only, `Cache-Control: no-store`, cells escaped against CSV
+  injection).
+
+Money is integer minor units (paise / cents) in `bigint` columns, never floats; FX
+conversion and the ÷ 12 run-rate round **half-up**. Amounts are never logged and not in
+activity rows (an entry change records only its month and kind). Costs are not in
+full-text search.
+
+### Monthly reminder (COST-7)
+
+In-app only (the bell), never email. From the reminder day of each month (Stockkart time,
+Asia/Kolkata), if **last month** has expected items without an amount (active monthly and
+usage items, and yearly items in their renewal month), each recipient gets one
+`cost_reminder` bell entry ("October 2026 costs are not added yet (5 items missing)") that
+opens `/STK/costs?month=2026-10`. It is deduplicated per project, month and user
+(`cost_reminder:<projectId>:<YYYY-MM>:<userId>`), so it arrives once a month however often
+the job runs.
+
+The job is `GET /api/cron/monthly`, scheduled **daily** at 03:00 UTC (08:30 IST) by the
+`crons` entry in `vercel.json`; the job itself decides whether a project's reminder day has
+come. It authenticates like the digest: **set `CRON_SECRET` in Vercel (Production)**
+(`openssl rand -hex 32`, see "Email digest" step 3). Without the secret every call is a
+harmless 503 and nothing runs; a wrong secret is a 401. Run it by hand:
+
+```bash
+curl -fsS -H "Authorization: Bearer $CRON_SECRET" https://hq.example.com/api/cron/monthly
+```
+
+The answer holds counts only (`costReminders.projects`, `costReminders.notified`).
+
+Without the cron (no secret yet, or Vercel skipped a run) nothing is lost: the costs page
+shows the same reminder as a banner, and My Work shows it as a card to the recipients, both
+computed in those pages' existing batched read (no extra round trip).
 
 ## Deploying to Vercel
 
@@ -725,6 +789,9 @@ into a new Neon branch, never straight over `main`).
 - [ ] Email digest (optional): verify a Resend sending domain, set `RESEND_API_KEY`,
       `RESEND_FROM_EMAIL`, `APP_BASE_URL` and `CRON_SECRET` in Vercel as in "Email digest",
       then check `/unsubscribe` and `/api/cron/digest` (without the header: 401) after deploy.
+- [ ] Costs (COST-1…9): apply migration `0007_costs` to each Neon branch on its own
+      (it adds enum values; see AGENTS.md), set `CRON_SECRET` in Vercel (Production) for the
+      monthly reminder, then check `/api/cron/monthly` without the header: 401.
 
 ## Security notes
 

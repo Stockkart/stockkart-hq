@@ -288,6 +288,23 @@ ADRs are docs with `type = adr` plus extra fields. The template mirrors the exis
 | IMP-3 | Runs locally against the DB; imported content is **never committed** to the public repo | P0 |
 | IMP-4 | CSV import of issues (title, type, priority, status, assignee) | P2 |
 
+### 4.18 Costs (IMR)
+
+IMR = infrastructure monthly run-rate: what running Stockkart costs per month. `/<KEY>/costs`
+(sidebar "Costs"); migration 0007 (`cost_items`, `cost_entries`, `cost_settings`).
+
+| ID | Requirement | Pri |
+|---|---|---|
+| COST-1 | Cost items per project: name (unique per project, case-insensitive, among live items), vendor, category (hosting, database, storage, email, AI/OCR, domain & DNS, monitoring, source control, payments, other SaaS, other), billing cycle (monthly, yearly, usage), currency (INR or USD), optional expected amount, renewal date, optional linked service (SVC-1), notes. Create, edit, archive / reactivate (archived: no longer expected; past entries still count), soft delete, reorder (drag, plus "Move up/down" from the keyboard). Every change logs an `activity` row (`cost_item`) | P2 |
+| COST-2 | One entry per item and month (`period` = the first of the month): amount, currency, kind (actual, estimate, no charge = 0), notes, who entered it. Edited inline on the Month tab; clearing it removes the entry | P2 |
+| COST-3 | Money is integer minor units (paise / cents) in `bigint` columns, never floats; at most ₹/$ 9,999,999,999.99 per value. A project has a base currency (default INR). An entry in another currency stores its own `fx_rate_to_base` (required; pre-filled from the settings' "1 USD = x INR", editable, **never fetched from the internet**) and its base amount = amount × rate, rounded **half-up**. The base currency cannot change once entries exist | P2 |
+| COST-4 | Month tab (default this month, ‹ › switcher, `?month=YYYY-MM`): a row per active item (plus archived ones paid that month) with category, cycle, service, expected and this month's amount, kind, notes and the change vs last month (↑/↓ %). "IMR this month" = monthly and usage entries (actuals + estimates) + each yearly item's latest payment in the 12 months up to that month ÷ 12 (half-up); "Cash out this month" = every entry of the month (yearly in full). Budget bar against the IMR (amber when over) and the change vs last month. Yearly items show in the month paid; "Show run-rate" spreads them ÷ 12 | P2 |
+| COST-5 | "Copy last month": pre-fills this month's missing monthly / usage entries from last month as estimates ("no charge" stays "no charge"; never overwrites). Year tab: items × 12 months with row / column totals, the year total, the average IMR (months so far) and the highest month, a stacked bar chart by category with the same numbers as a table, a year switcher. Export CSV of a month or a year (`/<KEY>/costs/export`, session-gated, `no-store`, `escapeCsvCell`) | P2 |
+| COST-6 | "Add Stockkart defaults": DigitalOcean App Platform, MongoDB Atlas, Vercel, Neon Postgres, Cloudflare R2, Domain, Resend, OpenAI, Google Gemini, AWS Textract, GitHub, Grafana Cloud, Razorpay fees, with category, cycle and currency but no amounts; idempotent by name; linked to the service-registry entry of the matching slug when it exists | P2 |
+| COST-7 | Monthly reminder, in-app only: from the reminder day (1–28, Stockkart time) of a month, if the PREVIOUS month has expected items without an entry (active, added by then; monthly / usage, or yearly in its renewal month), each recipient (the settings' list, else the project lead) gets one `cost_reminder` bell entry ("October 2026 costs are not added yet (5 items missing)", opening `/<KEY>/costs?month=2026-10`), deduped by `cost_reminder:<projectId>:<YYYY-MM>:<userId>`. Run by `GET /api/cron/monthly` (daily Vercel Cron; Bearer `CRON_SECRET`, constant-time; 503 without the secret, 401 on a wrong one; exact public path). Without the cron the same rule shows a banner on the costs page and a card on My Work | P2 |
+| COST-8 | Settings tab: base currency, monthly budget, reminder day, reminder recipients (any HQ users; shown as the lead when empty), default USD → INR rate | P2 |
+| COST-9 | Private like everything else: every page, action and the export need a session; amounts are never logged or written to activity rows; costs are not in full-text search (the palette has "Go to Costs") | P2 |
+
 ---
 
 ## 5. Screens (wireframes)
@@ -650,6 +667,9 @@ All tables: `id uuid pk`, `created_at`, `updated_at` unless noted. Soft-deletabl
 | `todos` | user_id, text, done, position, promoted_issue_id |
 | `saved_views` | user_id, project_id, name (unique per user and project), filter (jsonb), shared, position |
 | `notifications` | user_id, type, entity_type, entity_id, actor_id, meta, read_at, dedupe_key (unique, nullable), created_at — no `updated_at` |
+| `cost_items` | project_id, name (unique per project, case-insensitive, live rows), vendor, category, service_id (→ services, set null), billing_cycle (`monthly`/`yearly`/`usage`), currency (`INR`/`USD`), expected_amount_minor (bigint), renews_on, notes, active, position, deleted_at (COST-1) |
+| `cost_entries` | item_id (cascade), period (first of month, CHECK), amount_minor, currency, fx_rate_to_base numeric(12,6), base_amount_minor, kind (`actual`/`estimate`/`no_charge`), notes, entered_by; unique (item_id, period) (COST-2/3) |
+| `cost_settings` | project_id (unique), base_currency (default `INR`), monthly_budget_minor, reminder_day (1–28), reminder_user_ids uuid[], default_usd_to_inr (COST-8) |
 
 Indexes: `issues(project_id, status_id)`, `issues(project_id, sprint_id, rank)`, `issues(assignee_id) where resolved_at is null`, GIN on every `search` column, `activity(entity_type, entity_id, created_at desc)`, unique `(project_id, number)`.
 

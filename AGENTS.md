@@ -49,13 +49,16 @@ src/
                           sprints/[sprintId]), diagrams/ (grid, diagrams/[id] editor), roadmap/
                           (RDM-1/2), releases/ (list, releases/[releaseId]; REL-1/2),
                           incidents/ (list, incidents/[key] = INC-n; INC-1/2), services/ (list,
-                          services/[slug]; SVC-1), settings/ (PRJ-3, IMP-4 Import tab), trash/;
+                          services/[slug]; SVC-1), costs/ (COST-1…8 tabs; costs/export CSV),
+                          settings/ (PRJ-3, IMP-4 Import tab), trash/;
                           [section] only 404s unknown sections (inside the app shell)
   app/api/auth/           Auth.js route handlers
   app/api/webhooks/github GitHub org webhook (GH-1…GH-3): HMAC-verified, logic in server/github/
   app/api/files/          authed file downloads (S-5): [id] (attachments) and
                           thumbnail/diagram/[id]; 302 to a presigned R2 URL (≤ 5 min)
   app/api/cron/digest     NTF-2 digest job (Vercel Cron, Bearer CRON_SECRET; public path)
+  app/api/cron/monthly    COST-7 monthly jobs (daily Vercel Cron, Bearer CRON_SECRET; public
+                          path); handler factory in server/cron/monthly.ts
   app/unsubscribe         NTF-2 one-click unsubscribe (token in the link; public path)
   proxy.ts                default-deny gate (Next.js 16 name for middleware.ts)
   env.ts                  Zod-validated server env (throws on import if invalid)
@@ -88,7 +91,7 @@ src/
                           (VW-3 saved views), bulk/ (ISS-12 selection + bulk bar), trash/
                           (ISS-13), roadmap/ (RDM-1/2), releases/ (REL-1/2), import/ (IMP-4
                           CSV import tab), incidents/ (INC-1/2), service-registry/ (SVC-1),
-                          docs/comments/ (DOC-11/13 comment panel))
+                          costs/ (COST-1…8), docs/comments/ (DOC-11/13 comment panel))
   features/shell/shortcuts.ts  the one keyboard-shortcut registry (§9.5): handlers match
                           keys with `matchesShortcut`, the `?` dialog lists it; add new
                           shortcuts there
@@ -242,6 +245,18 @@ entity_id)` → `comments (id, entity_type, entity_id)` keeps a reply on its thr
     `handbook_publications (id, is_open)` `ON UPDATE CASCADE` copies the generated flag, so
     an UPDATE of `state` flips it in the same statement (no trigger; a wrong `open` on insert
     fails the FK). Insert rows with the default `open = true` into an open publication.
+- Migration `0007_costs` holds the Costs (IMR) tables (SPEC §4.18, COST-1…9; see "Costs
+  notes" below):
+  - `cost_items` (unique `(project_id, lower(name))` among live rows, `service_id` →
+    services set null, `active` = not archived, fractional `position`, soft delete),
+    `cost_entries` (unique `(item_id, period)`, `period` CHECK day = 1, `no_charge` ⇒
+    amount 0, no rate ⇒ base amount = amount) and `cost_settings` (one per project,
+    `reminder_day` 1…28, `reminder_user_ids uuid[]`, no FK: readers ignore deleted users).
+    Money columns are `bigint` minor units with CHECK 0…`MAX_AMOUNT_MINOR`.
+  - `entity_type` gains `cost_item` and `notification_type` gains `cost_reminder`, with
+    `ALTER TYPE … ADD VALUE` inside the migration transaction: as with 0004/0005, **no later
+    SQL migration may use them** (default, CHECK, index predicate, backfill) until 0007 is
+    applied everywhere on its own. App queries may use them freely.
 - @user mentions: `extractUserMentionIds(doc)` (`lib/mentions.ts`) reads `mention` nodes;
   `userMentionSyncCtes` / `userMentionSyncStatement` (`services/sql.ts`) keep the
   `to_type = 'user'` mention links in sync, like the issue-key ones, and RETURN the newly
@@ -526,6 +541,35 @@ and conflict rules; keep these seams intact:
   `PREVIEW_STALE_MESSAGE` if the doc was saved again since. Pull runs
   `context.toReadMode()` first, so the applied version shows in read mode and no editor is
   left on the old version.
+
+## Costs notes
+
+Costs (IMR, SPEC §4.18 COST-1…9; README "Costs (IMR)") are built on migration 0007.
+Keep these seams intact:
+
+- **Money is integer minor units.** Only `lib/costs/money.ts` turns text into amounts
+  (`parseMoney`), amounts into text (`formatMoney`, `minorToDecimal`: Intl gets a decimal
+  string, never a float), converts currencies (`convertToBase`, BigInt, half-up) and
+  amortises yearly items (`amortiseYearly`, ÷ 12 half-up). Never divide or multiply money
+  with floats elsewhere; never store a float. Rates are `numeric(12,6)` text
+  (`parseFxRate`) and are never fetched from the internet.
+- **Totals are pure.** `lib/costs/calc.ts` computes the Month view, the Year grid and the
+  "Copy last month" plan from items + entries; the pages, the export and the service use
+  it, so they agree. `isExpectedInMonth` there and `expectedIn` in `services/costs.ts`
+  (the reminder's SQL) are the same rule: change both together.
+- **The base currency is fixed once entries exist**, enforced in the settings statement
+  itself; `setEntry` re-checks the base it converted to in its own statement.
+- **One round trip.** The page's reads are `costPageReads` (`services/cost-pages.ts`),
+  shared with `cost-pages.db.test.ts`; add any new page read there. The banner and the My
+  Work card come from `costReminderRows` in the same batch.
+- **Reminder** (`createCostReminderJob`, run by `/api/cron/monthly`): ONE statement,
+  `notificationsInsert` with event key `cost_reminder:<projectId>:<YYYY-MM>` (the helper
+  appends `:<userId>`), entity = the project's first missing item. "Today" is Asia/Kolkata
+  (`COST_TIMEZONE`). The route is an exact public path; keep its auth identical to the
+  digest's (`verifyCronAuthorization`, 503 without `CRON_SECRET`).
+- **No money in logs or activity.** Entry activity rows record `entry:<YYYY-MM>` and the
+  kind only; an expected-amount change records no value. Settings changes log no activity
+  (there is no project entity type).
 
 ## File storage (R2)
 
