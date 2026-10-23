@@ -1,7 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 
-import { type HandbookSyncStatus } from "@/lib/handbook/constants";
+import { GIT_NULL_SHA, type HandbookSyncStatus } from "@/lib/handbook/constants";
 import { rt } from "@/lib/rich-text";
 import { createBatchedRead, type Read } from "@/server/db/read-batch";
 import {
@@ -26,7 +26,7 @@ import { createDocQueries } from "./doc-queries";
 import { createDocService } from "./docs";
 import { createFileQueries } from "./files";
 import { createGithubService } from "./github";
-import { DRIFT_MESSAGE, createHandbookPublishService } from "./handbook-publish";
+import { createHandbookPublishService, DRIFT_MESSAGE, REMOVED_MESSAGE } from "./handbook-publish";
 import { CHECK_RATE_LIMITED_MESSAGE, createHandbookPullService } from "./handbook-pull";
 import { createHandbookQueries } from "./handbook-queries";
 import { createIssueQueries } from "./issue-queries";
@@ -129,21 +129,31 @@ describeDb("handbook sync (Postgres)", () => {
     return response.json();
   }
 
-  async function merge(docId: string) {
+  async function merge(docId: string, options: { commits?: number } = {}) {
     const pub = await publicationOf(docId);
     if (!pub?.prNumber) throw new Error("no PR");
-    await deliver(
-      "pull_request",
-      pullRequestPayload({
-        repo: FAKE_HANDBOOK_REPO,
-        number: pub.prNumber,
-        head: pub.branch,
-        action: "closed",
-        state: "closed",
-        merged: true,
-      }),
-    );
+    await deliverMerge(pub.branch, pub.prNumber, options);
     return pub;
+  }
+
+  async function deliverMerge(branch: string, number: number, options: { commits?: number } = {}) {
+    const payload = pullRequestPayload({
+      repo: FAKE_HANDBOOK_REPO,
+      number,
+      head: branch,
+      action: "closed",
+      state: "closed",
+      merged: true,
+    });
+    await deliver("pull_request", {
+      ...payload,
+      pull_request: {
+        ...payload.pull_request,
+        // HQ's PR has one commit; GitHub sends the count with every pull_request event.
+        commits: options.commits ?? 1,
+        merged_at: new Date().toISOString(),
+      },
+    });
   }
 
   beforeAll(async () => {
@@ -170,7 +180,13 @@ describeDb("handbook sync (Postgres)", () => {
   it("blocks a publish whose markdown looks like it holds a secret, before any GitHub call", async () => {
     const doc = await newDoc("Ops secrets", "Log in with password=hunter2-very-secret please");
     await expect(
-      publishService().publish(actor, { projectKey: "STK", docIds: [doc.id], overwrite: [] }),
+      publishService().publish(actor, {
+        projectKey: "STK",
+        docIds: [doc.id],
+        overwrite: [],
+        acknowledgedPublic: true,
+        confirmSpecialPath: false,
+      }),
     ).rejects.toThrow(/looks like a password, token or key.*public/);
     expect(repo.calls).toEqual([]);
     expect(await publicationOf(doc.id)).toBeUndefined();
@@ -185,6 +201,8 @@ describeDb("handbook sync (Postgres)", () => {
       projectKey: "STK",
       docIds: [a.id, b.id],
       overwrite: [],
+      acknowledgedPublic: true,
+      confirmSpecialPath: false,
     });
     const prNumber = outcome.pr?.number ?? 0;
     expect(outcome.pr).toEqual({
@@ -229,7 +247,13 @@ describeDb("handbook sync (Postgres)", () => {
 
     // One open PR per doc.
     await expect(
-      publishService().publish(actor, { projectKey: "STK", docIds: [a.id], overwrite: [] }),
+      publishService().publish(actor, {
+        projectKey: "STK",
+        docIds: [a.id],
+        overwrite: [],
+        acknowledgedPublic: true,
+        confirmSpecialPath: false,
+      }),
     ).rejects.toThrow(
       `Already in an open PR: https://github.com/${FAKE_HANDBOOK_REPO}/pull/${prNumber}`,
     );
@@ -280,6 +304,8 @@ describeDb("handbook sync (Postgres)", () => {
       projectKey: "STK",
       docIds: [doc.id, other.id],
       overwrite: [],
+      acknowledgedPublic: true,
+      confirmSpecialPath: false,
     });
     await merge(doc.id);
     expect(await status(doc.id)).toBe("in_sync");
@@ -339,7 +365,13 @@ describeDb("handbook sync (Postgres)", () => {
 
   it("closes an unmerged publication without touching its docs", async () => {
     const doc = await newDoc("Postmortem guide", "Write it.");
-    await publishService().publish(actor, { projectKey: "STK", docIds: [doc.id], overwrite: [] });
+    await publishService().publish(actor, {
+      projectKey: "STK",
+      docIds: [doc.id],
+      overwrite: [],
+      acknowledgedPublic: true,
+      confirmSpecialPath: false,
+    });
     const pub = await publicationOf(doc.id);
     await deliver(
       "pull_request",
@@ -362,6 +394,8 @@ describeDb("handbook sync (Postgres)", () => {
       projectKey: "STK",
       docIds: [same.id],
       overwrite: [],
+      acknowledgedPublic: true,
+      confirmSpecialPath: false,
     });
     expect(outcome).toMatchObject({ pr: null, unchanged: [{ docId: same.id }] });
     expect(repo.branches).toEqual([]);
@@ -371,13 +405,21 @@ describeDb("handbook sync (Postgres)", () => {
     const remote = "# Drifted\n\nSomeone else's text.\n";
     repo.files.set("DRIFTED.md", remote);
     await expect(
-      publishService().publish(actor, { projectKey: "STK", docIds: [drifted.id], overwrite: [] }),
+      publishService().publish(actor, {
+        projectKey: "STK",
+        docIds: [drifted.id],
+        overwrite: [],
+        acknowledgedPublic: true,
+        confirmSpecialPath: false,
+      }),
     ).rejects.toThrow(DRIFT_MESSAGE);
     await expect(
       publishService().publish(actor, {
         projectKey: "STK",
         docIds: [drifted.id],
         overwrite: [{ docId: drifted.id, remoteSha: "f".repeat(40) }],
+        acknowledgedPublic: true,
+        confirmSpecialPath: false,
       }),
     ).rejects.toThrow(DRIFT_MESSAGE);
     const preview = await publishService().preview(actor, { docId: drifted.id });
@@ -387,6 +429,8 @@ describeDb("handbook sync (Postgres)", () => {
       projectKey: "STK",
       docIds: [drifted.id],
       overwrite: [{ docId: drifted.id, remoteSha: gitBlobSha(remote) }],
+      acknowledgedPublic: true,
+      confirmSpecialPath: false,
     });
     expect(forced.pr?.number).toBeGreaterThan(100);
   });
@@ -411,7 +455,13 @@ describeDb("handbook sync (Postgres)", () => {
       repo.onGetFile(null);
     });
     await expect(
-      publishService().publish(actor, { projectKey: "STK", docIds: [doc.id], overwrite: [] }),
+      publishService().publish(actor, {
+        projectKey: "STK",
+        docIds: [doc.id],
+        overwrite: [],
+        acknowledgedPublic: true,
+        confirmSpecialPath: false,
+      }),
     ).rejects.toThrow(`Already in an open PR: https://github.com/${FAKE_HANDBOOK_REPO}/pull/999`);
     expect(repo.branches).toEqual([]);
     await db
@@ -424,7 +474,13 @@ describeDb("handbook sync (Postgres)", () => {
     const doc = await newDoc("Fails once", "Text.");
     repo.failAt("openPullRequest", "github_422");
     await expect(
-      publishService().publish(actor, { projectKey: "STK", docIds: [doc.id], overwrite: [] }),
+      publishService().publish(actor, {
+        projectKey: "STK",
+        docIds: [doc.id],
+        overwrite: [],
+        acknowledgedPublic: true,
+        confirmSpecialPath: false,
+      }),
     ).rejects.toThrow(/Publishing failed \(github_422\)\. The branch hq\/publish-\S+ may remain/);
     expect(await publicationOf(doc.id)).toMatchObject({
       state: "failed",
@@ -441,13 +497,21 @@ describeDb("handbook sync (Postgres)", () => {
       projectKey: "STK",
       docIds: [doc.id],
       overwrite: [],
+      acknowledgedPublic: true,
+      confirmSpecialPath: false,
     });
     expect(retry.pr).not.toBeNull();
   });
 
   it("pulls: in sync, repo ahead (clean pull with snapshot + activity), both changed", async () => {
     const doc = await newDoc("Deploying", "Push the button.");
-    await publishService().publish(actor, { projectKey: "STK", docIds: [doc.id], overwrite: [] });
+    await publishService().publish(actor, {
+      projectKey: "STK",
+      docIds: [doc.id],
+      overwrite: [],
+      acknowledgedPublic: true,
+      confirmSpecialPath: false,
+    });
     await merge(doc.id);
     repo.files.set("DEPLOYING.md", "# Deploying\n\nPush the button.\n");
     expect((await pullService().preview(actor, doc.id)).state).toBe("in_sync");
@@ -526,7 +590,13 @@ describeDb("handbook sync (Postgres)", () => {
     });
     const path = (await sync(first.id)).path;
     expect(path).toMatch(/^decisions\/\d{4}-use-a-queue\.md$/);
-    await publishService().publish(actor, { projectKey: "STK", docIds: [first.id], overwrite: [] });
+    await publishService().publish(actor, {
+      projectKey: "STK",
+      docIds: [first.id],
+      overwrite: [],
+      acknowledgedPublic: true,
+      confirmSpecialPath: false,
+    });
     await merge(first.id);
     const number = String(second.number).padStart(4, "0");
     const file = `# 9999. Use a durable queue\n\n## Status\n\nSuperseded by [${number}](${number}-better-queue.md).\n\n## Context\n\nNew context.\n`;
@@ -629,6 +699,166 @@ describeDb("handbook sync (Postgres)", () => {
     await expect(
       pullService().importFile(actor, { projectKey: "STK", path: "decisions/0000-template.md" }),
     ).rejects.toThrow(/Only top-level files/);
+  });
+
+  const publish = (
+    docIds: string[],
+    extra: {
+      confirmSpecialPath?: boolean;
+      overwrite?: { docId: string; remoteSha: string }[];
+    } = {},
+  ) =>
+    publishService().publish(actor, {
+      projectKey: "STK",
+      docIds,
+      overwrite: extra.overwrite ?? [],
+      acknowledgedPublic: true,
+      confirmSpecialPath: extra.confirmSpecialPath ?? false,
+    });
+
+  it("review fixes: abandoned claims, unclean merges, late pushes, failed-but-opened PRs", async () => {
+    // A claim whose request died 20 minutes ago no longer blocks the doc.
+    const stuck = await newDoc("Stuck claim", "Text.");
+    const [abandoned] = await db
+      .insert(handbookPublications)
+      .values({
+        projectId,
+        branch: "hq/abandoned-claim",
+        createdBy: actor,
+        createdAt: new Date(Date.now() - 20 * 60 * 1000),
+      })
+      .returning({ id: handbookPublications.id });
+    await db.insert(handbookPublicationDocs).values({
+      publicationId: abandoned?.id ?? "",
+      docId: stuck.id,
+      path: "STUCK_CLAIM.md",
+      docVersion: 1,
+    });
+    expect(await status(stuck.id)).toBe("pr_open");
+    expect((await publish([stuck.id])).pr).not.toBeNull();
+    const [old] = await db
+      .select({ state: handbookPublications.state, code: handbookPublications.errorCode })
+      .from(handbookPublications)
+      .where(eq(handbookPublications.branch, "hq/abandoned-claim"));
+    expect(old).toEqual({ state: "failed", code: "abandoned" });
+
+    // Someone pushed to the hq/ branch (2 commits): synced to HQ's export, handbook unknown.
+    await merge(stuck.id, { commits: 2 });
+    expect(await status(stuck.id)).toBe("changed_in_handbook");
+
+    // A person's push processed before the merge event is not overwritten by it.
+    const late = await newDoc("Late push", "Text.");
+    await publish([late.id]);
+    const latePub = await publicationOf(late.id);
+    await deliver(
+      "push",
+      pushPayload({
+        repo: FAKE_HANDBOOK_REPO,
+        commits: [handbookCommit("Fix wording", { modified: ["LATE_PUSH.md"] })],
+      }),
+    );
+    // The merge happened before that push (GitHub delivered them out of order).
+    const payload = pullRequestPayload({
+      repo: FAKE_HANDBOOK_REPO,
+      number: latePub?.prNumber ?? 0,
+      head: latePub?.branch ?? "",
+      action: "closed",
+      state: "closed",
+      merged: true,
+    });
+    await deliver("pull_request", {
+      ...payload,
+      pull_request: {
+        ...payload.pull_request,
+        commits: 1,
+        merged_at: new Date(Date.now() - 60_000).toISOString(),
+      },
+    });
+    expect(await status(late.id)).toBe("changed_in_handbook");
+
+    // A publication recorded failed whose PR was opened anyway still syncs on merge.
+    const timedOut = await newDoc("Timed out", "Text.");
+    repo.failAt("openPullRequest", "github_timeout");
+    await expect(publish([timedOut.id])).rejects.toThrow(/Publishing failed \(github_timeout\)/);
+    repo.failAt(null);
+    const failedPub = await publicationOf(timedOut.id);
+    expect(failedPub?.state).toBe("failed");
+    await deliverMerge(failedPub?.branch ?? "", 4242);
+    expect(await publicationOf(timedOut.id)).toMatchObject({
+      state: "merged",
+      prNumber: 4242,
+      errorCode: null,
+    });
+    expect(await status(timedOut.id)).toBe("in_sync");
+  });
+
+  it("review fixes: an old HQ branch named in a later commit hides nothing", async () => {
+    const doc = await newDoc("Old branch", "Text.");
+    await publish([doc.id]);
+    const pub = await merge(doc.id);
+    expect(await status(doc.id)).toBe("in_sync");
+    await db
+      .update(handbookPublications)
+      .set({ mergedAt: new Date(Date.now() - 2 * 60 * 60 * 1000) })
+      .where(eq(handbookPublications.branch, pub.branch));
+    await deliver(
+      "push",
+      pushPayload({
+        repo: FAKE_HANDBOOK_REPO,
+        commits: [
+          handbookCommit(`Edit\n\nHQ-Publication: ${pub.branch}`, { modified: ["OLD_BRANCH.md"] }),
+        ],
+      }),
+    );
+    expect(await status(doc.id)).toBe("changed_in_handbook");
+
+    // A revert of a recent HQ merge is drift too.
+    const recent = await newDoc("Reverted", "Text.");
+    await publish([recent.id]);
+    const recentPub = await merge(recent.id);
+    await deliver(
+      "push",
+      pushPayload({
+        repo: FAKE_HANDBOOK_REPO,
+        commits: [
+          handbookCommit(
+            `Revert "Merge pull request #${recentPub.prNumber} from Stockkart/${recentPub.branch}"`,
+            {
+              removed: ["REVERTED.md"],
+            },
+          ),
+        ],
+      }),
+    );
+    expect(await status(recent.id)).toBe("removed_in_handbook");
+  });
+
+  it("review fixes: re-adding a removed file, special paths and pulls during an open PR", async () => {
+    const doc = await newDoc("Removed one", "Text.");
+    await publish([doc.id]);
+    await merge(doc.id);
+    // The file is gone from the repo now (the fake starts empty each test).
+    await expect(publish([doc.id])).rejects.toThrow(REMOVED_MESSAGE);
+    expect((await publishService().preview(actor, { docId: doc.id })).needsOverwrite).toBe(true);
+    expect(
+      (await publish([doc.id], { overwrite: [{ docId: doc.id, remoteSha: GIT_NULL_SHA }] })).pr,
+    ).not.toBeNull();
+
+    // Pull is refused while that PR is open.
+    repo.files.set("REMOVED_ONE.md", "# Removed one\n\nOther.\n");
+    const preview = await pullService().preview(actor, doc.id);
+    await expect(
+      pullService().apply(actor, {
+        docId: doc.id,
+        baseVersion: preview.baseVersion,
+        remoteSha: preview.remoteSha ?? "",
+      }),
+    ).rejects.toThrow("A publish PR is open for this doc");
+
+    const readme = await newDoc("Readme override", "Text.");
+    await db.update(docs).set({ handbookPath: "README.md" }).where(eq(docs.id, readme.id));
+    await expect(publish([readme.id])).rejects.toThrow(/README\.md has a special meaning/);
+    expect((await publish([readme.id], { confirmSpecialPath: true })).pr).not.toBeNull();
   });
 
   it("doc page and settings page keep ONE round trip with the handbook reads", async () => {

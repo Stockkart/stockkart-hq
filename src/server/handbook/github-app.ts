@@ -28,7 +28,8 @@ import { gitBlobSha } from "./git-blob";
  *     no `..`, no dot-directories), and HQ only writes `hq/…` branches.
  *   - Logs carry the request kind and status code only: never the token, the JWT, the key or
  *     any file content. Errors carry a short code (`github_422` …), never a response body.
- *   - 10 s timeout per request; one retry on 5xx / 429 (honouring `Retry-After`, capped).
+ *   - 10 s timeout per request; one retry on 5xx / 429 (honouring `Retry-After`, capped),
+ *     except for creating a branch or a PR (not idempotent).
  *     Redirects are refused, so a renamed repo cannot take the token to another URL.
  */
 
@@ -131,7 +132,7 @@ const sha = z.string().regex(GIT_SHA_PATTERN);
 const tokenResponse = z.object({
   token: z.string().min(10).max(1000),
   expires_at: z.iso.datetime({ offset: true }),
-  repositories: z.array(z.object({ full_name: z.string() })).optional(),
+  repositories: z.array(z.object({ full_name: z.string() })),
 });
 const repoResponse = z.object({ full_name: z.string(), default_branch: z.string() });
 const refResponse = z.object({ object: z.object({ sha }) });
@@ -249,7 +250,7 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
   async function send(
     kind: string,
     url: URL,
-    init: { method: string; authorization: string; body?: unknown },
+    init: { method: string; authorization: string; body?: unknown; retry?: boolean },
   ): Promise<Response> {
     for (let attempt = 1; ; attempt += 1) {
       let response: Response;
@@ -275,7 +276,9 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
       }
       log({ kind, status: response.status });
       const retryable = response.status >= 500 || response.status === 429;
-      if (retryable && attempt === 1) {
+      // Creating a branch or a PR is not idempotent: a retry after a 5xx that did create it
+      // would fail (422) and record a publication as failed while it exists on GitHub.
+      if (retryable && attempt === 1 && init.retry !== false) {
         await sleep(retryAfterMs(response, now()));
         continue;
       }
@@ -301,8 +304,9 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
     if (!response.ok) throw new HandbookGithubError(`github_${response.status}`, response.status);
     const parsed = tokenResponse.safeParse(await response.json().catch(() => null));
     if (!parsed.success) throw new HandbookGithubError("github_bad_response");
+    // The token must be for exactly the handbook repo (GitHub lists what it covers).
     const repos = parsed.data.repositories;
-    if (repos && repos.some((repo) => repo.full_name.toLowerCase() !== cfg.repo.toLowerCase())) {
+    if (repos.length !== 1 || repos[0]?.full_name.toLowerCase() !== cfg.repo.toLowerCase()) {
       throw new HandbookGithubError("token_scope");
     }
     cached = {
@@ -318,7 +322,12 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
     method: string,
     suffix: string,
     schema: S,
-    options: { body?: unknown; query?: Record<string, string>; allow404?: boolean } = {},
+    options: {
+      body?: unknown;
+      query?: Record<string, string>;
+      allow404?: boolean;
+      retry?: boolean;
+    } = {},
   ): Promise<z.output<S> | null> {
     const cfg = requireConfig();
     const url = apiUrl(cfg, `${repoPrefix(cfg)}${suffix}`, options.query);
@@ -327,6 +336,7 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
       method,
       authorization: `Bearer ${token}`,
       body: options.body,
+      retry: options.retry,
     });
     if (response.status === 404 && options.allow404) return null;
     if (response.status === 401) cached = null;
@@ -434,6 +444,7 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
       checkSha(fromSha);
       await repoCall("create_branch", "POST", "/git/refs", refResponse, {
         body: { ref: `refs/heads/${name}`, sha: fromSha },
+        retry: false,
       });
     },
 
@@ -512,6 +523,7 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
       const pr = await must(
         repoCall("open_pull_request", "POST", "/pulls", pullResponse, {
           body: { title, head, base, body, maintainer_can_modify: false, draft: false },
+          retry: false,
         }),
       );
       return { number: pr.number, url: prUrl(cfg, pr.number, pr.html_url) };

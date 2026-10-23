@@ -28,7 +28,17 @@ describe("handbook sync without the GitHub App", () => {
   const pull = createHandbookPullService(db, deps);
 
   it.each([
-    ["publish", () => publish.publish(ID, { projectKey: "STK", docIds: [ID], overwrite: [] })],
+    [
+      "publish",
+      () =>
+        publish.publish(ID, {
+          projectKey: "STK",
+          docIds: [ID],
+          overwrite: [],
+          acknowledgedPublic: true,
+          confirmSpecialPath: false,
+        }),
+    ],
     ["publish preview", () => publish.preview(ID, { docId: ID })],
     ["pull preview", () => pull.preview(ID, ID)],
     ["pull apply", () => pull.apply(ID, { docId: ID, baseVersion: 1, remoteSha: SHA })],

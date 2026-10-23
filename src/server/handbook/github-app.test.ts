@@ -157,6 +157,32 @@ describe("handbook GitHub App client (DOC-14)", () => {
     expect(calls.filter((call) => call.url.pathname.includes("access_tokens"))).toHaveLength(2);
   });
 
+  it("refuses a token that does not list exactly the handbook repo", async () => {
+    const { client } = fakeGithub({
+      "POST /app/installations/67890/access_tokens": () =>
+        json({ token: TOKEN, expires_at: new Date(NOW + 3600_000).toISOString() }),
+    });
+    await expect(client.getPullRequest(1)).rejects.toMatchObject({ code: "github_bad_response" });
+  });
+
+  it("never retries creating a branch or a PR (not idempotent)", async () => {
+    const { client, calls, sleep } = fakeGithub({
+      ...tokenRoute(),
+      [`POST ${REPO}/git/refs`]: () => json({}, 502),
+      [`POST ${REPO}/pulls`]: () => json({}, 503),
+    });
+    await expect(client.createBranch("hq/x", SHA(1))).rejects.toMatchObject({ code: "github_502" });
+    await expect(client.openPullRequest("hq/x", "main", "t", "b")).rejects.toMatchObject({
+      code: "github_503",
+    });
+    expect(
+      calls.filter(
+        (call) => call.method === "POST" && !call.url.pathname.includes("access_tokens"),
+      ),
+    ).toHaveLength(2);
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
   it("refuses a token GitHub scoped to another repo", async () => {
     const { client } = fakeGithub({
       "POST /app/installations/67890/access_tokens": () =>

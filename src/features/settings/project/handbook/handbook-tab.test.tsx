@@ -143,6 +143,7 @@ describe("Settings → Handbook tab (DOC-14)", () => {
     expect(actions.handbookPublishAction).toHaveBeenCalledWith({
       projectKey: "STK",
       docIds: [id(1), id(2)],
+      acknowledgedPublic: true,
     });
     expect(
       await screen.findByText(/Opened PR #12 with 1 docs\. Design: Changed in the handbook/),

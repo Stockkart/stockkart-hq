@@ -107,7 +107,12 @@ export function HandbookTab({
   function publish() {
     startPublishing(async () => {
       const outcome = await callAction(() =>
-        handbookPublishAction({ projectKey, docIds: chosen.map((doc) => doc.docId) }),
+        handbookPublishAction({
+          projectKey,
+          docIds: chosen.map((doc) => doc.docId),
+          // The confirm dialog's "fine for everyone on the internet" box (required to send).
+          acknowledgedPublic: true,
+        }),
       );
       if (!outcome) return;
       const parts = [

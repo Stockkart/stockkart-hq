@@ -95,8 +95,17 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
     });
   }
 
-  /** Records the blob seen (or its absence); baselines the sync when HQ already matches. */
-  async function recordRemote(row: HandbookDocRow, remoteSha: string, matches: boolean) {
+  /**
+   * Records the blob seen (or its absence); baselines the sync when HQ already matches.
+   * `readAt` is when the GitHub read started: a webhook marker written since is newer than
+   * what was read, so it is kept.
+   */
+  async function recordRemote(
+    row: HandbookDocRow,
+    remoteSha: string,
+    matches: boolean,
+    readAt: Date,
+  ) {
     await db.execute(sql`
       UPDATE docs SET handbook_remote_sha = ${remoteSha}, handbook_remote_seen_at = now(),
         handbook_blob_sha = CASE WHEN ${matches}::boolean THEN ${remoteSha} ELSE handbook_blob_sha END,
@@ -105,6 +114,8 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
         handbook_synced_at = CASE WHEN ${matches}::boolean THEN now() ELSE handbook_synced_at END
       WHERE id = ${row.id}::uuid AND deleted_at IS NULL
         AND (NOT ${matches}::boolean OR version = ${row.version}::int)
+        AND (handbook_remote_seen_at IS NULL
+          OR handbook_remote_seen_at < ${readAt.toISOString()}::timestamptz)
     `);
   }
 
@@ -146,9 +157,10 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
       const row = await loadOne(docId);
       const path = pathOf(row);
       const hqMarkdown = markdownOf(row, path);
+      const readAt = new Date();
       const file = await remoteFile(path);
       if (!file) {
-        await recordRemote(row, GIT_NULL_SHA, false);
+        await recordRemote(row, GIT_NULL_SHA, false, readAt);
         return {
           docId: row.id,
           path,
@@ -159,7 +171,7 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
         };
       }
       const localSha = gitBlobSha(hqMarkdown);
-      await recordRemote(row, file.sha, localSha === file.sha);
+      await recordRemote(row, file.sha, localSha === file.sha, readAt);
       return {
         docId: row.id,
         path,
@@ -174,10 +186,15 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
     async apply(actorId: string, input: PullApplyData): Promise<{ version: number }> {
       requireConfigured();
       const row = await loadOne(input.docId);
+      // A merge of that PR would record its older version as the synced one.
+      if (row.openPublicationId) {
+        throw conflict("A publish PR is open for this doc; merge or close it first");
+      }
       if (row.version !== input.baseVersion) {
         throw conflict("The doc changed in HQ since the review; review again");
       }
       const path = pathOf(row);
+      const readAt = new Date();
       const file = await remoteFile(path);
       if (!file) throw conflict("The file is no longer in the handbook");
       if (file.sha !== input.remoteSha) {
@@ -185,7 +202,7 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
       }
       if (gitBlobSha(markdownOf(row, path)) === file.sha) {
         // Same content: only the sync columns change, no new version.
-        await recordRemote(row, file.sha, true);
+        await recordRemote(row, file.sha, true, readAt);
         return { version: row.version };
       }
       const pulled = parsePulledFile(row, file.content);
@@ -269,6 +286,7 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
       if (!project) throw notFound(`Project ${projectKey}`);
       if (!(await reserveCheck(project.id))) throw conflict(CHECK_RATE_LIMITED_MESSAGE);
 
+      const readAt = new Date();
       const tree = await guarded(async () => {
         const main = await github.getDefaultBranch();
         return github.listTree(main.sha);
@@ -304,6 +322,9 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
             AS r(id uuid, version int, sha text, baseline boolean)
           WHERE docs.id = r.id AND docs.deleted_at IS NULL
             AND (NOT r.baseline OR docs.version = r.version)
+            -- A webhook marker written during the read is newer than the tree: keep it.
+            AND (docs.handbook_remote_seen_at IS NULL
+              OR docs.handbook_remote_seen_at < ${readAt.toISOString()}::timestamptz)
         `);
       }
       const drifted = updates.filter((update) => {

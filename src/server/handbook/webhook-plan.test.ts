@@ -96,11 +96,19 @@ describe("handbook push plan (DOC-14)", () => {
     expect(plan?.truncated).toBe(true);
   });
 
-  it("finds hq/ branch names in messages, not lookalikes", () => {
-    expect(hqBranchesIn("Merge pull request #7 from Stockkart/hq/publish-1.")).toEqual([
+  it("counts only HQ's trailer and GitHub's merge subject, never a revert or a mention", () => {
+    expect(hqBranchesIn("Merge pull request #7 from Stockkart/hq/publish-1\n\nPublish")).toEqual([
       "hq/publish-1",
     ]);
-    expect(hqBranchesIn("see xhq/nope and hq/.. and hq/ok.lock")).toEqual([]);
+    expect(
+      hqBranchesIn("Publish (#7)\n\n* docs: publish\n\n* HQ-Publication: hq/publish-2"),
+    ).toEqual(["hq/publish-2"]);
+    expect(hqBranchesIn("docs: x\n\nHQ-Publication: hq/publish-3\n")).toEqual(["hq/publish-3"]);
+    expect(hqBranchesIn('Revert "Merge pull request #7 from Stockkart/hq/publish-1"')).toEqual([]);
+    expect(
+      hqBranchesIn("fixes the text from hq/publish-1, see HQ-Publication: hq/publish-1"),
+    ).toEqual([]);
+    expect(hqBranchesIn("HQ-Publication: hq/..\nHQ-Publication: hq/ok.lock")).toEqual([]);
   });
 });
 
@@ -113,19 +121,25 @@ describe("handbook pull_request plan (DOC-14)", () => {
       ...options,
     });
 
-  it("merged into the default branch → merged", () => {
+  it("merged into the default branch → merged (clean only with HQ's one commit)", () => {
+    const merged = pr({ action: "closed", state: "closed", merged: true });
     expect(
-      planHandbookPullRequest(pr({ action: "closed", state: "closed", merged: true })),
+      planHandbookPullRequest({ ...merged, pull_request: { ...merged.pull_request, commits: 1 } }),
     ).toEqual({
       pullRequest: {
         number: 7,
         branch: "hq/publish-20260501-abcd1234",
+        url: `https://github.com/${HANDBOOK}/pull/7`,
         outcome: "merged",
         mergedAt: "2026-01-02T03:04:05Z",
+        cleanMerge: true,
       },
       paths: [],
       truncated: false,
     });
+    const pushedTo = { ...merged, pull_request: { ...merged.pull_request, commits: 2 } };
+    expect(planHandbookPullRequest(pushedTo)?.pullRequest?.cleanMerge).toBe(false);
+    expect(planHandbookPullRequest(merged)?.pullRequest?.cleanMerge).toBe(false);
   });
 
   it("closed unmerged, or merged elsewhere → closed", () => {

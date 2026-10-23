@@ -38,9 +38,17 @@ export interface HandbookDeliveryPlan {
   pullRequest: {
     number: number;
     branch: string;
+    /** The PR's page (stored on the publication if HQ never recorded it). */
+    url: string;
     outcome: "merged" | "closed";
     /** ISO; set for `merged`. */
     mergedAt: string | null;
+    /**
+     * HQ's PR has exactly one commit. More means someone pushed to the `hq/…` branch, so the
+     * merged files may not be the blobs HQ recorded: the docs are marked synced to HQ's
+     * export, but the handbook side as "changed, blob unknown".
+     */
+    cleanMerge: boolean;
   } | null;
   paths: HandbookPathChange[];
   /** More than `MAX_HANDBOOK_PATHS` paths: the rest wait for "Check handbook now". */
@@ -67,13 +75,25 @@ export function isHandbookRepository(repository: GithubRepository, handbookRepo:
   return repository.full_name.toLowerCase() === handbookRepo.toLowerCase();
 }
 
-/** `hq/…` branch names in a commit message (trailing punctuation dropped). */
+/**
+ * `hq/…` branches a commit message names as HQ's own: the `HQ-Publication: <branch>` trailer
+ * line HQ writes (kept by squash and rebase merges, optionally as a squash's `* ` list item),
+ * or GitHub's merge-commit subject "Merge pull request #n from <owner>/<branch>". A mention
+ * anywhere else does not count, and neither does a revert ("Revert "Merge pull request …"").
+ */
 export function hqBranchesIn(message: string): string[] {
+  if (/^\s*revert\b/i.test(message)) return [];
   const found = new Set<string>();
-  for (const [match] of message.matchAll(/(?<![A-Za-z0-9_.-])hq\/[A-Za-z0-9_.-]{1,100}/g)) {
-    const name = match.replace(/[.]+$/, "");
-    if (isHqBranch(name)) found.add(name);
+  const add = (name: string | undefined) => {
+    if (name && isHqBranch(name)) found.add(name);
+  };
+  for (const [, name] of message.matchAll(
+    /^[ \t]*(?:\* )?HQ-Publication: (hq\/\S{1,100})[ \t]*$/gm,
+  )) {
+    add(name);
   }
+  const subject = message.split("\n", 1)[0] ?? "";
+  add(/^Merge pull request #\d+ from [A-Za-z0-9-]+\/(hq\/\S{1,100})$/.exec(subject)?.[1]);
   return [...found];
 }
 
@@ -136,17 +156,24 @@ export function planHandbookPullRequest(payload: unknown): HandbookDeliveryPlan 
   // A fork can name its branch `hq/…` too: only branches of the handbook repo itself.
   if (pr.head.repo?.full_name.toLowerCase() !== repository.full_name.toLowerCase()) return null;
   const merged = pr.merged === true && pr.base.ref === repository.default_branch;
+  const commits = prCommits.safeParse(payload);
   return {
     pullRequest: {
       number: pr.number,
       branch: pr.head.ref,
+      url: pr.html_url,
       outcome: merged ? "merged" : "closed",
       mergedAt: merged ? (pr.merged_at ?? pr.updated_at ?? null) : null,
+      cleanMerge: commits.success && commits.data.pull_request.commits === 1,
     },
     paths: [],
     truncated: false,
   };
 }
+
+const prCommits = z.object({
+  pull_request: z.object({ commits: z.number().int().nonnegative() }),
+});
 
 /** The handbook part of a delivery, or null when it changes nothing. */
 export function planHandbookDelivery(

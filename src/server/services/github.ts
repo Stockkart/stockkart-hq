@@ -230,25 +230,42 @@ export function createGithubService(db: AppDatabase) {
         ),
         hb_merged AS (
           -- DOC-14: HQ's publication PR merged into the handbook's default branch. Matched
-          -- by number AND branch, and only while open (a redelivery or a late event is a
-          -- no-op).
+          -- by branch (unique, hq/...) and number. Also a publication recorded failed whose
+          -- PR was opened anyway (a timed-out request): it gets the PR from the payload.
+          -- A redelivery or a late event is a no-op (merged / closed rows do not match).
           UPDATE handbook_publications SET state = 'merged',
-            merged_at = COALESCE(${hbPr?.mergedAt ?? null}::timestamptz, now()), updated_at = now()
-          WHERE ${hbPr?.outcome === "merged"}::boolean AND ${fresh} AND state = 'open'
-            AND pr_number = ${hbPr?.number ?? null}::int AND branch = ${hbPr?.branch ?? null}::text
-          RETURNING id, pr_number
+            merged_at = COALESCE(${hbPr?.mergedAt ?? null}::timestamptz, now()),
+            pr_number = ${hbPr?.number ?? null}::int, pr_url = ${hbPr?.url ?? null}::text,
+            error_code = NULL, updated_at = now()
+          WHERE ${hbPr?.outcome === "merged"}::boolean AND ${fresh}
+            AND state IN ('open', 'failed') AND branch = ${hbPr?.branch ?? null}::text
+            AND (pr_number IS NULL OR pr_number = ${hbPr?.number ?? null}::int)
+          RETURNING id, pr_number, merged_at
         ),
         hb_closed AS (
-          UPDATE handbook_publications SET state = 'closed', updated_at = now()
-          WHERE ${hbPr?.outcome === "closed"}::boolean AND ${fresh} AND state = 'open'
-            AND pr_number = ${hbPr?.number ?? null}::int AND branch = ${hbPr?.branch ?? null}::text
+          UPDATE handbook_publications SET state = 'closed',
+            pr_number = ${hbPr?.number ?? null}::int, pr_url = ${hbPr?.url ?? null}::text,
+            error_code = NULL, updated_at = now()
+          WHERE ${hbPr?.outcome === "closed"}::boolean AND ${fresh}
+            AND state IN ('open', 'failed') AND branch = ${hbPr?.branch ?? null}::text
+            AND (pr_number IS NULL OR pr_number = ${hbPr?.number ?? null}::int)
           RETURNING id
         ),
         hb_synced AS (
-          -- The merged files are what HQ exported: blob, version and time in ONE update.
+          -- The merged files are what HQ exported: blob, version and time in ONE update. The
+          -- handbook side is that blob too, unless someone else pushed to the PR branch (not
+          -- a clean one-commit PR: blob unknown) or a later push already marked the file
+          -- (GitHub does not order deliveries; keep the newer marker).
           UPDATE docs SET handbook_blob_sha = pd.blob_sha,
             handbook_synced_version = pd.doc_version, handbook_synced_at = now(),
-            handbook_remote_sha = pd.blob_sha, handbook_remote_seen_at = now()
+            handbook_remote_sha = CASE
+              WHEN NOT ${hbPr?.cleanMerge ?? false}::boolean THEN NULL
+              WHEN docs.handbook_remote_seen_at > m.merged_at THEN docs.handbook_remote_sha
+              ELSE pd.blob_sha END,
+            handbook_remote_seen_at = CASE
+              WHEN ${hbPr?.cleanMerge ?? false}::boolean
+                AND docs.handbook_remote_seen_at > m.merged_at THEN docs.handbook_remote_seen_at
+              ELSE now() END
           FROM handbook_publication_docs pd JOIN hb_merged m ON m.id = pd.publication_id
           WHERE docs.id = pd.doc_id AND pd.blob_sha IS NOT NULL AND docs.deleted_at IS NULL
             AND pd.doc_version <= docs.version
@@ -278,7 +295,12 @@ export function createGithubService(db: AppDatabase) {
               SELECT 1 FROM handbook_publication_docs pd
               JOIN handbook_publications p ON p.id = pd.publication_id
               WHERE pd.doc_id = docs.id AND lower(pd.path) = lower(r.path)
-                AND p.state IN ('open', 'merged') AND r.branches @> to_jsonb(p.branch)
+                AND r.branches @> to_jsonb(p.branch)
+                -- Only while it can still be landing: open, or merged within the hour (the
+                -- push and the pull_request event arrive in either order). An old branch
+                -- named in a later commit message hides nothing.
+                AND (p.state = 'open'
+                  OR (p.state = 'merged' AND p.merged_at > now() - interval '1 hour'))
             )
           RETURNING docs.id
         )

@@ -447,10 +447,13 @@ and conflict rules; keep these seams intact:
 - Webhook: `server/handbook/webhook-plan.ts` (pure) adds `plan.handbook` after the signature,
   payload and org checks; `applyDelivery` writes it in its ONE deduped statement (`hb_*`
   CTEs). Never call GitHub there. HQ's commits carry an `HQ-Publication: <branch>` trailer so
-  the push of its own merge is not drift.
+  the push of its own merge is not drift (only while that publication is open or merged
+  within the hour). A merge also matches a `failed` publication by branch (its PR was opened
+  by a request that timed out) and takes the PR number and URL from the payload.
 - Publish (`services/handbook-publish.ts`) claims the publication (`open`, no PR yet) in one
-  statement BEFORE calling GitHub, then records the PR + activity, or `failed` + `error_code`.
-  A claim left without a PR for 15 minutes is failed by the next publish of its docs.
+  statement BEFORE calling GitHub, then records the PR + activity, or `failed` + `error_code`
+  (and puts back the paths it pinned). A claim left without a PR for 15 minutes is failed by
+  the next publish of its docs.
 - "Check handbook now" is rate-limited through `login_attempts` rows keyed
   `handbook_check:<projectId>` with `success = true` (shared across instances; never counted
   as failed sign-ins, which use `email:` / `ip:` keys and `NOT success`).

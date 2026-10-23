@@ -469,9 +469,20 @@ matches the repo as In sync, and lists unmapped top-level and `decisions/NNNN-*.
   visible to everyone on the internet. Check for internal hosts, customer data, secrets and
   @mention names."_
 - A publish that fails half-way is recorded `failed` with a short code; its branch may remain
-  on GitHub (the message names it). HQ's own merge push is recognised by the
-  `HQ-Publication: hq/…` trailer (or the merge commit naming the branch) and left to the
-  pull_request event; Check handbook now catches anything it misses.
+  on GitHub (the message names it), and the paths it pinned are put back. If its PR was
+  opened anyway (a timed-out request), merging it still syncs the docs. HQ never retries
+  creating a branch or a PR. HQ's own merge push is recognised by the
+  `HQ-Publication: hq/…` trailer line or GitHub's "Merge pull request #n from …/hq/…"
+  subject (never a revert), only while that publication is open or merged within the hour,
+  and is left to the pull_request event; Check handbook now catches anything it misses.
+- A merged PR with more than HQ's one commit (someone pushed to the `hq/…` branch) marks the
+  docs synced to HQ's export but the handbook side "blob unknown", so they show "Changed in
+  handbook" until reviewed. A push processed before the merge event is kept.
+- Re-adding a file removed in the handbook needs the same explicit confirmation as an
+  overwrite. Paths GitHub gives a meaning to (`README.md`, `LICENSE.md`, `SECURITY.md` …, and
+  `decisions/0000-template.md`) are only written from the single-doc dialog after a
+  confirmation; bulk publish leaves them out. The server refuses a publish without the
+  "fine for everyone on the internet" acknowledgement, and a pull while the doc's PR is open.
 
 ## Email digest (NTF-2)
 

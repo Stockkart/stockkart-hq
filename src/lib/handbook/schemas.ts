@@ -37,12 +37,19 @@ export const publishInput = z
     path: handbookPathInput.optional(),
     /**
      * "Keep HQ version": overwrite these docs although the handbook changed, but only while
-     * the handbook still has the blob the person reviewed in the diff.
+     * the handbook still has the blob the person reviewed in the diff (`GIT_NULL_SHA`: the
+     * file was removed there and the person chose to add it back).
      */
     overwrite: z
       .array(z.object({ docId: id, remoteSha: sha }))
       .max(HANDBOOK_PUBLISH_MAX)
       .default([]),
+    /** The person ticked "fine for everyone on the internet to read" (public repo). */
+    acknowledgedPublic: z.literal(true, {
+      error: "Confirm that the content may be public before publishing",
+    }),
+    /** Single-doc dialog: the person confirmed a path GitHub gives a meaning to. */
+    confirmSpecialPath: z.boolean().default(false),
   })
   .refine((input) => input.path === undefined || input.docIds.length === 1, {
     message: "A path can only be set when publishing one doc",

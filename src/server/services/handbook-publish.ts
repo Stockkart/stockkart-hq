@@ -4,7 +4,11 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { HANDBOOK_DECISIONS_DIR } from "@/lib/docs/handbook-path";
-import { GIT_SHA_PATTERN, HANDBOOK_NOT_CONFIGURED_MESSAGE } from "@/lib/handbook/constants";
+import {
+  GIT_NULL_SHA,
+  GIT_SHA_PATTERN,
+  HANDBOOK_NOT_CONFIGURED_MESSAGE,
+} from "@/lib/handbook/constants";
 import { type publishInput, type publishPreviewInput } from "@/lib/handbook/schemas";
 import { type PublishOutcome, type PublishPreview } from "@/lib/handbook/views";
 import { findSecretInText } from "@/lib/service-registry/secrets";
@@ -31,6 +35,8 @@ export const ABANDONED_CLAIM_MINUTES = 15;
 const READ_CONCURRENCY = 5;
 
 export const DRIFT_MESSAGE = "Changed in the handbook since your last sync: pull first";
+export const REMOVED_MESSAGE =
+  "Removed from the handbook since your last sync: confirm in the publish dialog to add it back";
 
 /** Paths GitHub gives a meaning to, or the ADR template: the dialog asks before writing them. */
 export function isSpecialHandbookPath(path: string): boolean {
@@ -181,7 +187,9 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
         remote: remote ? { sha: remote.sha, diff: lineDiff(remote.content, markdown) } : null,
         unchanged: remote?.sha === localSha,
         needsOverwrite:
-          remote !== null && remote.sha !== localSha && remote.sha !== row.handbookBlobSha,
+          remote !== null
+            ? remote.sha !== localSha && remote.sha !== row.handbookBlobSha
+            : row.handbookBlobSha !== null,
         secret: secretMessage(row, markdown),
         specialPath: isSpecialHandbookPath(path),
       };
@@ -189,6 +197,17 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
 
     async publish(actorId: string, input: PublishData): Promise<PublishOutcome> {
       requireConfigured();
+      // Free docs held by claims whose request died before getting a PR (otherwise they
+      // would show "Already being published" forever).
+      await db.execute(sql`
+        UPDATE handbook_publications SET state = 'failed', error_code = 'abandoned',
+          updated_at = now()
+        WHERE state = 'open' AND pr_number IS NULL
+          AND created_at < now() - make_interval(mins => ${ABANDONED_CLAIM_MINUTES}::int)
+          AND id IN (SELECT publication_id FROM handbook_publication_docs
+            WHERE open AND doc_id IN (
+              SELECT jsonb_array_elements_text(${JSON.stringify(input.docIds)}::jsonb)::uuid))
+      `);
       const rows = await loadHandbookDocs(db, read, { docIds: input.docIds });
       const byId = new Map(rows.map((row) => [row.id, row]));
       const ordered = input.docIds.map((id) => byId.get(id));
@@ -215,6 +234,15 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
           continue;
         }
         const path = pathOf(row, input.path);
+        // Paths GitHub gives a meaning to need the single-doc dialog's explicit confirmation.
+        if (isSpecialHandbookPath(path) && !input.confirmSpecialPath) {
+          outcome.refused.push({
+            docId: row.id,
+            title: row.title,
+            reason: `${path} has a special meaning on GitHub: publish it on its own and confirm`,
+          });
+          continue;
+        }
         const markdown = markdownOf(row, path);
         // Blocking, with no override: the repo is public (S-7, DOC-14).
         const secret = secretMessage(row, markdown);
@@ -247,12 +275,23 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
           return;
         }
         const drifted = remote !== null && remote.sha !== item.row.handbookBlobSha;
-        // "Keep HQ version" counts only for the blob the person saw in the diff.
-        if (drifted && overwrite.get(item.row.id) !== remote.sha) {
+        // Removed in the handbook since the last sync: adding it back is a decision too.
+        const removed = remote === null && item.row.handbookBlobSha !== null;
+        // "Keep HQ version" counts only for the blob (or the absence) the person reviewed.
+        const reviewed = overwrite.get(item.row.id);
+        if (drifted && remote && reviewed !== remote.sha) {
           outcome.refused.push({
             docId: item.row.id,
             title: item.row.title,
             reason: DRIFT_MESSAGE,
+          });
+          return;
+        }
+        if (removed && reviewed !== GIT_NULL_SHA) {
+          outcome.refused.push({
+            docId: item.row.id,
+            title: item.row.title,
+            reason: REMOVED_MESSAGE,
           });
           return;
         }
@@ -266,7 +305,7 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
         return outcome;
       }
 
-      // 3. Claim. Statement 1 frees docs held by claims that died before getting their PR.
+      // 3. Claim, in one statement (the abandoned claims were failed above).
       const publicationId = newId();
       const branch = `hq/publish-${yyyymmdd(now())}-${publicationId.replace(/-/g, "").slice(0, 8)}`;
       const files = JSON.stringify(
@@ -277,18 +316,9 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
           blob_sha: item.sha,
         })),
       );
-      const docIds = JSON.stringify(toPublish.map((item) => item.row.id));
       let claimed: number;
       try {
-        const [, claim] = await deps.runAtomic([
-          sql`
-            UPDATE handbook_publications SET state = 'failed', error_code = 'abandoned',
-              updated_at = now()
-            WHERE state = 'open' AND pr_number IS NULL
-              AND created_at < now() - make_interval(mins => ${ABANDONED_CLAIM_MINUTES}::int)
-              AND id IN (SELECT publication_id FROM handbook_publication_docs
-                WHERE open AND doc_id IN (SELECT jsonb_array_elements_text(${docIds}::jsonb)::uuid))
-          `,
+        const [claim] = await deps.runAtomic([
           sql`
             WITH files AS (
               SELECT * FROM jsonb_to_recordset(${files}::jsonb)
@@ -345,10 +375,11 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
       }
 
       // 4. GitHub. Anything that fails marks the publication failed (5).
-      let branchCreated = false;
+      let branchAttempted = false;
       try {
+        // A timed-out create may still have made the branch, so it counts from the attempt.
+        branchAttempted = true;
         await github.createBranch(branch, main.sha);
-        branchCreated = true;
         const message = [
           "docs: publish from Stockkart HQ",
           "",
@@ -421,12 +452,31 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
             : error instanceof HandbookNotConfigured
               ? "not_configured"
               : "internal";
-        await db.execute(sql`
-          UPDATE handbook_publications SET state = 'failed', error_code = ${code},
-            updated_at = now()
-          WHERE id = ${publicationId}::uuid AND state = 'open'
-        `);
-        const leftover = branchCreated
+        // The paths pinned by the claim go back to what they were (unless edited since).
+        const pins = JSON.stringify(
+          toPublish.map((item) => ({
+            id: item.row.id,
+            path: item.path,
+            previous: item.row.handbookPath,
+          })),
+        );
+        try {
+          await db.execute(sql`
+            WITH failed AS (
+              UPDATE handbook_publications SET state = 'failed', error_code = ${code},
+                updated_at = now()
+              WHERE id = ${publicationId}::uuid AND state = 'open'
+              RETURNING id
+            )
+            UPDATE docs SET handbook_path = r.previous
+            FROM jsonb_to_recordset(${pins}::jsonb) AS r(id uuid, path text, previous text)
+            WHERE docs.id = r.id AND docs.handbook_path = r.path
+              AND r.previous IS DISTINCT FROM r.path AND EXISTS (SELECT 1 FROM failed)
+          `);
+        } catch {
+          // Keep the original error; the claim is then failed as abandoned after 15 min.
+        }
+        const leftover = branchAttempted
           ? ` The branch ${branch} may remain on GitHub; delete it there.`
           : "";
         if (code === "internal") throw error;

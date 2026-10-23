@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { callAction } from "@/features/issue/client-utils";
+import { GIT_NULL_SHA } from "@/lib/handbook/constants";
 import { handbookPathInput } from "@/lib/handbook/schemas";
 import { type PublishPreview } from "@/lib/handbook/views";
 import { handbookPublishAction, handbookPublishPreviewAction } from "@/server/actions/handbook";
@@ -61,6 +62,8 @@ export function PublishDialog({
           setPreview(result.data);
           setOverwrite(false);
           setSpecial(false);
+          // A new preview needs a new look at the content.
+          setAcknowledged(false);
         } else {
           setPreview(null);
           setError(result.error);
@@ -104,10 +107,11 @@ export function PublishDialog({
           projectKey,
           docIds: [docId],
           path: preview.path,
-          overwrite:
-            preview.needsOverwrite && preview.remote
-              ? [{ docId, remoteSha: preview.remote.sha }]
-              : [],
+          overwrite: preview.needsOverwrite
+            ? [{ docId, remoteSha: preview.remote?.sha ?? GIT_NULL_SHA }]
+            : [],
+          acknowledgedPublic: true,
+          confirmSpecialPath: preview.specialPath && special,
         }),
       );
       if (!outcome) return;
@@ -200,8 +204,9 @@ export function PublishDialog({
                   onChange={(event) => setOverwrite(event.target.checked)}
                 />
                 <span>
-                  The handbook changed since the last sync. Overwrite its changes shown above with
-                  the HQ version (or cancel and use “Review &amp; pull” first).
+                  {preview.remote
+                    ? "The handbook changed since the last sync. Overwrite its changes shown above with the HQ version (or cancel and use “Review & pull” first)."
+                    : "The file was removed from the handbook since the last sync. Add it back with the HQ version."}
                 </span>
               </label>
             ) : null}

@@ -133,6 +133,8 @@ describe("handbook doc actions (DOC-14)", () => {
         docIds: [DOC],
         path: "RUNBOOK.md",
         overwrite: [{ docId: DOC, remoteSha: REMOTE }],
+        acknowledgedPublic: true,
+        confirmSpecialPath: false,
       }),
     );
   });

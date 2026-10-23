@@ -29,7 +29,7 @@ const session: Session = {
 
 const validInputs: [keyof typeof actions, unknown][] = [
   ["handbookPublishPreviewAction", { docId: ID, path: "RUNBOOK.md" }],
-  ["handbookPublishAction", { projectKey: "STK", docIds: [ID] }],
+  ["handbookPublishAction", { projectKey: "STK", docIds: [ID], acknowledgedPublic: true }],
   ["handbookPullPreviewAction", { docId: ID }],
   ["handbookPullApplyAction", { docId: ID, baseVersion: 2, remoteSha: "a".repeat(40) }],
   ["handbookCheckAction", { projectKey: "STK" }],
@@ -86,7 +86,13 @@ describe("handbook server actions (DOC-14)", () => {
       { length: 51 },
       (_, i) => `7d1a2c4e-1f3b-4c5d-8e9f-${String(i).padStart(12, "0")}`,
     );
-    expect(await actions.handbookPublishAction({ projectKey: "STK", docIds: many })).toMatchObject({
+    expect(
+      await actions.handbookPublishAction({
+        projectKey: "STK",
+        docIds: many,
+        acknowledgedPublic: true,
+      }),
+    ).toMatchObject({
       ok: false,
       error: "Publish at most 50 docs at a time",
     });
@@ -95,9 +101,19 @@ describe("handbook server actions (DOC-14)", () => {
         projectKey: "STK",
         docIds: [ID, many[0]],
         path: "X.md",
+        acknowledgedPublic: true,
       }),
     ).toMatchObject({ ok: false });
     for (const mock of allMocks()) expect(mock).not.toHaveBeenCalled();
+  });
+
+  it("requires the public-content acknowledgement", async () => {
+    authMock.mockResolvedValue(session);
+    expect(await actions.handbookPublishAction({ projectKey: "STK", docIds: [ID] })).toEqual({
+      ok: false,
+      error: "Confirm that the content may be public before publishing",
+    });
+    expect(handbookPublishService.publish).not.toHaveBeenCalled();
   });
 
   it("returns the not-configured refusal as an error", async () => {
@@ -106,13 +122,17 @@ describe("handbook server actions (DOC-14)", () => {
       new ServiceError("invalid", HANDBOOK_NOT_CONFIGURED_MESSAGE),
     );
     await expect(
-      actions.handbookPublishAction({ projectKey: "STK", docIds: [ID] }),
+      actions.handbookPublishAction({ projectKey: "STK", docIds: [ID], acknowledgedPublic: true }),
     ).resolves.toEqual({ ok: false, error: HANDBOOK_NOT_CONFIGURED_MESSAGE });
   });
 
   it("refreshes only the doc pages and settings after a publish", async () => {
     authMock.mockResolvedValue(session);
-    await actions.handbookPublishAction({ projectKey: "STK", docIds: [ID] });
+    await actions.handbookPublishAction({
+      projectKey: "STK",
+      docIds: [ID],
+      acknowledgedPublic: true,
+    });
     expect(revalidatePath.mock.calls.map(([path]) => path).sort()).toEqual([
       "/[projectKey]/docs/[id]",
       "/[projectKey]/settings",
