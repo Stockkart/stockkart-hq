@@ -6,6 +6,8 @@ import { AttachmentsPanel } from "@/features/attachments/attachments-panel";
 import { AttachmentUploadProvider } from "@/features/attachments/upload-context";
 import { DocEditor } from "@/features/docs/doc-editor";
 import { docTree } from "@/features/docs/doc-route";
+import { HandbookDocBar } from "@/features/docs/handbook-sync/handbook-doc-bar";
+import { loadHandbookDocSync } from "@/features/docs/handbook-sync/load";
 import { requireProject, resolveProjectKey } from "@/features/issue/project-route";
 import { requirePageSession } from "@/server/auth/require-session";
 import { commentService, docQueries, fileQueries, issueQueries } from "@/server/services";
@@ -48,6 +50,7 @@ export default async function DocPage({ params }: Props) {
     tree,
     attachments,
     threads,
+    handbook,
   ] = await Promise.all([
     requireProject(key),
     docQueries.getDoc(projectId, docUuid),
@@ -62,6 +65,8 @@ export default async function DocPage({ params }: Props) {
     fileQueries.listAttachments("doc", docUuid),
     // DOC-11 / DOC-13 comment threads; same batch.
     commentService.listForDoc(docUuid),
+    // DOC-14 handbook sync state (stored only, no GitHub call); same batch.
+    loadHandbookDocSync(projectId, docUuid),
   ]);
   if (!doc) notFound();
   const storageReady = storageConfigured();
@@ -70,6 +75,8 @@ export default async function DocPage({ params }: Props) {
   return (
     // Files pasted or dropped into the doc attach to it (ISS-9).
     <AttachmentUploadProvider target={target} storageReady={storageReady}>
+      {/* DOC-14: temporary mount until the docs-UX header slots exist (AGENTS.md). */}
+      <HandbookDocBar projectKey={doc.projectKey} sync={handbook.sync} config={handbook.config} />
       <DocEditor
         // A different doc is a different editor (fresh autosave state and version).
         key={doc.id}
