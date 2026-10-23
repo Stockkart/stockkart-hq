@@ -684,9 +684,10 @@ export const docs = pgTable(
      * had git blob `handbook_blob_sha` and matched `version = handbook_synced_version`, at
      * `handbook_synced_at` (all three set together). `handbook_remote_sha` is the latest blob
      * seen on the repo's default branch (push webhook / pull), at `handbook_remote_seen_at`;
-     * a null sha with a seen-at time means the file was absent then. So: changed in HQ ⇔
+     * a null sha with a seen-at time means a push changed the file and its blob is not known
+     * yet, and `GIT_NULL_SHA` (40 zeros) that it was absent (removed). So: changed in HQ ⇔
      * `version > handbook_synced_version`; changed in the repo ⇔ `handbook_remote_sha IS
-     * DISTINCT FROM handbook_blob_sha`; both ⇔ conflict.
+     * DISTINCT FROM handbook_blob_sha`; both ⇔ conflict (`lib/handbook/sync-state.ts`).
      */
     handbookPath: text("handbook_path"),
     handbookBlobSha: text("handbook_blob_sha"),

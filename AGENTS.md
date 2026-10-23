@@ -73,6 +73,8 @@ src/
   server/github/          webhook: signature check, Zod payloads, pure event → plan rules
                           (services/github.ts applies a plan in ONE statement, deduped by
                           delivery id; never add a webhook write outside that statement)
+  server/handbook/        DOC-14 GitHub App client (fetch only), git blob sha, the pure
+                          webhook plan for the handbook repo; index.ts wires env
   lib/                    isomorphic code: constants, Zod input schemas, keys, rich text,
                           markdown ↔ editor JSON (lib/markdown: to-rich-text import,
                           from-rich-text export), handbook paths and .md export
@@ -223,8 +225,9 @@ entity_id)` → `comments (id, entity_type, entity_id)` keeps a reply on its thr
   - `docs.handbook_path` (repo path override; `source_path` stays the import origin;
     resolve with `handbookPathFor`), `handbook_blob_sha` + `handbook_synced_version` +
     `handbook_synced_at` (set together, CHECK; synced version ≤ `version`),
-    `handbook_remote_sha` (needs `handbook_remote_seen_at`; a seen-at without a sha means
-    "absent on the default branch"). Shas are 40 lower-case hex (CHECK); paths follow
+    `handbook_remote_sha` (needs `handbook_remote_seen_at`; as built by the sync slice, a
+    seen-at without a sha means "changed, blob unknown" and `GIT_NULL_SHA` means "absent on
+    the default branch"). Shas are 40 lower-case hex (CHECK); paths follow
     `isHandbookPath` (CHECK, same regex). Unique index on
     `(project_id, lower(coalesce(handbook_path, source_path)))` for live docs: one doc per
     file, so persist the default path into `handbook_path` when a doc is first published.
@@ -428,6 +431,36 @@ Rules for the sync slice:
 - Webhooks: verify the signature first (as `server/github/` does) and dedupe by delivery id.
 - The handbook repo is public: export only what the doc already says (no internal ids beyond
   the HQ links the serializer writes, no emails, no attachment URLs that bypass HQ auth).
+
+**Sync slice as built (DOC-14).** README "Engineering handbook sync" has the setup, statuses
+and conflict rules; keep these seams intact:
+
+- `server/handbook/github-app.ts` is the ONLY GitHub API client (fetch, no SDK). Every URL is
+  built and re-checked there (token endpoint or `/repos/<HANDBOOK_REPO>/…`), every path passes
+  `isHandbookPath`, writes go to `hq/…` branches only. `server/handbook/index.ts` wires it
+  from env; tests use `test/handbook-fakes.ts` (an in-memory repo) or a fetch fake.
+- Status is derived by `lib/handbook/sync-state.ts` from stored columns (`handbookSyncStatus`).
+  `docs.handbook_remote_sha = GIT_NULL_SHA` (40 zeros) means **removed** on the default
+  branch; `NULL` with a `handbook_remote_seen_at` means **changed, blob unknown** (a push
+  touched it). This refines the foundation's "seen-at without a sha = absent" without a
+  migration.
+- Webhook: `server/handbook/webhook-plan.ts` (pure) adds `plan.handbook` after the signature,
+  payload and org checks; `applyDelivery` writes it in its ONE deduped statement (`hb_*`
+  CTEs). Never call GitHub there. HQ's commits carry an `HQ-Publication: <branch>` trailer so
+  the push of its own merge is not drift.
+- Publish (`services/handbook-publish.ts`) claims the publication (`open`, no PR yet) in one
+  statement BEFORE calling GitHub, then records the PR + activity, or `failed` + `error_code`.
+  A claim left without a PR for 15 minutes is failed by the next publish of its docs.
+- "Check handbook now" is rate-limited through `login_attempts` rows keyed
+  `handbook_check:<projectId>` with `success = true` (shared across instances; never counted
+  as failed sign-ins, which use `email:` / `ip:` keys and `NOT success`).
+- **Temporary doc-page mount**: `app/(app)/[projectKey]/docs/[id]/page.tsx` adds ONE read
+  (`loadHandbookDocSync`, `features/docs/handbook-sync/load.ts`, same batch) and renders
+  `<HandbookDocBar>` above `<DocEditor>`. When the docs-UX slice lands, move
+  `HandbookStatusBadge` into its header badges slot and the two `HandbookActions` entries
+  ("Publish to handbook", "Review & pull"; they open `PublishDialog` / `PullDialog`) into
+  `features/docs/doc-actions/index.ts`, then delete `HandbookDocBar` and its line in the page.
+  Keep the read in the page's batch (`handbook.db.test.ts` pins one round trip).
 
 ## File storage (R2)
 

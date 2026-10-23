@@ -227,7 +227,7 @@ Default statuses (one set per project):
 | DOC-10 | Autosave (debounced ~2 s) + version history with restore and diff of text | P1 |
 | DOC-11 | Comments on a doc (page-level) | P1 |
 | DOC-12 | Export to Markdown. HQ is the source of truth; when the repo copy needs refreshing (coding agents and `AGENTS.md` read ADRs from git), export and PR the file into `engineering-handbook` | P1 |
-| DOC-14 | "Publish to handbook": HQ opens the PR to `engineering-handbook` itself (GitHub App) | P2 |
+| DOC-14 | Two-way handbook sync with the public `engineering-handbook` repo (GitHub App, README "Engineering handbook sync"). **HQ → repo:** "Publish to handbook" (one doc, or up to 50 from Settings → Handbook) opens ONE pull request on an `hq/publish-<yyyymmdd>-<id>` branch with every file in one commit; never a push to the default branch. Each publish shows the public-repo warning; a secret-looking value blocks it (no override); a file changed in the repo since the last sync is refused ("pull first") unless the person reviewed that exact blob's diff and chose to overwrite; an identical file is skipped; a doc is in at most one open PR. A merged PR marks its docs in sync; a closed one changes nothing. **Repo → HQ:** pushes to the default branch (org webhook, no GitHub call in the request) mark the touched docs "Changed in handbook" or "Removed in handbook" (HQ's own merge excluded); "Review & pull" shows the diff and applies the file as a new HQ version (repo ahead = clean pull; both changed = take the handbook's, keeping HQ's copy in the history, or keep HQ's and overwrite through a PR). "Check handbook now" (once a minute per project) compares every mapped doc with the default branch and lists unmapped top-level / `decisions/NNNN-*.md` files to import. Statuses: Not in handbook, In sync, Changed in HQ, Changed in handbook, Both changed, PR open, Removed in handbook | P2 |
 | DOC-13 | Inline comments anchored to a text selection | P2 |
 
 ### 4.12 ADRs
@@ -796,7 +796,7 @@ No CORS change is needed: HQ calls inventory-api from its server, not from the b
 | 3 | Editor licensing: some BlockNote/Tiptap add-ons are paid or GPL | Use the MIT core only; check each package's license before adding it |
 | 4 | Excalidraw bundle size | Dynamic import on diagram pages only |
 | 5 | Neon free compute cap | 5 users stay far below it; check usage monthly in the Neon console |
-| 6 | Docs edited in HQ drift from `engineering-handbook` | Accepted: HQ is the source of truth; export + PR when the repo copy matters (DOC-12, later DOC-14) |
+| 6 | Docs edited in HQ drift from `engineering-handbook` | Accepted: HQ is the main place to write; people may also PR the repo directly. The DOC-14 two-way sync shows drift on both sides and resolves it through PRs and pulls, never silently |
 
 ---
 
