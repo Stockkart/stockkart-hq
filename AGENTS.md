@@ -44,7 +44,8 @@ src/
   app/(app)/              signed-in app shell (layout calls requirePageSession); my-work/, todos/,
                           notifications/, settings/profile/
   app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, backlog/, board/, docs/
-                          (tree layout, list, docs/[id] editor), adrs/, sprints/ (list,
+                          (tree layout, list, docs/[id] editor, docs/[id]/export DOC-12 .md
+                          download), adrs/, sprints/ (list,
                           sprints/[sprintId]), diagrams/ (grid, diagrams/[id] editor), roadmap/
                           (RDM-1/2), releases/ (list, releases/[releaseId]; REL-1/2),
                           incidents/ (list, incidents/[key] = INC-n; INC-1/2), services/ (list,
@@ -73,7 +74,11 @@ src/
                           (services/github.ts applies a plan in ONE statement, deduped by
                           delivery id; never add a webhook write outside that statement)
   lib/                    isomorphic code: constants, Zod input schemas, keys, rich text,
-                          markdown → editor JSON (lib/markdown), upload policy
+                          markdown ↔ editor JSON (lib/markdown: to-rich-text import,
+                          from-rich-text export), handbook paths and .md export
+                          (lib/docs/handbook-path.ts, markdown-export.ts), line diff
+                          (lib/text/line-diff.ts), handbook sync vocabulary (lib/handbook/),
+                          upload policy
                           (lib/attachments/policy.ts), @user mentions (lib/mentions.ts),
                           plain-text rules per editor node (lib/rich-text-nodes/)
   features/               feature UI (shell/, issue/, planning/, sprints/, todos/, search/,
@@ -213,6 +218,27 @@ entity_id)` → `comments (id, entity_type, entity_id)` keeps a reply on its thr
     `issues.due_date` (both `date`), and RDM-2 dependencies are `issue_links` `blocks` rows.
   - The postmortem, release-notes and sprint-retro doc templates are already seeded
     built-ins (`kind = 'doc'`, subtypes `postmortem`, `release_notes`, `retro`).
+- Migration `0006_handbook_foundation` holds the schema of the two handbook slices, so
+  **they add no migration** (see "Handbook slice notes"):
+  - `docs.handbook_path` (repo path override; `source_path` stays the import origin;
+    resolve with `handbookPathFor`), `handbook_blob_sha` + `handbook_synced_version` +
+    `handbook_synced_at` (set together, CHECK; synced version ≤ `version`),
+    `handbook_remote_sha` (needs `handbook_remote_seen_at`; a seen-at without a sha means
+    "absent on the default branch"). Shas are 40 lower-case hex (CHECK); paths follow
+    `isHandbookPath` (CHECK, same regex). Unique index on
+    `(project_id, coalesce(handbook_path, source_path))` for live docs: one doc per file, so
+    persist the default path into `handbook_path` when a doc is first published.
+  - `handbook_publications`: `branch` (`hq/<one segment>`, CHECK; unique per project),
+    `pr_number` + `pr_url` (together; `https://github.com/<owner>/<repo>/pull/<n>`),
+    `state` `open|merged|closed|failed`, generated `is_open`, `created_by`, `merged_at`
+    (exactly while `merged`), `error_code` (only on `failed`, `^[a-z0-9_.-]{1,64}$`).
+    `merged`/`closed` need a PR.
+  - `handbook_publication_docs` (PK publication + doc; path, `doc_version`, `blob_sha`,
+    `open`). **One open publication per doc** = partial unique index on `doc_id WHERE open`.
+    `open` is not app-maintained: a composite FK `(publication_id, open)` →
+    `handbook_publications (id, is_open)` `ON UPDATE CASCADE` copies the generated flag, so
+    an UPDATE of `state` flips it in the same statement (no trigger; a wrong `open` on insert
+    fails the FK). Insert rows with the default `open = true` into an open publication.
 - @user mentions: `extractUserMentionIds(doc)` (`lib/mentions.ts`) reads `mention` nodes;
   `userMentionSyncCtes` / `userMentionSyncStatement` (`services/sql.ts`) keep the
   `to_type = 'user'` mention links in sync, like the issue-key ones, and RETURN the newly
@@ -347,6 +373,49 @@ Gotchas:
   the `hq.docs_tree:<projectId>` lock in a `RunAtomic`, under a root "Postmortems" page.
   INC-1 lets people edit and delete their own `note`/`action` timeline entries (logged as
   `timeline_edited` / `timeline_deleted` activity); `status_change` entries stay as written.
+
+## Handbook slice notes
+
+The handbook foundation (migration 0006) prepared two slices: **docs UX** and **handbook
+two-way sync** (`Stockkart/engineering-handbook` is public and also edited by PRs directly:
+HQ → repo goes through PRs a GitHub App opens; repo → HQ is detected from push webhooks).
+Neither adds a migration. Shared pieces, already built and tested — use them, do not fork:
+
+- `lib/markdown/from-rich-text.ts` (`richTextToMarkdown`, `normalizeForMarkdown`; see README
+  "Markdown export" for the mapping and the lossy cases) and the importer
+  `lib/markdown/to-rich-text.ts`, which reads the export's shapes back (callouts, the
+  HQ-only-links comment). Keep the round-trip tests green when touching either.
+- `lib/docs/markdown-export.ts` (`docToMarkdown`: `# Title`, ADR title and Status from the
+  columns) and `services/doc-export.ts` (`docExportQueries.markdownFile`).
+- `lib/docs/handbook-path.ts` (`handbookPathFor`, `isHandbookPath`): never write a repo
+  path that did not pass `isHandbookPath`.
+- `lib/text/line-diff.ts` (`lineDiff`: Myers line diff, our own, no dependency; hunks
+  `equal|add|remove` with `collapsed` context runs).
+- `lib/handbook/constants.ts` (publication states, sha / branch / PR URL / error-code formats).
+- The route `app/(app)/[projectKey]/docs/[id]/export/route.ts` (DOC-12 download).
+
+| Slice                              | Owns                                                                                                                                                                                                                                                                                          | Touches (append-only)                                                                                                                                                           |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Docs UX (DOC-10, ADR-3, DOC-12 UI) | the doc page layout (`app/(app)/[projectKey]/docs/[id]/page.tsx`, `features/docs/` page components), read/edit mode, the versions panel (diff via `lineDiff` of exported Markdown), the supersede flow, the "Export .md" button                                                               | `services/doc-queries.ts`, `actions/docs.ts` (supersede)                                                                                                                        |
+| Handbook sync (DOC-14)             | the GitHub App client (`server/handbook/`), publish/pull services (`services/handbook-*.ts`, `actions/handbook.ts`), webhook handling for the handbook repo, the settings "Handbook" tab (`features/settings/project/handbook/`), doc sync status components (`features/docs/handbook-sync/`) | `env.ts` + `.env.example` (App id/key, repo), `app/api/webhooks/github` (route the handbook repo's pushes), the settings tab list, one slot on the doc page for the sync status |
+
+Rules for the sync slice:
+
+- **Both directions are optimistic.** Publish exports `docs.version` and records
+  `doc_version`; on merge set `handbook_blob_sha`, `handbook_synced_version` and
+  `handbook_synced_at` in one UPDATE. A push webhook only updates `handbook_remote_sha` /
+  `handbook_remote_seen_at`; a pull applies the file like the importer does (version + 1 and
+  a snapshot, `WHERE version = base`), never silently over an HQ edit made since the last
+  sync (that is a conflict to show, both ways).
+- One open publication per doc is enforced by the database (see "Database"); catch the
+  unique violation on `handbook_publication_docs_one_open_per_doc` and report "already being
+  published".
+- Branches are `hq/…` only; the App never pushes to the default branch or to a branch a
+  person made. Never log the App's private key or installation tokens; `error_code` holds a
+  short code, never a response body.
+- Webhooks: verify the signature first (as `server/github/` does) and dedupe by delivery id.
+- The handbook repo is public: export only what the doc already says (no internal ids beyond
+  the HQ links the serializer writes, no emails, no attachment URLs that bypass HQ auth).
 
 ## File storage (R2)
 

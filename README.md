@@ -162,6 +162,18 @@ is not stored), plus inline-comment columns on `comments`, `statuses.wip_limit`,
 `description` / `released_at`, and the digest settings on `users`. AGENTS.md
 ("P2 slice notes") lists what each P2 slice owns.
 
+Migration `0006_handbook_foundation` adds the schema of the handbook two-way sync
+(DOC-12/14) up front: on `docs` the override `handbook_path` (repo path; `source_path` stays
+the import origin), `handbook_blob_sha` / `handbook_synced_version` / `handbook_synced_at`
+(the file's git blob, the doc version and the time at the last sync; set together) and
+`handbook_remote_sha` / `handbook_remote_seen_at` (the latest blob seen on the repo's
+default branch), with CHECKs for the sha (40 lower-case hex) and path formats and one live
+doc per repo file; plus `handbook_publications` (one PR HQ opened: `hq/…` branch, PR
+number/URL, state `open|merged|closed|failed`, `merged_at`, `error_code`) and
+`handbook_publication_docs` (publication, doc, path, doc version, blob sha). A doc is in at
+most one open publication; AGENTS.md ("Handbook slice notes") explains how, and what the two
+handbook slices own.
+
 ### Database tests
 
 Some tests (issue number allocation under concurrency, activity rows, `resolved_at`, parent
@@ -204,6 +216,55 @@ continues after the highest imported number.
 
 **The imported content never goes into this repo** (S-7): the script writes only to the
 database, and the tests use small synthetic markdown.
+
+## Markdown export (DOC-12)
+
+`GET /<KEY>/docs/<id>/export` downloads a doc as its handbook file (`text/markdown`,
+`attachment`, `no-store`, session required; 404 for a missing or deleted doc). The same
+code will write the files the handbook publish (DOC-14) puts in its PRs.
+
+**Serializer** (`src/lib/markdown/from-rich-text.ts`, the inverse of `to-rich-text.ts`):
+editor JSON → GitHub-flavoured Markdown, deterministic, ending in exactly one newline.
+
+| Editor                           | Markdown                                                             |
+| -------------------------------- | -------------------------------------------------------------------- |
+| heading 1–3, paragraph           | `#`…`###`, a paragraph (one line; hard breaks are `\` + newline)     |
+| bold, italic, strike, code, link | `**…**`, `*…*`, `~~…~~`, `` `…` ``, `[…](href)` (safe hrefs only)    |
+| bullet / ordered / task list     | `-`, `1.`, `- [ ]` / `- [x]`, nested by indentation                  |
+| blockquote, horizontal rule      | `> …`, `---`                                                         |
+| callout (info / warning)         | `> **Note:** …` / `> **Warning:** …` (read back as a callout)        |
+| code block, Mermaid              | ` ```lang ` fence (longer if the code has backticks), ` ```mermaid ` |
+| table                            | GFM table, first row = header, `\|` escaped                          |
+| @mention, `STK-12`               | `@Name`, plain text                                                  |
+| image / file attachment          | `[alt](/api/files/<id>)` / `[name](/api/files/<id>)`                 |
+| diagram embed                    | `[Diagram: Title](/<KEY>/diagrams/<id>)`                             |
+| inline comment anchor            | dropped (the text stays)                                             |
+
+Docs that link to `/api/files/…` or `/<KEY>/diagrams/…` end with one HTML comment saying
+those links only work inside HQ; the importer drops that line again. ADRs start with
+`# NNNN. Title`, and their Status paragraph starts with the status from the columns
+(`` `Accepted` ``, `` `Accepted (recorded retrospectively)` ``, `Superseded by
+[NNNN](NNNN-slug.md)` …), keeping the rest ("Recorded against …").
+
+`markdownToRichText(richTextToMarkdown(doc))` equals `normalizeForMarkdown(doc)` and a second
+export is byte-identical (tests, including 1 500 generated inline cases). Known lossy cases:
+soft line breaks (paragraphs come back on one line), heading levels 4–6 (→ 3), empty
+paragraphs and a trailing hard break, hard breaks in headings and table cells (→ space),
+table cell spans, a header column and non-paragraph blocks in cells (their text), marks on
+inline code, bold/italic/strike on whitespace at their edges (moved outside) and, rarely,
+emphasis that starts or ends mid-word next to punctuation (dropped, text kept, rather than
+emitting Markdown that means something else), mentions/attachments/diagram embeds (become
+text and links), comment anchors, unknown nodes (their text), code block languages outside
+`[A-Za-z0-9_+#.-]`, and a `mermaid` code block (becomes a Mermaid block). A bullet list whose
+items all start with a literal `[ ] ` and a quote starting with a bold `Note:` read back as a
+task list and a callout.
+
+**Repo paths** (`src/lib/docs/handbook-path.ts`): `docs.handbook_path` if set, else
+`docs.source_path`, else ADRs `decisions/NNNN-<slug>.md` (ASCII kebab title, ≤ 60 chars) and
+other docs `<UPPER_SNAKE_TITLE>.md` at the top level. A path must be relative, use ASCII
+letters, digits, `_`, `-` and `.` in `/`-separated segments that do not start with `.`,
+contain no `..`, end in lower-case `.md` and be at most 200 characters (CHECKed in the
+database too); an invalid stored path is skipped.
 
 ## Performance
 
