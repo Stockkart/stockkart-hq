@@ -1,6 +1,7 @@
 import { GITHUB_ORG, type GithubPrState, type GithubRefKind } from "@/lib/github/constants";
 import { extractIssueKeys, parseClosingKeys } from "@/lib/github/refs";
 import { type IssueRef } from "@/lib/issues/keys";
+import { type HandbookDeliveryPlan } from "@/server/handbook/webhook-plan";
 
 import {
   type CreatePayload,
@@ -53,6 +54,8 @@ export interface DeliveryPlan {
   pullRequest: PlannedPullRequest | null;
   /** GH-3: merged into the default branch with closing keywords. */
   closes: { issues: IssueRef[]; pr: number; mergedBy: string | null } | null;
+  /** DOC-14: deliveries from the handbook repo (publication merges, pushes to main). */
+  handbook?: HandbookDeliveryPlan | null;
 }
 
 /** Bounds one delivery's writes, whatever the payload holds. */
