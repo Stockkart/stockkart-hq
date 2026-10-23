@@ -2,6 +2,18 @@ import { createPublicKey, generateKeyPairSync, verify } from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
 
+import {
+  GITHUB_BRANCH_EXISTS_MESSAGE,
+  GITHUB_BUSY_MESSAGE,
+  GITHUB_KEY_MESSAGE,
+  GITHUB_NO_COMMITS_MESSAGE,
+  GITHUB_NOT_FOUND_MESSAGE,
+  GITHUB_PR_EXISTS_MESSAGE,
+  GITHUB_PR_REFUSED_MESSAGE,
+  GITHUB_REF_MOVED_MESSAGE,
+  githubAccessMessage,
+} from "@/lib/handbook/github-errors";
+
 import { gitBlobSha } from "./git-blob";
 import {
   createAppJwt,
@@ -113,7 +125,9 @@ describe("handbook GitHub App client (DOC-14)", () => {
     const attempt = () =>
       createAppJwt("1", "-----BEGIN PRIVATE KEY-----\nnope\n-----END PRIVATE KEY-----", 0);
     expect(attempt).toThrow(HandbookGithubError);
-    expect(attempt).toThrow(/bad_private_key/);
+    expect(attempt).toThrow(expect.objectContaining({ code: "bad_private_key" }));
+    expect(attempt).toThrow(GITHUB_KEY_MESSAGE);
+    expect(attempt).not.toThrow(/nope/);
   });
 
   it("asks for a token scoped to the handbook repo and three permissions, and caches it", async () => {
@@ -171,9 +185,14 @@ describe("handbook GitHub App client (DOC-14)", () => {
       [`POST ${REPO}/git/refs`]: () => json({}, 502),
       [`POST ${REPO}/pulls`]: () => json({}, 503),
     });
-    await expect(client.createBranch("hq/x", SHA(1))).rejects.toMatchObject({ code: "github_502" });
+    await expect(client.createBranch("hq/x", SHA(1))).rejects.toMatchObject({
+      code: "create_branch.502",
+      kind: "create_branch",
+      status: 502,
+      message: GITHUB_BUSY_MESSAGE,
+    });
     await expect(client.openPullRequest("hq/x", "main", "t", "b")).rejects.toMatchObject({
-      code: "github_503",
+      code: "open_pull_request.503",
     });
     expect(
       calls.filter(
@@ -359,7 +378,10 @@ describe("handbook GitHub App client (DOC-14)", () => {
     });
     expect(await client.getPullRequest(3)).toMatchObject({ number: 3, state: "merged" });
     expect(sleep).toHaveBeenCalledWith(2000);
-    await expect(client.getPullRequest(4)).rejects.toMatchObject({ code: "github_502" });
+    await expect(client.getPullRequest(4)).rejects.toMatchObject({
+      code: "get_pull_request.502",
+      message: GITHUB_BUSY_MESSAGE,
+    });
     expect(sleep).toHaveBeenCalledTimes(2);
   });
 
@@ -442,5 +464,252 @@ describe("gitBlobSha", () => {
     expect(gitBlobSha(new TextEncoder().encode("hello\n"))).toBe(
       "ce013625030ba8dba906f756967f9e9ca394464a",
     );
+  });
+});
+
+/** Text GitHub might echo back (an input, a token-ish value): must never leave the client. */
+const RAW = "RAW-GITHUB-ECHO ghs_leakedvalue0000000000 Bearer xyz";
+
+/** A GitHub-style error body: `message` plus `errors[]`, both carrying the raw echo. */
+const githubError = (status: number, message: string, errors: unknown[] = []) =>
+  json({ message: `${message} ${RAW}`, errors, documentation_url: `https://docs/${RAW}` }, status);
+
+describe("handbook GitHub errors are classified (DOC-14)", () => {
+  async function failure(promise: Promise<unknown>) {
+    const error = await promise.then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(HandbookGithubError);
+    if (!(error instanceof HandbookGithubError)) throw new Error("expected a HandbookGithubError");
+    return error;
+  }
+
+  const token422 = {
+    "POST /app/installations/67890/access_tokens": () =>
+      githubError(422, "There is at least one repository that does not exist or is not accessible"),
+  };
+
+  it("token 422 (repo not selected, permission missing or pending): installation_token.422", async () => {
+    const { client, calls, log } = fakeGithub(token422);
+    const error = await failure(client.getDefaultBranch());
+    expect(error).toMatchObject({
+      code: "installation_token.422",
+      kind: "installation_token",
+      status: 422,
+    });
+    expect(error.message).toBe(githubAccessMessage("Stockkart/engineering-handbook"));
+    expect(calls).toHaveLength(1);
+    expect(log.mock.calls).toEqual([[{ kind: "installation_token", status: 422 }]]);
+  });
+
+  it.each([
+    [401, GITHUB_KEY_MESSAGE],
+    [403, githubAccessMessage("Stockkart/engineering-handbook")],
+    [404, githubAccessMessage("Stockkart/engineering-handbook")],
+  ])("token %s", async (status, message) => {
+    const { client } = fakeGithub({
+      "POST /app/installations/67890/access_tokens": () => githubError(status, "Nope"),
+    });
+    const error = await failure(client.getDefaultBranch());
+    expect(error.code).toBe(`installation_token.${status}`);
+    expect(error.message).toBe(message);
+  });
+
+  it("repo or default branch missing: get_repo.404 / get_ref.404", async () => {
+    const missingRepo = fakeGithub({ ...tokenRoute() });
+    const repoError = await failure(missingRepo.client.getDefaultBranch());
+    expect(repoError).toMatchObject({ code: "get_repo.404", message: GITHUB_NOT_FOUND_MESSAGE });
+
+    const missingRef = fakeGithub({
+      ...tokenRoute(),
+      [`GET ${REPO}`]: () =>
+        json({ full_name: "Stockkart/engineering-handbook", default_branch: "main" }),
+    });
+    const refError = await failure(missingRef.client.getDefaultBranch());
+    expect(refError).toMatchObject({ code: "get_ref.404", message: GITHUB_NOT_FOUND_MESSAGE });
+  });
+
+  it("create_branch 422 'Reference already exists'", async () => {
+    const { client } = fakeGithub({
+      ...tokenRoute(),
+      [`POST ${REPO}/git/refs`]: () => githubError(422, "Reference already exists"),
+    });
+    const error = await failure(client.createBranch("hq/x", SHA(1)));
+    expect(error).toMatchObject({
+      code: "create_branch.422",
+      hint: "ref_exists",
+      message: GITHUB_BRANCH_EXISTS_MESSAGE,
+    });
+  });
+
+  it.each([
+    ["No commits between main and hq/x", "no_commits", GITHUB_NO_COMMITS_MESSAGE],
+    ["A pull request already exists for Stockkart:hq/x.", "pr_exists", GITHUB_PR_EXISTS_MESSAGE],
+    ["Something else", "other", GITHUB_PR_REFUSED_MESSAGE],
+  ])("open_pull_request 422: %s", async (text, hint, message) => {
+    const { client } = fakeGithub({
+      ...tokenRoute(),
+      // GitHub puts the reason in errors[].message, under "Validation Failed".
+      [`POST ${REPO}/pulls`]: () =>
+        githubError(422, "Validation Failed", [
+          { resource: "PullRequest", code: "custom", message: `${text} ${RAW}` },
+        ]),
+    });
+    const error = await failure(client.openPullRequest("hq/x", "main", "t", "b"));
+    expect(error).toMatchObject({ code: "open_pull_request.422", hint, message });
+  });
+
+  it("update_ref 422 (the branch moved): the handbook changed while publishing", async () => {
+    const { client } = fakeGithub({
+      ...tokenRoute(),
+      [`GET ${REPO}/git/ref/heads/hq/x`]: () => json({ object: { sha: SHA(10) } }),
+      [`GET ${REPO}/git/commits/${SHA(10)}`]: () => json({ sha: SHA(10), tree: { sha: SHA(11) } }),
+      [`POST ${REPO}/git/blobs`]: (call) =>
+        json({ sha: gitBlobSha((call.body as { content: string }).content) }, 201),
+      [`POST ${REPO}/git/trees`]: () => json({ sha: SHA(12) }, 201),
+      [`POST ${REPO}/git/commits`]: () => json({ sha: SHA(13), tree: { sha: SHA(12) } }, 201),
+      [`PATCH ${REPO}/git/refs/heads/hq/x`]: () => githubError(422, "Update is not a fast forward"),
+    });
+    const error = await failure(client.commitFiles("hq/x", [{ path: "A.md", content: "x" }], "m"));
+    expect(error).toMatchObject({ code: "update_ref.422", message: GITHUB_REF_MOVED_MESSAGE });
+  });
+
+  it("429 / 5xx after the retry, or a 403 rate limit: GitHub is busy", async () => {
+    const { client, sleep } = fakeGithub({
+      ...tokenRoute(),
+      [`GET ${REPO}/pulls/5`]: () => json({}, 429),
+      [`GET ${REPO}/pulls/6`]: () => githubError(403, "API rate limit exceeded for installation"),
+    });
+    expect(await failure(client.getPullRequest(5))).toMatchObject({
+      code: "get_pull_request.429",
+      message: GITHUB_BUSY_MESSAGE,
+    });
+    expect(sleep).toHaveBeenCalledTimes(1);
+    expect(await failure(client.getPullRequest(6))).toMatchObject({
+      code: "get_pull_request.403",
+      hint: "rate_limited",
+      message: GITHUB_BUSY_MESSAGE,
+    });
+  });
+
+  it("anything else: GitHub refused the <kind> request (HTTP <status>)", async () => {
+    const { client } = fakeGithub({
+      ...tokenRoute(),
+      [`GET ${REPO}/contents/A.md`]: () => githubError(403, "Resource not accessible"),
+      [`GET ${REPO}/git/trees/${SHA(3)}`]: () =>
+        new Response("<html>not json</html>", { status: 409 }),
+    });
+    expect(await failure(client.getFile("A.md", "main"))).toMatchObject({
+      code: "get_file.403",
+      message: "GitHub refused the get_file request (HTTP 403).",
+    });
+    expect(await failure(client.listTree(SHA(3)))).toMatchObject({
+      code: "list_tree.409",
+      hint: null,
+      message: "GitHub refused the list_tree request (HTTP 409).",
+    });
+  });
+
+  it("a timeout carries the kind: <kind>.timeout", async () => {
+    const timeout = Object.assign(new Error("The operation timed out."), { name: "TimeoutError" });
+    const client = createHandbookGithub({
+      config: CONFIG,
+      fetch: vi.fn(async () => {
+        throw timeout;
+      }),
+      log: vi.fn(),
+    });
+    expect(await failure(client.getDefaultBranch())).toMatchObject({
+      code: "installation_token.timeout",
+    });
+  });
+
+  it("never puts GitHub's raw message in the thrown message, the logs or the code", async () => {
+    const cases: [
+      Record<string, () => Response>,
+      (c: ReturnType<typeof fakeGithub>["client"]) => Promise<unknown>,
+    ][] = [
+      [token422, (c) => c.getDefaultBranch()],
+      [
+        {
+          ...tokenRoute(),
+          [`POST ${REPO}/git/refs`]: () => githubError(422, "Reference already exists"),
+        },
+        (c) => c.createBranch("hq/x", SHA(1)),
+      ],
+      [
+        {
+          ...tokenRoute(),
+          [`POST ${REPO}/pulls`]: () =>
+            githubError(422, "Validation Failed", [
+              { code: "custom", message: `No commits between ${RAW}` },
+              RAW,
+            ]),
+        },
+        (c) => c.openPullRequest("hq/x", "main", "t", "b"),
+      ],
+      [
+        { ...tokenRoute(), [`GET ${REPO}`]: () => githubError(500, "Server Error") },
+        (c) => c.getDefaultBranch(),
+      ],
+    ];
+    for (const [routes, run] of cases) {
+      const { client, log } = fakeGithub(routes);
+      const error = await failure(run(client));
+      const seen = JSON.stringify([
+        error.message,
+        error.code,
+        error.name,
+        error.stack,
+        log.mock.calls,
+      ]);
+      expect(seen).not.toContain("RAW-GITHUB-ECHO");
+      expect(seen).not.toContain("ghs_leakedvalue");
+      expect(error.code).toMatch(/^[a-z0-9_.-]{1,64}$/);
+      expect(error.code).toMatch(/^[a-z_]+\.[0-9]{3}$/);
+      for (const [line] of log.mock.calls)
+        expect(Object.keys(line).sort()).toEqual(["kind", "status"]);
+    }
+  });
+});
+
+describe("Test connection (DOC-14)", () => {
+  it("gets a fresh token and reads the default branch; nothing is written", async () => {
+    const { client, calls } = fakeGithub({
+      ...tokenRoute(),
+      [`GET ${REPO}`]: () =>
+        json({ full_name: "Stockkart/engineering-handbook", default_branch: "main" }),
+      [`GET ${REPO}/git/ref/heads/main`]: () => json({ object: { sha: SHA(7) } }),
+    });
+    await client.getDefaultBranch();
+    await expect(client.testConnection()).resolves.toEqual({
+      repo: "Stockkart/engineering-handbook",
+      defaultBranch: "main",
+    });
+    // The second token request: the test does not trust the cached token.
+    expect(calls.filter((call) => call.url.pathname.includes("access_tokens"))).toHaveLength(2);
+    const writes = calls.filter(
+      (call) => call.method !== "GET" && !call.url.pathname.includes("access_tokens"),
+    );
+    expect(writes).toEqual([]);
+  });
+
+  it("reports the token 422 as the access problem", async () => {
+    const { client, calls } = fakeGithub({
+      "POST /app/installations/67890/access_tokens": () => githubError(422, "Not accessible"),
+    });
+    await expect(client.testConnection()).rejects.toMatchObject({
+      code: "installation_token.422",
+      message: githubAccessMessage("Stockkart/engineering-handbook"),
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  it("is not configured without the App values (no request)", async () => {
+    const fetchFake = vi.fn();
+    const client = createHandbookGithub({ config: null, fetch: fetchFake });
+    await expect(client.testConnection()).rejects.toBeInstanceOf(HandbookNotConfigured);
+    expect(fetchFake).not.toHaveBeenCalled();
   });
 });

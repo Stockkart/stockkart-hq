@@ -9,6 +9,12 @@ import {
   HANDBOOK_NOT_CONFIGURED_MESSAGE,
   isHandbookRepo,
 } from "@/lib/handbook/constants";
+import {
+  describeHandbookError,
+  type GithubFailureHint,
+  type HandbookGithubRequestKind,
+  handbookGithubErrorCode,
+} from "@/lib/handbook/github-errors";
 
 import { gitBlobSha } from "./git-blob";
 
@@ -27,7 +33,9 @@ import { gitBlobSha } from "./git-blob";
  *   - Every file path read or written must pass `isHandbookPath` (Markdown under the repo,
  *     no `..`, no dot-directories), and HQ only writes `hq/…` branches.
  *   - Logs carry the request kind and status code only: never the token, the JWT, the key or
- *     any file content. Errors carry a short code (`github_422` …), never a response body.
+ *     any file content. Errors carry a short code (`<kind>.<status>`, e.g.
+ *     `installation_token.422`), never a response body; GitHub's JSON error body is only
+ *     read to pick a known case (`failureHint`) and then dropped.
  *   - 10 s timeout per request; one retry on 5xx / 429 (honouring `Retry-After`, capped),
  *     except for creating a branch or a PR (not idempotent).
  *     Redirects are refused, so a renamed repo cannot take the token to another URL.
@@ -88,15 +96,102 @@ export class HandbookNotConfigured extends Error {
   }
 }
 
-/** A failed GitHub call. `code` is short and safe to store (`handbook_publications.error_code`). */
+/**
+ * A failed GitHub call. `code` is short and safe to store (`handbook_publications.error_code`):
+ * `<kind>.<status>` for a request GitHub refused or never answered, else a check's own code
+ * (`bad_path` …). The message is the classified reason (`describeHandbookError`), never a
+ * response body.
+ */
 export class HandbookGithubError extends Error {
+  readonly kind: HandbookGithubRequestKind | null;
+  readonly hint: GithubFailureHint | null;
+
   constructor(
     readonly code: string,
     readonly status: number | null = null,
+    options: {
+      kind?: HandbookGithubRequestKind;
+      hint?: GithubFailureHint | null;
+      repo?: string;
+    } = {},
   ) {
-    super(`GitHub request failed (${code})`);
+    super(describeHandbookError(code, { hint: options.hint, repo: options.repo }));
     this.name = "HandbookGithubError";
+    this.kind = options.kind ?? null;
+    this.hint = options.hint ?? null;
   }
+}
+
+/** The error for a request GitHub answered with a non-OK status. */
+function httpError(
+  kind: HandbookGithubRequestKind,
+  status: number,
+  repo: string,
+  hint: GithubFailureHint | null = null,
+): HandbookGithubError {
+  return new HandbookGithubError(handbookGithubErrorCode(kind, status), status, {
+    kind,
+    hint,
+    repo,
+  });
+}
+
+/** Longest error body read (only to classify it; never kept). */
+const MAX_ERROR_BODY_CHARS = 64 * 1024;
+const errorBody = z.object({
+  message: z.string().optional(),
+  errors: z
+    .array(
+      z.union([
+        z.string(),
+        z.object({ code: z.string().optional(), message: z.string().optional() }),
+      ]),
+    )
+    .optional(),
+});
+
+/**
+ * Reduces GitHub's JSON error body to a known case. The body (which may echo what HQ sent)
+ * is dropped here: only the hint leaves this function, never the text.
+ */
+async function failureHint(
+  kind: HandbookGithubRequestKind,
+  response: Response,
+): Promise<GithubFailureHint | null> {
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    return null;
+  }
+  if (text.length > MAX_ERROR_BODY_CHARS) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const parsed = errorBody.safeParse(raw);
+  if (!parsed.success) return null;
+  const errors = parsed.data.errors ?? [];
+  const messages = [
+    parsed.data.message ?? "",
+    ...errors.map((item) => (typeof item === "string" ? item : (item.message ?? ""))),
+  ];
+  const codes = errors.flatMap((item) => (typeof item === "string" ? [] : [item.code ?? ""]));
+  const says = (pattern: RegExp) => messages.some((message) => pattern.test(message));
+  if (says(/rate limit/i)) return "rate_limited";
+  if (
+    kind === "create_branch" &&
+    (says(/reference already exists/i) || codes.includes("already_exists"))
+  ) {
+    return "ref_exists";
+  }
+  if (kind === "open_pull_request") {
+    if (says(/no commits between/i)) return "no_commits";
+    if (says(/a pull request already exists/i)) return "pr_exists";
+  }
+  return "other";
 }
 
 const base64url = (value: Buffer | string) =>
@@ -250,7 +345,7 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
   }
 
   async function send(
-    kind: string,
+    kind: HandbookGithubRequestKind,
     url: URL,
     init: { method: string; authorization: string; body?: unknown; retry?: boolean },
   ): Promise<Response> {
@@ -274,7 +369,11 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
       } catch (error) {
         const timeout = error instanceof Error && error.name === "TimeoutError";
         log({ kind, status: timeout ? "timeout" : "network" });
-        throw new HandbookGithubError(timeout ? "github_timeout" : "github_network");
+        throw new HandbookGithubError(
+          handbookGithubErrorCode(kind, timeout ? "timeout" : "network"),
+          null,
+          { kind },
+        );
       }
       log({ kind, status: response.status });
       const retryable = response.status >= 500 || response.status === 429;
@@ -303,13 +402,23 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
       // if the installation itself was granted more.
       body: { repositories: [name], permissions: TOKEN_PERMISSIONS },
     });
-    if (!response.ok) throw new HandbookGithubError(`github_${response.status}`, response.status);
+    if (!response.ok) {
+      throw httpError(
+        "installation_token",
+        response.status,
+        cfg.repo,
+        await failureHint("installation_token", response),
+      );
+    }
     const parsed = tokenResponse.safeParse(await response.json().catch(() => null));
     if (!parsed.success) throw new HandbookGithubError("github_bad_response");
     // The token must be for exactly the handbook repo (GitHub lists what it covers).
     const repos = parsed.data.repositories;
     if (repos.length !== 1 || repos[0]?.full_name.toLowerCase() !== cfg.repo.toLowerCase()) {
-      throw new HandbookGithubError("token_scope");
+      throw new HandbookGithubError("token_scope", null, {
+        kind: "installation_token",
+        repo: cfg.repo,
+      });
     }
     cached = {
       token: parsed.data.token,
@@ -320,7 +429,7 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
 
   /** A request under `/repos/<repo>`; returns the parsed body, or null on an allowed 404. */
   async function repoCall<S extends z.ZodType>(
-    kind: string,
+    kind: HandbookGithubRequestKind,
     method: string,
     suffix: string,
     schema: S,
@@ -342,15 +451,18 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
     });
     if (response.status === 404 && options.allow404) return null;
     if (response.status === 401) cached = null;
-    if (!response.ok) throw new HandbookGithubError(`github_${response.status}`, response.status);
+    if (!response.ok) {
+      throw httpError(kind, response.status, cfg.repo, await failureHint(kind, response));
+    }
     const parsed = schema.safeParse(await response.json().catch(() => null));
     if (!parsed.success) throw new HandbookGithubError("github_bad_response");
     return parsed.data;
   }
 
-  async function must<T>(value: Promise<T | null>): Promise<T> {
+  /** The value of a call made with `allow404`, where a 404 is a failure after all. */
+  async function must<T>(kind: HandbookGithubRequestKind, value: Promise<T | null>): Promise<T> {
     const result = await value;
-    if (result === null) throw new HandbookGithubError("github_404", 404);
+    if (result === null) throw httpError(kind, 404, config?.repo ?? "");
     return result;
   }
 
@@ -371,6 +483,7 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
 
   async function readBlob(blobSha: string): Promise<string> {
     const blob = await must(
+      "get_blob",
       repoCall("get_blob", "GET", `/git/blobs/${blobSha}`, blobResponse, { allow404: true }),
     );
     if ((blob.size ?? 0) > MAX_FILE_BYTES) throw new HandbookGithubError("file_too_large");
@@ -382,15 +495,44 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
 
   async function refSha(branch: string): Promise<string> {
     const ref = await must(
+      "get_ref",
       repoCall("get_ref", "GET", `/git/ref/heads/${branch}`, refResponse, { allow404: true }),
     );
     return ref.object.sha;
+  }
+
+  /** The default branch and its head commit. */
+  async function defaultBranch(): Promise<{ name: string; sha: string }> {
+    const cfg = requireConfig();
+    const repo = await must(
+      "get_repo",
+      repoCall("get_repo", "GET", "", repoResponse, { allow404: true }),
+    );
+    // A renamed or transferred repo answers for another name: refuse to follow it.
+    if (repo.full_name.toLowerCase() !== cfg.repo.toLowerCase()) {
+      throw new HandbookGithubError("repo_scope", null, { kind: "get_repo", repo: cfg.repo });
+    }
+    checkBranch(repo.default_branch, false);
+    return { name: repo.default_branch, sha: await refSha(repo.default_branch) };
   }
 
   return {
     /** Whether every App value is set; the page shows this, no request is made. */
     configured: () => config !== null,
     repo: config?.repo ?? null,
+
+    /**
+     * Settings → Handbook "Test connection": a fresh installation token (not the cached one,
+     * so the App's access is checked as it is now), then the repo and its default branch.
+     * Reads only; nothing is written to GitHub.
+     */
+    async testConnection(): Promise<{ repo: string; defaultBranch: string }> {
+      const cfg = requireConfig();
+      cached = null;
+      await installationToken(cfg);
+      const branch = await defaultBranch();
+      return { repo: cfg.repo, defaultBranch: branch.name };
+    },
 
     /** A Markdown file on `ref` (branch or commit sha), or null when it does not exist. */
     async getFile(path: string, ref: string): Promise<RepoFile | null> {
@@ -412,21 +554,13 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
     },
 
     /** The default branch and its head commit. */
-    async getDefaultBranch(): Promise<{ name: string; sha: string }> {
-      const cfg = requireConfig();
-      const repo = await must(repoCall("get_repo", "GET", "", repoResponse, { allow404: true }));
-      // A renamed or transferred repo answers for another name: refuse to follow it.
-      if (repo.full_name.toLowerCase() !== cfg.repo.toLowerCase()) {
-        throw new HandbookGithubError("repo_scope");
-      }
-      checkBranch(repo.default_branch, false);
-      return { name: repo.default_branch, sha: await refSha(repo.default_branch) };
-    },
+    getDefaultBranch: defaultBranch,
 
     /** Every handbook Markdown file (`isHandbookPath`) in the tree of a commit. */
     async listTree(commitSha: string): Promise<{ path: string; sha: string }[]> {
       checkSha(commitSha);
       const tree = await must(
+        "list_tree",
         repoCall("list_tree", "GET", `/git/trees/${commitSha}`, treeResponse, {
           query: { recursive: "1" },
           allow404: true,
@@ -474,6 +608,7 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
       }
       const headSha = await refSha(branch);
       const head = await must(
+        "get_commit",
         repoCall("get_commit", "GET", `/git/commits/${headSha}`, commitResponse, {
           allow404: true,
         }),
@@ -481,6 +616,7 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
       const blobs: { path: string; sha: string }[] = [];
       for (const file of files) {
         const blob = await must(
+          "create_blob",
           repoCall("create_blob", "POST", "/git/blobs", blobResponse, {
             body: { content: file.content, encoding: "utf-8" },
           }),
@@ -490,6 +626,7 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
         blobs.push({ path: file.path, sha: blob.sha });
       }
       const tree = await must(
+        "create_tree",
         repoCall("create_tree", "POST", "/git/trees", createdTree, {
           body: {
             base_tree: head.tree.sha,
@@ -503,6 +640,7 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
         }),
       );
       const commit = await must(
+        "create_commit",
         repoCall("create_commit", "POST", "/git/commits", commitResponse, {
           body: { message, tree: tree.sha, parents: [headSha] },
         }),
@@ -523,6 +661,7 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
       checkBranch(head, true);
       checkBranch(base, false);
       const pr = await must(
+        "open_pull_request",
         repoCall("open_pull_request", "POST", "/pulls", pullResponse, {
           body: { title, head, base, body, maintainer_can_modify: false, draft: false },
           retry: false,
@@ -535,6 +674,7 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
       const cfg = requireConfig();
       if (!Number.isInteger(number) || number < 1) throw new HandbookGithubError("bad_number");
       const pr = await must(
+        "get_pull_request",
         repoCall("get_pull_request", "GET", `/pulls/${number}`, pullResponse, { allow404: true }),
       );
       return {

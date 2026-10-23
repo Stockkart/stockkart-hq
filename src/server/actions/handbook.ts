@@ -11,6 +11,7 @@ import {
 } from "@/lib/handbook/schemas";
 import {
   type CheckOutcome,
+  type ConnectionTestOutcome,
   type PublishOutcome,
   type PublishPreview,
   type PullPreview,
@@ -94,6 +95,22 @@ export async function handbookCheckAction(input: unknown): Promise<ActionResult<
     input,
     (data) => handbookPullService.check(session.user.id, data.projectKey),
     refreshSync,
+  );
+}
+
+/**
+ * "Test connection" (Settings → Handbook; once a minute per project): a fresh installation
+ * token and the default branch. Reads GitHub only and changes nothing, so no refresh.
+ */
+export async function handbookTestConnectionAction(
+  input: unknown,
+): Promise<ActionResult<ConnectionTestOutcome>> {
+  const session = await requireSession();
+  return runAction(
+    handbookProjectInput,
+    input,
+    (data) => handbookPullService.testConnection(session.user.id, data.projectKey),
+    noRefresh,
   );
 }
 

@@ -23,7 +23,11 @@ export const HANDBOOK_BRANCH_REGEX_SOURCE = "^hq/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,9
 export const HANDBOOK_PR_URL_REGEX_SOURCE =
   "^https://github[.]com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/[1-9][0-9]{0,9}$";
 
-/** `handbook_publications.error_code`: a short machine code (`conflict`, `github_403` …). */
+/**
+ * `handbook_publications.error_code`: a short machine code, `<kind>.<status>` for a GitHub
+ * request (`installation_token.422` …; older rows hold `github_403` …) or a check's own code
+ * (`abandoned`, `bad_path` …). Never a response body.
+ */
 export const HANDBOOK_ERROR_CODE_REGEX_SOURCE = "^[a-z0-9_.-]{1,64}$";
 
 /** The handbook repo (DOC-14); `HANDBOOK_REPO` may name another repo of the same org. */

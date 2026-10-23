@@ -89,3 +89,9 @@ export interface CheckOutcome {
   /** Top-level and `decisions/NNNN-*.md` files no doc maps to. */
   newFiles: { path: string; sha: string }[];
 }
+
+/** "Test connection": the App got a token and read the repo's default branch. */
+export interface ConnectionTestOutcome {
+  repo: string;
+  defaultBranch: string;
+}

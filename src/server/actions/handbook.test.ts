@@ -14,6 +14,7 @@ const handbookPullService = vi.hoisted(() => ({
   preview: vi.fn(),
   apply: vi.fn(),
   check: vi.fn(),
+  testConnection: vi.fn(),
   importFile: vi.fn(),
 }));
 vi.mock("@/server/services", () => ({ handbookPublishService, handbookPullService }));
@@ -33,6 +34,7 @@ const validInputs: [keyof typeof actions, unknown][] = [
   ["handbookPullPreviewAction", { docId: ID }],
   ["handbookPullApplyAction", { docId: ID, baseVersion: 2, remoteSha: "a".repeat(40) }],
   ["handbookCheckAction", { projectKey: "STK" }],
+  ["handbookTestConnectionAction", { projectKey: "STK" }],
   ["handbookImportFileAction", { projectKey: "STK", path: "NEW.md" }],
 ];
 
@@ -137,5 +139,38 @@ describe("handbook server actions (DOC-14)", () => {
       "/[projectKey]/docs/[id]",
       "/[projectKey]/settings",
     ]);
+  });
+});
+
+describe("handbookTestConnectionAction (DOC-14)", () => {
+  beforeEach(() => {
+    authMock.mockReset().mockResolvedValue(session);
+    revalidatePath.mockReset();
+    handbookPullService.testConnection.mockReset();
+  });
+
+  it("returns the repo and default branch, and refreshes nothing (reads only)", async () => {
+    handbookPullService.testConnection.mockResolvedValue({
+      repo: "Stockkart/engineering-handbook",
+      defaultBranch: "main",
+    });
+    await expect(actions.handbookTestConnectionAction({ projectKey: "STK" })).resolves.toEqual({
+      ok: true,
+      data: { repo: "Stockkart/engineering-handbook", defaultBranch: "main" },
+    });
+    expect(handbookPullService.testConnection).toHaveBeenCalledWith(ID, "STK");
+    expect(revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the token 422", "The GitHub App can't get access to … (installation_token.422)."],
+    ["the rate limit", "The connection was tested less than a minute ago; try again shortly"],
+    ["not configured", HANDBOOK_NOT_CONFIGURED_MESSAGE],
+  ])("returns %s as the error", async (_case, message) => {
+    handbookPullService.testConnection.mockRejectedValue(new ServiceError("invalid", message));
+    await expect(actions.handbookTestConnectionAction({ projectKey: "STK" })).resolves.toEqual({
+      ok: false,
+      error: message,
+    });
   });
 });

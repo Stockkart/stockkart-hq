@@ -20,6 +20,7 @@ import { HandbookStatusBadge } from "@/features/docs/handbook-sync/handbook-stat
 import { callAction } from "@/features/issue/client-utils";
 import { docPath } from "@/lib/docs/views";
 import { HANDBOOK_PUBLISH_MAX, type HandbookSyncStatus } from "@/lib/handbook/constants";
+import { handbookErrorText } from "@/lib/handbook/github-errors";
 import {
   type CheckOutcome,
   type HandbookConfigView,
@@ -30,6 +31,7 @@ import {
   handbookCheckAction,
   handbookImportFileAction,
   handbookPublishAction,
+  handbookTestConnectionAction,
 } from "@/server/actions/handbook";
 
 /** Table filters (Settings → Handbook). */
@@ -57,10 +59,11 @@ const STATE_LABELS: Record<HandbookPublicationView["state"], string> = {
 const day = (date: Date) => date.toISOString().slice(0, 10);
 
 /**
- * DOC-14 Settings → Handbook: setup status, the docs with their sync status (stored state,
- * no GitHub call while rendering), bulk "Publish selected" (one PR), "Check handbook now"
- * (a server action; once a minute per project), "New in handbook" imports and the recent
- * publications.
+ * DOC-14 Settings → Handbook: setup status with "Test connection" (a server action: a token
+ * and the default branch, once a minute per project), the docs with their sync status (stored
+ * state, no GitHub call while rendering), bulk "Publish selected" (one PR), "Check handbook
+ * now" (a server action; once a minute per project), "New in handbook" imports and the recent
+ * publications (a failed one shows its classified reason and code).
  */
 export function HandbookTab({
   projectKey,
@@ -82,9 +85,11 @@ export function HandbookTab({
   const [message, setMessage] = useState("");
   const [check, setCheck] = useState<CheckOutcome | null>(null);
   const [imported, setImported] = useState<ReadonlySet<string>>(new Set());
+  const [connection, setConnection] = useState<{ ok: boolean; text: string } | null>(null);
   const [publishing, startPublishing] = useTransition();
   const [checking, startChecking] = useTransition();
   const [importing, startImporting] = useTransition();
+  const [testing, startTesting] = useTransition();
 
   const visible = useMemo(() => {
     const statuses: readonly HandbookSyncStatus[] | null = HANDBOOK_FILTERS[filter].statuses;
@@ -125,6 +130,26 @@ export function HandbookTab({
       setConfirming(false);
       setSelected(new Set());
       router.refresh();
+    });
+  }
+
+  /** "Test connection": shown inline (✓ or the classified reason) and as a toast. */
+  function testConnection() {
+    startTesting(async () => {
+      let text: string;
+      let ok = false;
+      try {
+        const result = await handbookTestConnectionAction({ projectKey });
+        ok = result.ok;
+        text = result.ok
+          ? `✓ Connected to ${result.data.repo} (default branch ${result.data.defaultBranch}).`
+          : result.error;
+      } catch {
+        text = "Something went wrong. Reload the page and try again.";
+      }
+      setConnection({ ok, text });
+      if (ok) toast.success("GitHub connection works");
+      else toast.error(text);
     });
   }
 
@@ -173,6 +198,23 @@ export function HandbookTab({
             <span className="text-destructive">Handbook sync isn&apos;t set up</span>
           )}
         </p>
+        {config.configured ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" disabled={testing} onClick={testConnection}>
+              {testing ? "Testing…" : "Test connection"}
+            </Button>
+            <p
+              aria-live="polite"
+              className={
+                connection?.ok === false
+                  ? "text-sm text-destructive"
+                  : "text-sm text-emerald-700 dark:text-emerald-400"
+              }
+            >
+              {connection?.text ?? ""}
+            </p>
+          </div>
+        ) : null}
         {config.configured ? null : (
           <div className="rounded-md border p-3 text-sm">
             <p className="font-medium">Set up (an org owner, once):</p>
@@ -352,7 +394,11 @@ export function HandbookTab({
                   <code className="font-mono text-xs">{pub.branch}</code>
                 )}
                 <span>{STATE_LABELS[pub.state]}</span>
-                {pub.errorCode ? <span className="text-destructive">({pub.errorCode})</span> : null}
+                {pub.errorCode ? (
+                  <span className="text-destructive">
+                    {handbookErrorText(pub.errorCode, { repo: config.repo })}
+                  </span>
+                ) : null}
                 <span className="text-muted-foreground">
                   {pub.docCount} {pub.docCount === 1 ? "doc" : "docs"}
                   {pub.createdByName ? ` · ${pub.createdByName}` : ""} ·{" "}
