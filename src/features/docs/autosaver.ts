@@ -77,6 +77,8 @@ export class Autosaver<C> {
   private snapshotRequested = false;
   /** "Keep mine": the title must be re-sent even if it equals the last saved one. */
   private forceTitle = false;
+  /** The latest save's promise (resolved when it has been fully handled), for `flush`. */
+  private settled: Promise<void> = Promise.resolve();
 
   constructor(
     initial: { version: number; content: C; title: string },
@@ -163,6 +165,26 @@ export class Autosaver<C> {
   }
 
   /**
+   * Saves everything pending now and resolves once nothing is in flight (the doc page's
+   * "Done"): waits for a save already running, then saves what is left. Returns the final
+   * state; `conflict` or `error` means my changes are not all saved (the caller warns).
+   */
+  async flush(): Promise<SaverState<C>> {
+    this.clearTimer();
+    for (let round = 0; round < 5; round += 1) {
+      await this.settled;
+      this.clearTimer();
+      if (this.state.status === "conflict") break;
+      const pending =
+        this.revision !== this.savedRevision || this.snapshotRequested || this.forceTitle;
+      if (!pending) break;
+      await this.run();
+      if (this.state.status === "error") break;
+    }
+    return this.state;
+  }
+
+  /**
    * Continue from a version the server just wrote on my behalf (e.g. a DGM-4 restore):
    * its content and title become mine, with nothing pending. Only while nothing is in
    * flight or unsaved, so no edit is dropped.
@@ -195,7 +217,15 @@ export class Autosaver<C> {
     }, this.deps.delayMs ?? AUTOSAVE_DELAY_MS);
   }
 
-  private async run() {
+  /** Starts a save (unless one is running); resolves when the latest save has finished. */
+  private run(): Promise<void> {
+    if (this.inFlight || this.state.status === "conflict") return this.settled;
+    const work = this.runSave();
+    this.settled = work;
+    return work;
+  }
+
+  private async runSave() {
     // One save at a time; changes made meanwhile are saved right after (see below).
     if (this.inFlight || this.state.status === "conflict") return;
     const nothingNew = this.revision === this.savedRevision && !this.snapshotRequested;

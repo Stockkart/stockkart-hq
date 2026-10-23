@@ -3,7 +3,7 @@
 import { ChevronRight, FileText, Plus } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { type DragEvent, useMemo, useState, useTransition } from "react";
+import { type DragEvent, type KeyboardEvent, useMemo, useState, useTransition } from "react";
 
 import { callAction } from "@/features/issue/client-utils";
 import { buildTree, descendantIds, siblingsOf, type TreeNode } from "@/lib/docs/tree";
@@ -55,13 +55,71 @@ type DialogState =
 const DRAG_TYPE = "application/x-hq-doc";
 
 /**
- * DOC-2 page tree: expand/collapse, drag to reorder or nest, and a per-row menu (new
- * sub-page, rename, "Move to…" as the keyboard alternative to dragging, delete).
+ * The docs a search shows: those whose title contains every word of `query` (any case),
+ * plus their ancestors so each match keeps its place in the tree. Null for no query.
  */
-export function DocTree({ projectKey, docs }: { projectKey: string; docs: DocTreeItem[] }) {
+export function treeMatches(docs: readonly DocTreeItem[], query: string): Set<string> | null {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return null;
+  const byId = new Map(docs.map((doc) => [doc.id, doc]));
+  const shown = new Set<string>();
+  for (const doc of docs) {
+    const title = doc.title.toLowerCase();
+    if (!words.every((word) => title.includes(word))) continue;
+    // Walk up (bounded: a corrupt parent cycle cannot loop forever).
+    let current: DocTreeItem | undefined = doc;
+    for (let depth = 0; current && depth < 100 && !shown.has(current.id); depth += 1) {
+      shown.add(current.id);
+      current = current.parentId ? byId.get(current.parentId) : undefined;
+    }
+  }
+  return shown;
+}
+
+/** ↑/↓/Home/End move between the tree's page links (the keyboard path through the tree). */
+function onTreeKeyDown(event: KeyboardEvent<HTMLElement>) {
+  const target = event.target;
+  if (!(target instanceof HTMLElement) || !target.matches("a[data-tree-link]")) return;
+  const links = [...event.currentTarget.querySelectorAll<HTMLElement>("a[data-tree-link]")];
+  const at = links.indexOf(target);
+  const next: Record<string, number> = {
+    ArrowDown: Math.min(links.length - 1, at + 1),
+    ArrowUp: Math.max(0, at - 1),
+    Home: 0,
+    End: links.length - 1,
+  };
+  const index = next[event.key];
+  if (index === undefined) return;
+  event.preventDefault();
+  links[index]?.focus();
+}
+
+/**
+ * DOC-2 page tree: expand/collapse, drag to reorder or nest, and a per-row menu (new
+ * sub-page, rename, "Move to…" as the keyboard alternative to dragging, delete). With a
+ * `query` it shows only the matching pages and their ancestors, expanded. Arrow keys move
+ * between the page links.
+ */
+export function DocTree({
+  projectKey,
+  docs,
+  query = "",
+  onNavigate,
+}: {
+  projectKey: string;
+  docs: DocTreeItem[];
+  /** Search-as-you-type filter (the Pages drawer). */
+  query?: string;
+  /** Called when a page link is followed (the drawer closes). */
+  onNavigate?: () => void;
+}) {
   const router = useRouter();
   const pathname = usePathname();
-  const roots = useMemo(() => buildTree(docs), [docs]);
+  const matches = useMemo(() => treeMatches(docs, query), [docs, query]);
+  const roots = useMemo(
+    () => buildTree(matches ? docs.filter((doc) => matches.has(doc.id)) : docs),
+    [docs, matches],
+  );
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [dragging, setDragging] = useState<string | null>(null);
   const [over, setOver] = useState<{ id: string; zone: DropZone } | null>(null);
@@ -122,7 +180,8 @@ export function DocTree({ projectKey, docs }: { projectKey: string; docs: DocTre
 
   function renderNode(node: TreeNode<DocTreeItem>, depth: number) {
     const hasChildren = node.children.length > 0;
-    const expanded = hasChildren && !collapsed.has(node.id);
+    // While searching every shown branch is open (it leads to a match).
+    const expanded = hasChildren && (matches !== null || !collapsed.has(node.id));
     const href = docPath(projectKey, node.id);
     const current = pathname === href;
     const zone = over?.id === node.id ? over.zone : null;
@@ -174,6 +233,8 @@ export function DocTree({ projectKey, docs }: { projectKey: string; docs: DocTre
           )}
           <Link
             href={href}
+            data-tree-link=""
+            onClick={onNavigate}
             aria-current={current ? "page" : undefined}
             className="min-w-0 flex-1 truncate rounded-sm px-1 py-1 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
@@ -210,7 +271,12 @@ export function DocTree({ projectKey, docs }: { projectKey: string; docs: DocTre
   const deletingParent = deleting?.parentId ? byId.get(deleting.parentId) : undefined;
 
   return (
-    <nav aria-label="Pages" className="flex flex-col gap-1" aria-busy={pending || undefined}>
+    <nav
+      aria-label="Pages"
+      className="flex flex-col gap-1"
+      aria-busy={pending || undefined}
+      onKeyDown={onTreeKeyDown}
+    >
       <div className="flex items-center justify-between px-1">
         <Link
           href={`/${projectKey}/docs`}
@@ -229,7 +295,9 @@ export function DocTree({ projectKey, docs }: { projectKey: string; docs: DocTre
         </button>
       </div>
       {roots.length === 0 ? (
-        <p className="px-1 text-sm text-muted-foreground">No pages yet.</p>
+        <p className="px-1 text-sm text-muted-foreground">
+          {matches ? "No page matches." : "No pages yet."}
+        </p>
       ) : (
         <ul className="flex flex-col">{roots.map((node) => renderNode(node, 0))}</ul>
       )}

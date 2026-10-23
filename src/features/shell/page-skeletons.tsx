@@ -108,26 +108,25 @@ export function IssueSkeleton() {
   );
 }
 
-/** Doc editor, inside the docs layout (the tree stays). */
+/** Doc page (read mode by default; the page tree is a drawer). */
 export function DocSkeleton() {
   return (
     <Loading label="document">
-      <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_18rem]">
-        <div className="flex flex-col gap-4">
+      {/* Docs UX: a header bar, then the reading column (no tree, panels collapsed). */}
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center gap-2 border-b pb-2">
+          <Skeleton className="h-8 w-20" />
           <Skeleton className="h-4 w-48" />
+          <Skeleton className="ml-auto h-8 w-40" />
+        </div>
+        <div className="mx-auto flex w-full max-w-[72ch] flex-col gap-4">
           <Skeleton className="h-9 w-2/3" />
-          <div className="flex gap-3">
-            {Array.from({ length: 3 }, (_, index) => (
-              <Skeleton key={index} className="h-8 w-28" />
+          <div className="flex gap-2">
+            {Array.from({ length: 4 }, (_, index) => (
+              <Skeleton key={index} className="h-5 w-24 rounded-full" />
             ))}
           </div>
           <Skeleton className="min-h-[60vh] w-full" />
-        </div>
-        <div className="flex flex-col gap-3">
-          <Skeleton className="h-5 w-32" />
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-5 w-24" />
-          <Skeleton className="h-24 w-full" />
         </div>
       </div>
     </Loading>

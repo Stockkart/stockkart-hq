@@ -44,8 +44,8 @@ src/
   app/(app)/              signed-in app shell (layout calls requirePageSession); my-work/, todos/,
                           notifications/, settings/profile/
   app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, backlog/, board/, docs/
-                          (tree layout, list, docs/[id] editor, docs/[id]/export DOC-12 .md
-                          download), adrs/, sprints/ (list,
+                          (index = tree + list, docs/[id] doc page: read mode, `?edit=1`
+                          edit mode; docs/[id]/export DOC-12 .md download), adrs/, sprints/ (list,
                           sprints/[sprintId]), diagrams/ (grid, diagrams/[id] editor), roadmap/
                           (RDM-1/2), releases/ (list, releases/[releaseId]; REL-1/2),
                           incidents/ (list, incidents/[key] = INC-n; INC-1/2), services/ (list,
@@ -428,6 +428,47 @@ Rules for the sync slice:
 - Webhooks: verify the signature first (as `server/github/` does) and dedupe by delivery id.
 - The handbook repo is public: export only what the doc already says (no internal ids beyond
   the HQ links the serializer writes, no emails, no attachment URLs that bypass HQ auth).
+
+Docs UX as built (no migration):
+
+- **Doc page** = `features/docs/doc-screen.tsx` (client) under `docs/[id]/page.tsx`, still ONE
+  round trip (`docs-ux.db.test.ts` counts it; add any new page read there and to that test).
+  Read mode renders `RichTextView` (no Tiptap loaded); `?edit=1` mounts `DocEditor`, which
+  only holds the edit body and is driven through `controllerRef` (`flush`, `saveVersion`,
+  `mine`). "Done" = `Autosaver.flush()`, then read mode; a save that did not land asks first.
+  `E`, `[`, Esc and ⌘/Ctrl+Enter are in `features/shell/shortcuts.ts` (scope "Docs").
+- No persistent tree: `pages-nav.tsx` (drawer + pinned column, `localStorage` key
+  `hq.docs.pages`). The docs index page renders the full `DocTree` itself; the docs layout no
+  longer reads the tree.
+- Side panels open one at a time; `DocCommentsPanel` stays mounted while hidden (`visible`,
+  `onActivate`) so comment requests from the editor and from read mode reach it.
+- **Inline comments from read mode**: `doc-read-view.tsx` tags text leaves for the view only
+  (`tagTextLeaves`, mark `hqTextLeaf`, renderer `renderers/text-leaf.tsx`; never saved), maps
+  the selection to `{ leaf, from, to }`, adds the anchor with `addAnchorMark`
+  (`lib/docs/anchor-marks.ts`) and saves with `saveDocAction` on the shown version (§7.4);
+  only then does it send the usual `hq:comment-anchor-request`. A conflict refreshes, never
+  overwrites.
+- **DOC-10**: `docService.restoreVersion` = `lockedSave` (shared with `saveDoc`) with the old
+  title and content, `snapshot: true` and an activity row `restored` (field `version`, from =
+  restored version, to = new version). `restoredContent` keeps anchors of live threads and
+  re-anchors current threads whose exact text exists in the old version. The diff is
+  `lineDiff` over `# title` + `richTextToMarkdown` (`history/`); version contents load on open
+  (`loadDocVersionAction`), never with the page.
+- **ADR-3**: `docService.supersedeAdr` is ONE statement: `UPDATE` the old ADR (gated on "not
+  superseded yet") first, then the insert gated on it (FK to the new id checked at statement
+  end), activity on both (`adrStatus`, `adrSupersededBy` on the old; `supersedes` on the new).
+  Numbering is `allocateAdr`, shared with `createAdr`.
+
+**Mount points for the handbook sync slice** (one line each, nothing else to edit):
+
+- `features/docs/doc-actions/index.ts` → `DOC_ACTIONS`: add the "Publish to handbook" /
+  "Pull from handbook" descriptors (`types.ts`: `id`, `label`, `visible?`, `run` or a
+  `dialog` getting `{ context, open, onOpenChange }`; `context.flush()` saves pending edits
+  first, `context.current()` is the copy on screen). Ids are checked unique at load.
+- `features/docs/doc-header-badges/index.tsx` → `DOC_HEADER_BADGES`: add `{ id, Badge }`
+  where `Badge` takes `{ doc: DocDetail }` (render null when there is nothing to say). Sync
+  state needs fields that `DocDetail` lacks: add them to `docQueries.getDoc` (same query,
+  so still one round trip).
 
 ## File storage (R2)
 

@@ -5,6 +5,7 @@ import { commentAnchorMarkRenderers } from "./comment-mark";
 import { diagramEmbedRenderers } from "./diagram-embed";
 import { calloutRenderers, mermaidRenderers, tableRenderers } from "./doc-blocks";
 import { mentionRenderers } from "./mentions";
+import { textLeafMarkRenderers } from "./text-leaf";
 import {
   type MarkRenderer,
   type MarkRenderers,
@@ -40,6 +41,7 @@ export const NODE_RENDERERS: ReadonlyMap<string, NodeRenderer> = mergeRegistries
  */
 const MARKS: readonly MarkRenderers[] = [
   commentAnchorMarkRenderers,
+  textLeafMarkRenderers,
   // A new mark adds one line here.
 ];
 

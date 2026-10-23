@@ -47,6 +47,19 @@ export interface DocVersionView {
   createdAt: Date;
 }
 
+/** DOC-10: one snapshot with its content, for the diff and the read-only preview. */
+export interface DocVersionDetail extends DocVersionView {
+  title: string;
+  content: RichTextDoc | null;
+}
+
+/** ADR-3: an ADR this one supersedes ("Supersedes ADR-0007"). */
+export interface AdrRef {
+  id: string;
+  title: string;
+  adrNumber: number | null;
+}
+
 export interface LinkedIssueView {
   /** Present for links stored from this doc (they can be removed if manual). */
   linkId: string;
@@ -84,4 +97,9 @@ export interface LinkedDocView {
 /** `/STK/docs/<id>`; slice 2's search links here too. */
 export function docPath(projectKey: string, docId: string): string {
   return `/${projectKey}/docs/${docId}`;
+}
+
+/** The doc in edit mode (`?edit=1`): new docs open like this. */
+export function docEditPath(projectKey: string, docId: string): string {
+  return `${docPath(projectKey, docId)}?edit=1`;
 }

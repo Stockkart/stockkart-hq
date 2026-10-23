@@ -221,7 +221,16 @@ database, and the tests use small synthetic markdown.
 
 `GET /<KEY>/docs/<id>/export` downloads a doc as its handbook file (`text/markdown`,
 `attachment`, `no-store`, session required; 404 for a missing or deleted doc). The same
-code will write the files the handbook publish (DOC-14) puts in its PRs.
+code will write the files the handbook publish (DOC-14) puts in its PRs. On the doc page the
+"⋯" menu offers "Download as Markdown" (this route) and "Copy as Markdown" (the same
+serializer, run in the browser on the copy on screen).
+
+**Doc page** (docs UX): docs and ADRs open read-only (no editor loaded); "Edit" (`E`) or
+`?edit=1` switches to editing, "Done" (Esc, ⌘/Ctrl+Enter) saves and goes back. The page tree
+is a "Pages" drawer (`[`), pinnable as a narrow column; the side panels (comments, linked
+issues, attachments, history, details) open one at a time. History shows a diff of each kept
+version against the current one (or the previous one) and restores a version as a new one
+(DOC-10); an ADR's menu can supersede it with a new ADR (ADR-3).
 
 **Serializer** (`src/lib/markdown/from-rich-text.ts`, the inverse of `to-rich-text.ts`):
 editor JSON → GitHub-flavoured Markdown, deterministic, ending in exactly one newline.
