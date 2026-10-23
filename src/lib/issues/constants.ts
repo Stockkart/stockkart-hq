@@ -89,6 +89,9 @@ export const ENTITY_TYPES = [
   "attachment",
   "service",
   "release",
+  // Costs (migration 0007, `ALTER TYPE … ADD VALUE`: no later SQL migration may use it
+  // until 0007 is applied everywhere). Activity on cost items and the COST-7 reminder.
+  "cost_item",
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 

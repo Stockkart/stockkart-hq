@@ -10,6 +10,8 @@
  * use them until 0005 is applied everywhere): `comment_on_doc` (DOC-13: a comment or reply
  * on a doc you own or a thread you are in) and `incident_commander` (INC-1: you were made an
  * incident's commander).
+ * Costs (migration 0007, same `ADD VALUE` rule): `cost_reminder` (COST-7: last month's
+ * costs are not all entered yet; a system event, no actor).
  */
 export const NOTIFICATION_TYPES = [
   "assigned",
@@ -19,6 +21,7 @@ export const NOTIFICATION_TYPES = [
   "mentioned_in_doc",
   "comment_on_doc",
   "incident_commander",
+  "cost_reminder",
 ] as const;
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
 

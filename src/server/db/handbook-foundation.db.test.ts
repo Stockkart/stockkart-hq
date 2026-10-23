@@ -67,10 +67,15 @@ describeDb("handbook foundation schema (Postgres)", () => {
   });
 
   it("applies every migration, 0000 through 0006, on an empty database", async () => {
+    // Later migrations (0007 costs …) apply too; their own tests pin the total.
     const result = await db.execute(
-      sql`SELECT count(*)::int AS n FROM drizzle.__drizzle_migrations`,
+      sql`SELECT count(*)::int AS n,
+        bool_or(created_at = 1792760105217) AS has_0006
+        FROM drizzle.__drizzle_migrations`,
     );
-    expect(rowsOf(result, z.object({ n: z.number() }))).toEqual([{ n: 7 }]);
+    const [row] = rowsOf(result, z.object({ n: z.number(), has_0006: z.boolean() }));
+    expect(row?.has_0006).toBe(true);
+    expect(row?.n).toBeGreaterThanOrEqual(7);
   });
 
   it("adds nullable sync columns to docs", async () => {
