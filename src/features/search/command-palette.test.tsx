@@ -210,7 +210,8 @@ describe("CommandPalette (SRCH-1/2, §5.7)", () => {
     const dialog = await screen.findByRole("dialog", { name: "New ADR" });
     await user.type(within(dialog).getByLabelText("Decision title"), "Use Postgres");
     await user.click(within(dialog).getByRole("button", { name: "Create ADR" }));
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/STK/docs/a1"));
+    // Docs UX: a new ADR opens in edit mode.
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/STK/docs/a1?edit=1"));
     expect(docActions.createAdrAction).toHaveBeenCalledWith({
       projectKey: "STK",
       title: "Use Postgres",

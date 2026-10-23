@@ -21,7 +21,7 @@ import { callAction } from "@/features/issue/client-utils";
 import { DOC_TYPE_LABELS, type DocType, PICKABLE_DOC_TYPES } from "@/lib/docs/constants";
 import { DOC_TITLE_MAX } from "@/lib/docs/schemas";
 import { buildTree, descendantIds, flattenTree, siblingsOf } from "@/lib/docs/tree";
-import { docPath, type DocTemplateView, type DocTreeItem } from "@/lib/docs/views";
+import { docEditPath, type DocTemplateView, type DocTreeItem } from "@/lib/docs/views";
 import { preloader } from "@/lib/idle";
 import { cn } from "@/lib/utils";
 import {
@@ -88,7 +88,7 @@ export function NewDocDialog({
       if (!created) return;
       onOpenChange(false);
       setTitle("");
-      router.push(docPath(projectKey, created.id));
+      router.push(docEditPath(projectKey, created.id));
     });
   }
 
@@ -158,7 +158,7 @@ export function NewAdrDialog({
       onOpenChange(false);
       setTitle("");
       toast.success(`Created ${created.title}`);
-      router.push(docPath(projectKey, created.id));
+      router.push(docEditPath(projectKey, created.id));
     });
   }
 
@@ -259,7 +259,7 @@ export function TemplatePickerDialog({
       if (!created) return;
       onOpenChange(false);
       setTitle("");
-      router.push(docPath(projectKey, created.id));
+      router.push(docEditPath(projectKey, created.id));
     });
   }
 

@@ -4,8 +4,8 @@ import { z } from "zod";
 
 import { AttachmentsPanel } from "@/features/attachments/attachments-panel";
 import { AttachmentUploadProvider } from "@/features/attachments/upload-context";
-import { DocEditor } from "@/features/docs/doc-editor";
 import { docTree } from "@/features/docs/doc-route";
+import { DocScreen } from "@/features/docs/doc-screen";
 import { requireProject, resolveProjectKey } from "@/features/issue/project-route";
 import { requirePageSession } from "@/server/auth/require-session";
 import { commentService, docQueries, fileQueries, issueQueries } from "@/server/services";
@@ -23,7 +23,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return { title: `Doc · ${projectKey.toUpperCase()}` };
 }
 
-/** §5.5 doc editor at `/STK/docs/<id>`. */
+/** §5.5 doc page at `/STK/docs/<id>`: read mode, or edit mode with `?edit=1` (docs UX). */
 export default async function DocPage({ params }: Props) {
   // Layouts and pages render in parallel, so each page checks the session itself too.
   const session = await requirePageSession();
@@ -33,8 +33,8 @@ export default async function DocPage({ params }: Props) {
   const key = resolveProjectKey(projectKey, `/docs/${parsed.data}`);
   const projectId = projectIdByKey(key);
   const docUuid = parsed.data;
-  // ONE round trip for the page and the docs layout: every query takes the project by key
-  // and the doc by its id, so none waits for another. Rows for a doc that turns out not to
+  // ONE round trip: every query takes the project by key and the doc by its id, so none
+  // waits for another. Rows for a doc that turns out not to
   // exist (or to be in another project) are simply not rendered: the page 404s.
   const [
     ,
@@ -48,6 +48,7 @@ export default async function DocPage({ params }: Props) {
     tree,
     attachments,
     threads,
+    supersedes,
   ] = await Promise.all([
     requireProject(key),
     docQueries.getDoc(projectId, docUuid),
@@ -62,6 +63,8 @@ export default async function DocPage({ params }: Props) {
     fileQueries.listAttachments("doc", docUuid),
     // DOC-11 / DOC-13 comment threads; same batch.
     commentService.listForDoc(docUuid),
+    // ADR-3 "Supersedes ADR-0007" banner; same batch.
+    docQueries.supersedes(docUuid),
   ]);
   if (!doc) notFound();
   const storageReady = storageConfigured();
@@ -70,8 +73,8 @@ export default async function DocPage({ params }: Props) {
   return (
     // Files pasted or dropped into the doc attach to it (ISS-9).
     <AttachmentUploadProvider target={target} storageReady={storageReady}>
-      <DocEditor
-        // A different doc is a different editor (fresh autosave state and version).
+      <DocScreen
+        // A different doc is a different page state (mode, panels, the copy shown).
         key={doc.id}
         doc={doc}
         ancestors={ancestors}
@@ -80,7 +83,8 @@ export default async function DocPage({ params }: Props) {
         users={users}
         projectKeys={projectKeys}
         adrs={adrs}
-        childCount={tree.filter((item) => item.parentId === doc.id).length}
+        supersedes={supersedes}
+        tree={tree}
         comments={{
           threads,
           currentUser: { id: session.user.id, name: session.user.name ?? "You" },

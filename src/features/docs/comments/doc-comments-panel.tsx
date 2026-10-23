@@ -43,6 +43,14 @@ export interface DocCommentsPanelProps {
   anchorOrder: string[];
   projectKeys: string[];
   currentUser: { id: string; name: string };
+  /**
+   * Docs UX: the panel stays mounted while its side panel is collapsed (so the editor's
+   * and the read view's comment requests still reach it). It asks to be shown with
+   * `onActivate` when a thread is focused (anchor click, `#comment-<id>`, a new inline
+   * comment), and focuses/scrolls only once `visible`.
+   */
+  visible?: boolean;
+  onActivate?: () => void;
 }
 
 /** A new thread being written: inline (`anchor`) or page-level, with text to restore. */
@@ -68,6 +76,16 @@ function focusThread(threadId: string): boolean {
   return true;
 }
 
+function showThread(target: { id: string; focus: boolean }) {
+  if (target.focus) {
+    focusThread(target.id);
+    return;
+  }
+  document
+    .getElementById(`thread-${target.id}`)
+    ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
 /**
  * DOC-11 / DOC-13 comments panel on the doc page. Inline threads are listed in the order
  * their text appears in the doc, then those whose text was deleted ("Original text
@@ -82,6 +100,8 @@ export function DocCommentsPanel({
   anchorOrder,
   projectKeys,
   currentUser,
+  visible = true,
+  onActivate,
 }: DocCommentsPanelProps) {
   const [optimistic, update] = useOptimistic(threads, applyThreadUpdate);
   const [, startTransition] = useTransition();
@@ -91,8 +111,23 @@ export function DocCommentsPanel({
   const headingId = useId();
   const latest = useRef(optimistic);
   const pendingAnchor = useRef<CommentRequestDetail | null>(null);
+  // A thread to scroll to / focus once the panel is shown (it may be collapsed now).
+  const reveal = useRef<{ id: string; focus: boolean } | null>(null);
+  const activate = useRef(onActivate);
+  const shown = useRef(visible);
   useEffect(() => {
     latest.current = optimistic;
+    activate.current = onActivate;
+    shown.current = visible;
+  });
+  /** Scrolls to (and maybe focuses) a thread now if the panel is shown, else once it is. */
+  const revealThread = useRef((target: { id: string; focus: boolean }) => {
+    if (shown.current) {
+      showThread(target);
+      return;
+    }
+    reveal.current = target;
+    activate.current?.();
   });
 
   // The editor's "Comment" (button, toolbar, ⌘/Ctrl+Alt+M) asks here first (DOC-13).
@@ -105,6 +140,7 @@ export function DocCommentsPanel({
       pendingAnchor.current = event.detail;
       setActiveId(null);
       setDraft({ anchor: event.detail, initial: null });
+      activate.current?.();
     };
     document.addEventListener(COMMENT_REQUEST_EVENT, onRequest);
     return () => {
@@ -127,9 +163,7 @@ export function DocCommentsPanel({
       );
       if (!thread) return;
       setActiveId(thread.id);
-      document
-        .getElementById(`thread-${thread.id}`)
-        ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      revealThread.current({ id: thread.id, focus: false });
     };
     document.addEventListener("click", onClick);
     return () => document.removeEventListener("click", onClick);
@@ -141,12 +175,21 @@ export function DocCommentsPanel({
     const openFromHash = () => {
       const match = COMMENT_HASH.exec(window.location.hash);
       const thread = match?.[1] ? threadOfComment(latest.current, match[1]) : null;
-      if (thread) focusThread(thread.id);
+      if (!thread) return;
+      revealThread.current({ id: thread.id, focus: true });
     };
     openFromHash();
     window.addEventListener("hashchange", openFromHash);
     return () => window.removeEventListener("hashchange", openFromHash);
   }, []);
+
+  // A thread asked for (anchor click, hash) once the panel is shown.
+  useEffect(() => {
+    const target = reveal.current;
+    if (!target || !visible) return;
+    reveal.current = null;
+    showThread(target);
+  });
 
   // Focus follows a thread that moved (resolved/reopened) once it is rendered in its place.
   useEffect(() => {

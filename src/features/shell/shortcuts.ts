@@ -16,7 +16,10 @@ export type ShortcutId =
   | "close"
   | "mention"
   | "editNode"
-  | "commentOnSelection";
+  | "commentOnSelection"
+  | "docPages"
+  | "docEdit"
+  | "docDone";
 
 export interface Shortcut {
   id: ShortcutId;
@@ -56,6 +59,15 @@ export const SHORTCUTS: readonly Shortcut[] = [
     description: "Comment on the selected text (docs)",
     scope: "Editors",
   },
+  // DOC-2 / docs UX: the doc page (features/docs/doc-screen.tsx matches these).
+  { id: "docPages", keys: ["["], description: "Open the page tree", scope: "Docs" },
+  { id: "docEdit", keys: ["E"], description: "Edit the doc", scope: "Docs" },
+  {
+    id: "docDone",
+    keys: ["⌘/Ctrl", "Enter"],
+    description: "Done editing: save and back to reading (or Esc)",
+    scope: "Docs",
+  },
   // DGM-*: the flow editor's canvas (flow-canvas.tsx matches it).
   { id: "editNode", keys: ["Enter"], description: "Rename the focused node", scope: "Diagrams" },
 ];
@@ -70,6 +82,9 @@ const KEYS: Partial<Record<ShortcutId, string>> = {
   help: "?",
   mention: "@",
   editNode: "enter",
+  docPages: "[",
+  docEdit: "e",
+  docDone: "enter",
 };
 
 /**
@@ -81,7 +96,14 @@ export function matchesShortcut(event: Pick<KeyboardEvent, "key">, id: ShortcutI
   return key !== undefined && event.key.toLowerCase() === key;
 }
 
-export const SHORTCUT_SCOPES = ["Anywhere", "Lists", "Dialogs", "Editors", "Diagrams"] as const;
+export const SHORTCUT_SCOPES = [
+  "Anywhere",
+  "Lists",
+  "Dialogs",
+  "Editors",
+  "Docs",
+  "Diagrams",
+] as const;
 
 /** The `?` dialog's heading per scope. */
 export const SHORTCUT_SCOPE_LABELS: Record<(typeof SHORTCUT_SCOPES)[number], string> = {
@@ -89,5 +111,6 @@ export const SHORTCUT_SCOPE_LABELS: Record<(typeof SHORTCUT_SCOPES)[number], str
   Lists: "In lists (issues, backlog)",
   Dialogs: "Dialogs",
   Editors: "In editors (descriptions, comments, docs)",
+  Docs: "On a doc page",
   Diagrams: "In flow diagrams",
 };
