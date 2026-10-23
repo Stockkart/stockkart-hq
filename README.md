@@ -507,7 +507,10 @@ of the reasons below. Publish, pull, Check handbook now and Import show the same
 its code (e.g. _"… (installation_token.422)."_), and a failed publication in "Recent
 publications" shows it too. A code is `<request>.<HTTP status>` (or `.timeout` / `.network`);
 GitHub's error text itself is never shown, logged or stored. Rows from before this change
-hold `github_<status>` and read as "GitHub refused a request (HTTP n)".
+hold `github_<status>` and read as "GitHub refused a request (HTTP n)". Only the code is
+stored, so "Recent publications" shows the general reason of a code (e.g.
+`open_pull_request.422` reads "GitHub refused to open the PR" even if the toast said "Nothing
+changed").
 
 | Code                                                      | Shown                                                                                                                          | Fix                                                                                                                                                                                                                                                                                                                                            |
 | --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

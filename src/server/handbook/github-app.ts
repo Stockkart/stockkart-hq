@@ -158,6 +158,12 @@ async function failureHint(
   kind: HandbookGithubRequestKind,
   response: Response,
 ): Promise<GithubFailureHint | null> {
+  // A declared size over the cap is not read at all (the text is only ever classified).
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (declared > MAX_ERROR_BODY_CHARS) {
+    await response.body?.cancel().catch(() => {});
+    return null;
+  }
   let text: string;
   try {
     text = await response.text();
@@ -380,6 +386,8 @@ export function createHandbookGithub(deps: HandbookGithubDeps) {
       // Creating a branch or a PR is not idempotent: a retry after a 5xx that did create it
       // would fail (422) and record a publication as failed while it exists on GitHub.
       if (retryable && attempt === 1 && init.retry !== false) {
+        // Release the first answer's connection before waiting (its body is never read).
+        await response.body?.cancel().catch(() => {});
         await sleep(retryAfterMs(response, now()));
         continue;
       }

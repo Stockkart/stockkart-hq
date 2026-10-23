@@ -135,6 +135,8 @@ export function HandbookTab({
 
   /** "Test connection": shown inline (✓ or the classified reason) and as a toast. */
   function testConnection() {
+    // Cleared first, so the live region announces a repeated result too.
+    setConnection(null);
     startTesting(async () => {
       let text: string;
       let ok = false;
