@@ -7,6 +7,7 @@ import { createCommentService } from "./comments";
 import { createDiagramQueries } from "./diagram-queries";
 import { createDiagramService } from "./diagrams";
 import { createDocQueries } from "./doc-queries";
+import { createDocExportQueries } from "./doc-export";
 import { createDocService } from "./docs";
 import { createFileQueries } from "./files";
 import { createGithubService } from "./github";
@@ -82,3 +83,5 @@ export const serviceRegistry = createServiceRegistry(db, { runAtomic, read });
 export const serviceRegistryQueries = createServiceRegistryQueries(db, { read });
 export const incidentService = createIncidentService(db, { runAtomic, read });
 export const incidentQueries = createIncidentQueries(db, { read });
+// Handbook foundation (DOC-12 export).
+export const docExportQueries = createDocExportQueries(db, { read });
