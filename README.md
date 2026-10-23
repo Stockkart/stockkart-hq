@@ -223,7 +223,7 @@ database, and the tests use small synthetic markdown.
 
 `GET /<KEY>/docs/<id>/export` downloads a doc as its handbook file (`text/markdown`,
 `attachment`, `no-store`, session required; 404 for a missing or deleted doc). The same
-code will write the files the handbook publish (DOC-14) puts in its PRs. On the doc page the
+code writes the files the handbook publish (DOC-14) puts in its PRs. On the doc page the
 "⋯" menu offers "Download as Markdown" (this route) and "Copy as Markdown" (the same
 serializer, run in the browser on the copy on screen).
 
@@ -232,7 +232,10 @@ serializer, run in the browser on the copy on screen).
 is a "Pages" drawer (`[`), pinnable as a narrow column; the side panels (comments, linked
 issues, attachments, history, details) open one at a time. History shows a diff of each kept
 version against the current one (or the previous one) and restores a version as a new one
-(DOC-10); an ADR's menu can supersede it with a new ADR (ADR-3).
+(DOC-10); an ADR's menu can supersede it with a new ADR (ADR-3). The header shows the
+handbook sync status next to the breadcrumb, and the "⋯" menu has "Publish to handbook" and
+"Review & pull" (see "Engineering handbook sync"), in read and edit mode alike; restoring a
+version or superseding an ADR is a new version, so a synced doc turns "Changed in HQ".
 
 **Serializer** (`src/lib/markdown/from-rich-text.ts`, the inverse of `to-rich-text.ts`):
 editor JSON → GitHub-flavoured Markdown, deterministic, ending in exactly one newline.
@@ -407,12 +410,14 @@ GITHUB_WEBHOOK_SECRET='<same value as the server>' pnpm exec tsx scripts/send-te
 `Stockkart/engineering-handbook` is **public**, and people also change it through their own
 pull requests, so the sync (DOC-14) works both ways and never overwrites anything silently:
 
-- **HQ → repo**: "Publish to handbook" (doc page, or "Publish selected" in Settings →
-  Handbook, at most 50 docs) opens ONE pull request through a GitHub App: a fresh
+- **HQ → repo**: "Publish to handbook" (the doc header's "⋯" menu, or "Publish selected" in
+  Settings → Handbook, at most 50 docs) opens ONE pull request through a GitHub App: a fresh
   `hq/publish-<yyyymmdd>-<id>` branch with every file in ONE commit. HQ never pushes to the
-  default branch or to a branch a person made.
+  default branch or to a branch a person made. It publishes the doc's **saved** version: from
+  edit mode the dialog saves pending edits first, and says "Save first" if that save fails.
 - **Repo → HQ**: the org webhook's pushes to the default branch mark the touched docs; "Review
-  & pull" shows the diff and applies the file as a new HQ version.
+  & pull" shows the diff and applies the file as a new HQ version. From edit mode it first
+  saves and leaves edit mode, so the pulled version shows in read mode.
 
 ### Setup (once, by an org owner)
 

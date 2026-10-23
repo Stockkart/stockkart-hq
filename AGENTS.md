@@ -46,8 +46,6 @@ src/
   app/(app)/[projectKey]/ project pages: issues/, issues/[key]/, backlog/, board/, docs/
                           (index = tree + list, docs/[id] doc page: read mode, `?edit=1`
                           edit mode; docs/[id]/export DOC-12 .md download), adrs/, sprints/ (list,
-                          (tree layout, list, docs/[id] editor, docs/[id]/export DOC-12 .md
-                          download), adrs/, sprints/ (list,
                           sprints/[sprintId]), diagrams/ (grid, diagrams/[id] editor), roadmap/
                           (RDM-1/2), releases/ (list, releases/[releaseId]; REL-1/2),
                           incidents/ (list, incidents/[key] = INC-n; INC-1/2), services/ (list,
@@ -227,8 +225,6 @@ entity_id)` → `comments (id, entity_type, entity_id)` keeps a reply on its thr
   - `docs.handbook_path` (repo path override; `source_path` stays the import origin;
     resolve with `handbookPathFor`), `handbook_blob_sha` + `handbook_synced_version` +
     `handbook_synced_at` (set together, CHECK; synced version ≤ `version`),
-    `handbook_remote_sha` (needs `handbook_remote_seen_at`; a seen-at without a sha means
-    "absent on the default branch"). Shas are 40 lower-case hex (CHECK); paths follow
     `handbook_remote_sha` (needs `handbook_remote_seen_at`; as built by the sync slice, a
     seen-at without a sha means "changed, blob unknown" and `GIT_NULL_SHA` means "absent on
     the default branch"). Shas are 40 lower-case hex (CHECK); paths follow
@@ -383,6 +379,16 @@ Gotchas:
 
 ## Handbook slice notes
 
+**Handbook status: both slices (docs UX and handbook two-way sync) are done and merged** on
+top of migration 0006, without a migration of their own. Where they meet: the sync status
+badge and the "Publish to handbook" / "Review & pull" actions live in the docs-UX header
+registries (read and edit mode alike); the sync state rides on `docQueries.getDoc`, so the
+doc page is still ONE round trip; restore (DOC-10) and supersede (ADR-3) bump the version,
+so a synced doc turns "Changed in HQ"; the history panel and the publish / pull dialogs draw
+diffs with the same `LineDiffView`. `handbook-doc-actions.test.tsx` and the "docs UX seams"
+cases of `handbook.db.test.ts` pin these seams; keep them green. The text below is the
+original split, kept as the map of who owns what.
+
 The handbook foundation (migration 0006) prepared two slices: **docs UX** and **handbook
 two-way sync** (`Stockkart/engineering-handbook` is public and also edited by PRs directly:
 HQ → repo goes through PRs a GitHub App opens; repo → HQ is detected from push webhooks).
@@ -439,7 +445,8 @@ Rules for the sync slice:
 Docs UX as built (no migration):
 
 - **Doc page** = `features/docs/doc-screen.tsx` (client) under `docs/[id]/page.tsx`, still ONE
-  round trip (`docs-ux.db.test.ts` counts it; add any new page read there and to that test).
+  round trip (`docs-ux.db.test.ts` and `handbook.db.test.ts` count it; add any new page read
+  there and to both tests).
   Read mode renders `RichTextView` (no Tiptap loaded); `?edit=1` mounts `DocEditor`, which
   only holds the edit body and is driven through `controllerRef` (`flush`, `saveVersion`,
   `mine`). "Done" = `Autosaver.flush()`, then read mode; a save that did not land asks first.
@@ -459,23 +466,28 @@ Docs UX as built (no migration):
   title and content, `snapshot: true` and an activity row `restored` (field `version`, from =
   restored version, to = new version). `restoredContent` keeps anchors of live threads and
   re-anchors current threads whose exact text exists in the old version. The diff is
-  `lineDiff` over `# title` + `richTextToMarkdown` (`history/`); version contents load on open
+  `lineDiff` over `# title` + `richTextToMarkdown` (`history/`), drawn by
+  `features/docs/diff/line-diff-view.tsx` (`LineDiffView`, also the publish / pull dialogs'
+  renderer: one component, do not fork it); version contents load on open
   (`loadDocVersionAction`), never with the page.
 - **ADR-3**: `docService.supersedeAdr` is ONE statement: `UPDATE` the old ADR (gated on "not
-  superseded yet") first, then the insert gated on it (FK to the new id checked at statement
-  end), activity on both (`adrStatus`, `adrSupersededBy` on the old; `supersedes` on the new).
-  Numbering is `allocateAdr`, shared with `createAdr`.
+  superseded yet"; it bumps `version`, since the status is in the export) first, then the
+  insert gated on it (FK to the new id checked at statement end), activity on both
+  (`adrStatus`, `adrSupersededBy` on the old; `supersedes` on the new). Numbering is
+  `allocateAdr`, shared with `createAdr`.
 
-**Mount points for the handbook sync slice** (one line each, nothing else to edit):
+**Header registries** (one line each to add an entry; the handbook sync uses both):
 
-- `features/docs/doc-actions/index.ts` → `DOC_ACTIONS`: add the "Publish to handbook" /
-  "Pull from handbook" descriptors (`types.ts`: `id`, `label`, `visible?`, `run` or a
-  `dialog` getting `{ context, open, onOpenChange }`; `context.flush()` saves pending edits
-  first, `context.current()` is the copy on screen). Ids are checked unique at load.
-- `features/docs/doc-header-badges/index.tsx` → `DOC_HEADER_BADGES`: add `{ id, Badge }`
-  where `Badge` takes `{ doc: DocDetail }` (render null when there is nothing to say). Sync
-  state needs fields that `DocDetail` lacks: add them to `docQueries.getDoc` (same query,
-  so still one round trip).
+- `features/docs/doc-actions/index.ts` → `DOC_ACTIONS` (above the delete line):
+  `types.ts` descriptors with `id`, `label`, `visible?`, `disabledReason?` (shown, not
+  selectable, with the reason), and `run` or a `dialog` (props: `context`, `open`,
+  `onOpenChange`). `context.flush()` saves pending edits, `context.toReadMode()` leaves edit
+  mode like "Done", `context.current()` is the copy on screen, `context.doc.version` is the
+  latest version saved on the page. Ids are checked unique at load.
+- `features/docs/doc-header-badges/index.tsx` → `DOC_HEADER_BADGES`: `{ id, Badge }` where
+  `Badge` takes `{ doc: DocDetail }` (render null when there is nothing to say). Fields a
+  badge needs go into `docQueries.getDoc` (same query, so still one round trip), as
+  `DocDetail.handbook` does.
 
 **Sync slice as built (DOC-14).** README "Engineering handbook sync" has the setup, statuses
 and conflict rules; keep these seams intact:
@@ -502,13 +514,16 @@ and conflict rules; keep these seams intact:
 - "Check handbook now" is rate-limited through `login_attempts` rows keyed
   `handbook_check:<projectId>` with `success = true` (shared across instances; never counted
   as failed sign-ins, which use `email:` / `ip:` keys and `NOT success`).
-- **Temporary doc-page mount**: `app/(app)/[projectKey]/docs/[id]/page.tsx` adds ONE read
-  (`loadHandbookDocSync`, `features/docs/handbook-sync/load.ts`, same batch) and renders
-  `<HandbookDocBar>` above `<DocEditor>`. When the docs-UX slice lands, move
-  `HandbookStatusBadge` into its header badges slot and the two `HandbookActions` entries
-  ("Publish to handbook", "Review & pull"; they open `PublishDialog` / `PullDialog`) into
-  `features/docs/doc-actions/index.ts`, then delete `HandbookDocBar` and its line in the page.
-  Keep the read in the page's batch (`handbook.db.test.ts` pins one round trip).
+- **On the doc page** (no temporary mount any more): `DocDetail.handbook` comes from
+  `docQueries.getDoc` (the `handbookSyncColumns` + open-publication joins shared with
+  `handbookQueries`), so there is no extra read; `page.tsx` passes `handbookConfigured()`
+  (env only). `HandbookHeaderBadge` is in `DOC_HEADER_BADGES` and recomputes the status for
+  the version saved on the page (`statusAtVersion`); `publishToHandbookAction` /
+  `pullFromHandbookAction` (`handbook-doc-actions.tsx`) are in `DOC_ACTIONS`. Publish never
+  sends unsaved content: the server exports the stored `docs.version`, and the dialog runs
+  `context.flush()` before its preview ("Save first" if that fails). Pull runs
+  `context.toReadMode()` first, so the applied version shows in read mode and no editor is
+  left on the old version.
 
 ## File storage (R2)
 
