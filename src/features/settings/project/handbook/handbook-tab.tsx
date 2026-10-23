@@ -15,7 +15,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { PublicRepoWarning } from "@/features/docs/handbook-sync/diff-view";
+import { PublicRepoWarning } from "@/features/docs/handbook-sync/public-repo-warning";
 import { HandbookStatusBadge } from "@/features/docs/handbook-sync/handbook-status-badge";
 import { callAction } from "@/features/issue/client-utils";
 import { docPath } from "@/lib/docs/views";

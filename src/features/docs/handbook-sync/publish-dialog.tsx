@@ -21,7 +21,9 @@ import { handbookPathInput } from "@/lib/handbook/schemas";
 import { type PublishPreview } from "@/lib/handbook/views";
 import { handbookPublishAction, handbookPublishPreviewAction } from "@/server/actions/handbook";
 
-import { DiffView, PublicRepoWarning } from "./diff-view";
+import { LineDiffView } from "../diff/line-diff-view";
+
+import { PublicRepoWarning } from "./public-repo-warning";
 
 /**
  * DOC-14 "Publish to handbook" for one doc: path editor (validated), the Markdown that would
@@ -177,11 +179,12 @@ export function PublishDialog({
               </p>
             ) : null}
             {preview.remote ? (
-              <DiffView
+              <LineDiffView
                 hunks={preview.remote.diff}
                 label={`Changes to ${preview.path}`}
                 oldLabel="handbook"
                 newLabel="HQ"
+                className="max-h-80 overflow-y-auto"
               />
             ) : (
               <p className="text-sm text-muted-foreground">

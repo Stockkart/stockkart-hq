@@ -18,7 +18,7 @@ import { callAction } from "@/features/issue/client-utils";
 import { type PullPreview, type PullState } from "@/lib/handbook/views";
 import { handbookPullApplyAction, handbookPullPreviewAction } from "@/server/actions/handbook";
 
-import { DiffView } from "./diff-view";
+import { LineDiffView } from "../diff/line-diff-view";
 
 const MESSAGES: Record<PullState, string> = {
   repo_ahead:
@@ -106,11 +106,12 @@ export function PullDialog({
                 {MESSAGES[preview.state]}
               </p>
               {preview.diff.length > 0 ? (
-                <DiffView
+                <LineDiffView
                   hunks={preview.diff}
                   label={`Changes to ${preview.path}`}
                   oldLabel="HQ"
                   newLabel="handbook"
+                  className="max-h-80 overflow-y-auto"
                 />
               ) : null}
             </>
