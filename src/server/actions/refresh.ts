@@ -33,9 +33,23 @@ export const NOTIFICATIONS = "/notifications";
 /** DGM-*: the diagram grid and one diagram's editor (title, versions, Linked panel). */
 export const DIAGRAMS = "/[projectKey]/diagrams";
 export const DIAGRAM_PAGE = "/[projectKey]/diagrams/[id]";
+/** RDM-1/2: epics with their dates, status, assignee, component, child progress and links. */
+export const ROADMAP = "/[projectKey]/roadmap";
+/** The docs tree lives in the docs layout, so a new doc refreshes that layout. */
+export const DOCS_LAYOUT = "/[projectKey]/docs";
+/** REL-1/2: the release list (progress tallies) and one release's page. */
+export const RELEASES = "/[projectKey]/releases";
+export const RELEASE_PAGE = "/[projectKey]/releases/[releaseId]";
+/** Pages that show releases or the issues' fix versions and their status (progress). */
+export const RELEASE_VIEWS = [RELEASES, RELEASE_PAGE] as const;
+/** SVC-1 / INC-1: the service registry and incident pages. */
+export const SERVICES = "/[projectKey]/services";
+export const SERVICE_PAGE = "/[projectKey]/services/[slug]";
+export const INCIDENTS = "/[projectKey]/incidents";
+export const INCIDENT_PAGE = "/[projectKey]/incidents/[key]";
 
 /** Every page that lists or shows issue fields. */
-export const ISSUE_VIEWS = [ISSUE_LIST, ISSUE_PAGE, BACKLOG, BOARD, MY_WORK] as const;
+export const ISSUE_VIEWS = [ISSUE_LIST, ISSUE_PAGE, BACKLOG, BOARD, MY_WORK, ROADMAP] as const;
 
 /**
  * Pages that show sprints or sprint membership: the backlog's sprint sections, the board's
@@ -54,4 +68,9 @@ export function refreshPages(...patterns: readonly string[]): void {
  */
 export function refreshAppShell(): void {
   revalidatePath("/", "layout");
+}
+
+/** A doc was created outside the docs pages (e.g. a sprint retro, SPR-5): the tree. */
+export function refreshDocsTree(): void {
+  revalidatePath(DOCS_LAYOUT, "layout");
 }

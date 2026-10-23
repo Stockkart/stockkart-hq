@@ -50,6 +50,20 @@ describe("notification wording (NTF-1)", () => {
     expect(notificationText(view({ type: "comment_on_watched" }))).toBe("commented on STK-12");
     expect(
       notificationText(
+        view({
+          type: "comment_on_doc",
+          target: { kind: "doc", title: "Plan", href: "/STK/docs/d" },
+        }),
+      ),
+    ).toBe("commented on “Plan”");
+    expect(notificationText(view({ type: "comment_on_doc", target: null }))).toBe(
+      "commented on a doc that was deleted",
+    );
+    expect(notificationText(view({ type: "incident_commander", target: null }))).toBe(
+      "made you the commander of an incident that was deleted",
+    );
+    expect(
+      notificationText(
         view({ type: "status_on_watched", statusFrom: "Backlog", statusTo: "Done" }),
       ),
     ).toBe("moved STK-12 from Backlog to Done");
@@ -68,6 +82,12 @@ describe("notification wording (NTF-1)", () => {
     expect(notificationActor(view({ actorName: null }))).toBe("Someone");
     expect(notificationHref(view({ commentId: "c1" }))).toBe("/STK/issues/STK-12#comment-c1");
     expect(notificationHref(view({}))).toBe("/STK/issues/STK-12");
+    // DOC-13: doc comments open their thread in the doc's comments panel.
+    const doc = { kind: "doc", title: "Spec", href: "/STK/docs/d1" } as const;
+    expect(notificationHref(view({ target: doc, commentId: "c2" }))).toBe(
+      "/STK/docs/d1#comment-c2",
+    );
+    expect(notificationHref(view({ target: doc }))).toBe("/STK/docs/d1");
   });
 
   it("caps the badge", () => {

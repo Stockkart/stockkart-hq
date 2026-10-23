@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { DIGEST_FREQUENCIES } from "./constants";
+
 /** Inputs of the notification, watcher and settings actions (NTF-1, NTF-2, ISS-11). */
 
 export const notificationIdInput = z.object({ notificationId: z.uuid() });
@@ -11,6 +13,9 @@ export const notificationIdInput = z.object({ notificationId: z.uuid() });
 export const markAllReadInput = z.object({ asOf: z.coerce.date() });
 
 export const notifyEmailInput = z.object({ enabled: z.boolean() });
+
+/** NTF-2 digest cadence. */
+export const digestFrequencyInput = z.object({ frequency: z.enum(DIGEST_FREQUENCIES) });
 
 export const watchIssueInput = z.object({ issueId: z.uuid(), watching: z.boolean() });
 

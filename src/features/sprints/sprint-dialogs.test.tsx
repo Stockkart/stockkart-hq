@@ -23,6 +23,7 @@ const sprint: SprintSummary = {
   open: { count: 3, points: 13 },
   done: { count: 2, points: 5 },
   wontDo: { count: 1, points: 8 },
+  retroDocId: null,
 };
 
 describe("StartSprintDialog (SPR-1)", () => {

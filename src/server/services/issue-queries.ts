@@ -25,6 +25,7 @@ import {
   issues,
   labels,
   projects,
+  releases,
   sprints,
   statuses,
   templates,
@@ -166,6 +167,7 @@ export function createIssueQueries(db: AppDatabase, { read = directRead }: Query
               storyPoints: issues.storyPoints,
               dueDate: issues.dueDate,
               sprintId: issues.sprintId,
+              releaseId: issues.releaseId,
               createdAt: issues.createdAt,
               updatedAt: issues.updatedAt,
               resolvedAt: issues.resolvedAt,
@@ -223,6 +225,7 @@ export function createIssueQueries(db: AppDatabase, { read = directRead }: Query
         storyPoints: issue.storyPoints,
         dueDate: issue.dueDate,
         sprintId: issue.sprintId,
+        releaseId: issue.releaseId,
         createdAt: issue.createdAt,
         updatedAt: issue.updatedAt,
         resolvedAt: issue.resolvedAt,
@@ -230,13 +233,21 @@ export function createIssueQueries(db: AppDatabase, { read = directRead }: Query
       };
     },
 
-    /** Side-panel options: statuses, components, labels, every HQ user, epics, open sprints. */
+    /**
+     * Side-panel options: statuses, components, labels, every HQ user, epics, open sprints
+     * and the fix-version picker's releases (REL-1).
+     */
     async getProjectMeta(projectId: IdRef): Promise<ProjectMeta> {
-      const [statusRows, componentRows, labelRows, userRows, epicRows, sprintRows] =
+      const [statusRows, componentRows, labelRows, userRows, epicRows, sprintRows, releaseRows] =
         await Promise.all([
           read(
             db
-              .select({ id: statuses.id, name: statuses.name, category: statuses.category })
+              .select({
+                id: statuses.id,
+                name: statuses.name,
+                category: statuses.category,
+                wipLimit: statuses.wipLimit,
+              })
               .from(statuses)
               .where(eq(statuses.projectId, projectId))
               .orderBy(asc(statuses.position)),
@@ -287,6 +298,19 @@ export function createIssueQueries(db: AppDatabase, { read = directRead }: Query
                 asc(sprints.createdAt),
               ),
           ),
+          // REL-1: unreleased first by target date, then released ones, newest first.
+          read(
+            db
+              .select({ id: releases.id, name: releases.name, state: releases.state })
+              .from(releases)
+              .where(eq(releases.projectId, projectId))
+              .orderBy(
+                sql`${releases.state} = 'released'`,
+                sql`CASE WHEN ${releases.state} = 'unreleased' THEN ${releases.releaseDate} END ASC NULLS LAST`,
+                desc(releases.releasedAt),
+                asc(releases.name),
+              ),
+          ),
         ]);
       return {
         statuses: statusRows,
@@ -295,6 +319,7 @@ export function createIssueQueries(db: AppDatabase, { read = directRead }: Query
         users: userRows,
         epics: epicRows.map(toSummary),
         sprints: sprintRows,
+        releases: releaseRows,
       };
     },
 

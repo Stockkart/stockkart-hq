@@ -1,10 +1,16 @@
 import { mergeRegistries } from "@/lib/registry";
 
 import { attachmentRenderers } from "./attachments";
+import { commentAnchorMarkRenderers } from "./comment-mark";
 import { diagramEmbedRenderers } from "./diagram-embed";
 import { calloutRenderers, mermaidRenderers, tableRenderers } from "./doc-blocks";
 import { mentionRenderers } from "./mentions";
-import { type NodeRenderer, type NodeRenderers } from "./types";
+import {
+  type MarkRenderer,
+  type MarkRenderers,
+  type NodeRenderer,
+  type NodeRenderers,
+} from "./types";
 
 /**
  * Read-only renderer registry for node types added by editor extensions (`RichTextView`).
@@ -28,4 +34,26 @@ export const NODE_RENDERERS: ReadonlyMap<string, NodeRenderer> = mergeRegistries
   RENDERERS,
 );
 
-export { type NodeRenderer, type NodeRenderers, type NodeRenderProps } from "./types";
+/**
+ * Marks added by editor extensions, same rules: ONE line per feature. Unregistered marks
+ * render their text unchanged.
+ */
+const MARKS: readonly MarkRenderers[] = [
+  commentAnchorMarkRenderers,
+  // A new mark adds one line here.
+];
+
+/** Throws at load if two files register the same mark type. */
+export const MARK_RENDERERS: ReadonlyMap<string, MarkRenderer> = mergeRegistries(
+  "Mark renderers",
+  MARKS,
+);
+
+export {
+  type MarkRenderer,
+  type MarkRenderers,
+  type MarkRenderProps,
+  type NodeRenderer,
+  type NodeRenderers,
+  type NodeRenderProps,
+} from "./types";

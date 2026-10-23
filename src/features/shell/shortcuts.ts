@@ -15,7 +15,8 @@ export type ShortcutId =
   | "submit"
   | "close"
   | "mention"
-  | "editNode";
+  | "editNode"
+  | "commentOnSelection";
 
 export interface Shortcut {
   id: ShortcutId;
@@ -48,6 +49,13 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: "close", keys: ["Esc"], description: "Close a dialog or menu", scope: "Dialogs" },
   // ISS-7/DOC-9: the trigger of Tiptap's mention suggestion (its default `char`).
   { id: "mention", keys: ["@"], description: "Mention someone", scope: "Editors" },
+  // DOC-13: the doc editor's comment mark (`Mod-Alt-m` in comment-anchor-mark.ts).
+  {
+    id: "commentOnSelection",
+    keys: ["⌘/Ctrl", "Alt", "M"],
+    description: "Comment on the selected text (docs)",
+    scope: "Editors",
+  },
   // DGM-*: the flow editor's canvas (flow-canvas.tsx matches it).
   { id: "editNode", keys: ["Enter"], description: "Rename the focused node", scope: "Diagrams" },
 ];

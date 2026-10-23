@@ -45,6 +45,10 @@ export const PROJECT_DESCRIPTION_MAX = 2000;
 export const STATUS_NAME_MAX = 40;
 export const COMPONENT_NAME_MAX = 60;
 
-/** Settings tabs, also the `?tab=` URL value. */
-export const SETTINGS_TABS = ["general", "workflow", "labels", "components"] as const;
+/** BRD-5 WIP limit range (the `statuses_wip_limit_range` CHECK). Empty = no limit. */
+export const WIP_LIMIT_MIN = 1;
+export const WIP_LIMIT_MAX = 999;
+
+/** Settings tabs, also the `?tab=` URL value. `import`: IMP-4 CSV import of issues. */
+export const SETTINGS_TABS = ["general", "workflow", "labels", "components", "import"] as const;
 export type SettingsTab = (typeof SETTINGS_TABS)[number];

@@ -12,6 +12,9 @@ vi.mock("@/server/actions/issues", () => actions);
 const todoActions = vi.hoisted(() => ({ promoteTodoAction: vi.fn() }));
 vi.mock("@/server/actions/todos", () => todoActions);
 
+const releaseActions = vi.hoisted(() => ({ loadReleaseOptionsAction: vi.fn() }));
+vi.mock("@/server/actions/releases", () => releaseActions);
+
 const router = vi.hoisted(() => ({ push: vi.fn(), refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({
   useRouter: () => router,
@@ -52,6 +55,30 @@ describe("QuickCreate (ISS-4)", () => {
       ok: true,
       data: { id: "x", number: 7, key: "STK-7" },
     });
+    releaseActions.loadReleaseOptionsAction.mockResolvedValue({ ok: true, data: [] });
+  });
+
+  it("creates with a fix version loaded when the dialog opens (REL-1)", async () => {
+    const user = userEvent.setup();
+    const releaseId = "0f1e2d3c-4b5a-4968-8776-5544332211aa";
+    releaseActions.loadReleaseOptionsAction.mockResolvedValue({
+      ok: true,
+      data: [{ id: releaseId, name: "api-v1.4", state: "unreleased" }],
+    });
+    render(<QuickCreate defaultProjectKey="STK" />);
+    await user.click(screen.getByRole("button", { name: /create/i }));
+    expect(releaseActions.loadReleaseOptionsAction).toHaveBeenCalledWith({ projectKey: "STK" });
+    await user.type(await screen.findByLabelText("Title"), "Ship it");
+    const release = screen.getByRole("combobox", { name: "Fix version" });
+    expect(release).toHaveTextContent("None");
+    await user.click(release);
+    await user.click(await screen.findByRole("option", { name: "api-v1.4" }));
+    await user.click(screen.getByRole("button", { name: "Create issue" }));
+    await waitFor(() =>
+      expect(actions.createIssueAction).toHaveBeenCalledWith(
+        expect.objectContaining({ releaseId }),
+      ),
+    );
   });
 
   it("opens with C outside inputs and focuses the title", async () => {

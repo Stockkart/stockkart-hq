@@ -40,6 +40,8 @@ export function applyBulkChange<T extends PlanningIssue>(
       }
       case "sprint":
         return { ...issue, sprintId: change.sprintId };
+      case "release":
+        return { ...issue, releaseId: change.releaseId };
       case "addLabels": {
         const added = lookups.labels.filter(
           (label) =>

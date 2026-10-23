@@ -12,6 +12,7 @@ import {
   Network,
   Plus,
   Search,
+  Siren,
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
@@ -53,6 +54,7 @@ const HIT_ICONS: Record<SearchHit["kind"], LucideIcon> = {
   doc: FileText,
   diagram: Network,
   comment: MessageSquare,
+  incident: Siren,
 };
 
 /** SRCH-3-style actions, always available; filtered by the query. */
@@ -200,6 +202,7 @@ export function CommandPalette({ defaultProjectKey }: { defaultProjectKey: strin
     ["issues", "Issues", data.issues],
     ["docs", "Docs", data.docs],
     ["diagrams", "Diagrams", data.diagrams],
+    ["incidents", "Incidents", data.incidents],
     ["comments", "Comments", data.comments],
   ];
   for (const [id, label, hits] of hitGroups) {
@@ -313,8 +316,8 @@ export function CommandPalette({ defaultProjectKey }: { defaultProjectKey: strin
         <DialogContent className="gap-0 p-0 sm:max-w-xl">
           <DialogTitle className="sr-only">Search or jump to</DialogTitle>
           <DialogDescription className="sr-only">
-            Type to search issues, docs, diagrams and comments, or an issue key such as STK-12. Use
-            the arrow keys to choose and Enter to open.
+            Type to search issues, docs, diagrams, incidents and comments, or an issue key such as
+            STK-12. Use the arrow keys to choose and Enter to open.
           </DialogDescription>
           <div className="flex items-center gap-2 border-b px-3">
             <Search aria-hidden="true" className="size-4 text-muted-foreground" />

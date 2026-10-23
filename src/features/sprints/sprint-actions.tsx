@@ -217,6 +217,7 @@ export function CreateSprintButton({
                 open: { count: 0, points: 0 },
                 done: { count: 0, points: 0 },
                 wontDo: { count: 0, points: 0 },
+                retroDocId: null,
               },
             });
             const result = await callAction(() =>

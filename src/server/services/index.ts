@@ -11,6 +11,9 @@ import { createDocService } from "./docs";
 import { createFileQueries } from "./files";
 import { createGithubService } from "./github";
 import { createGithubQueries } from "./github-queries";
+import { createImportQueries, createImportService } from "./imports";
+import { createIncidentQueries } from "./incident-queries";
+import { createIncidentService } from "./incidents";
 import { createIssueQueries } from "./issue-queries";
 import { createIssueService } from "./issues";
 import { createMentionQueries } from "./mentions";
@@ -20,8 +23,12 @@ import { createPlanningService } from "./planning";
 import { createPlanningQueries } from "./planning-queries";
 import { createProfileService } from "./profile";
 import { createProjectSettingsService } from "./project-settings";
+import { createReleaseQueries } from "./release-queries";
+import { createReleaseService } from "./releases";
+import { createRoadmapQueries } from "./roadmap-queries";
 import { createSavedViewService } from "./saved-views";
 import { createSearchService } from "./search";
+import { createServiceRegistry, createServiceRegistryQueries } from "./service-registry";
 import { createSettingsQueries } from "./settings-queries";
 import { createSprintQueries } from "./sprint-queries";
 import { createSprintService } from "./sprints";
@@ -59,6 +66,19 @@ export const trashService = createTrashService(db, { runAtomic, read });
 export const notificationQueries = createNotificationQueries(db, { read });
 export const watcherService = createWatcherService(db, { read });
 export const mentionQueries = createMentionQueries(db, { read });
+// Slice B (P2: REL-1/2 releases).
+export const releaseService = createReleaseService(db, { runAtomic, read });
+export const releaseQueries = createReleaseQueries(db, { read });
+// Slice B (P2: IMP-4 CSV import).
+export const importService = createImportService(db, { runAtomic, read });
+export const importQueries = createImportQueries(db, { read });
 // Slice D (DGM-*).
 export const diagramService = createDiagramService(db, { runAtomic, read, storage });
 export const diagramQueries = createDiagramQueries(db, { read });
+// P2 slice A (RDM-1/2).
+export const roadmapQueries = createRoadmapQueries(db, { read });
+// P2 slice C (INC-1/2, SVC-1).
+export const serviceRegistry = createServiceRegistry(db, { runAtomic, read });
+export const serviceRegistryQueries = createServiceRegistryQueries(db, { read });
+export const incidentService = createIncidentService(db, { runAtomic, read });
+export const incidentQueries = createIncidentQueries(db, { read });

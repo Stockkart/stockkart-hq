@@ -5,7 +5,8 @@ import { type NotificationType } from "./constants";
 /** What a notification points at, resolved when it is read (names and titles stay current). */
 export type NotificationTarget =
   | { kind: "issue"; key: string; title: string; href: string }
-  | { kind: "doc"; title: string; href: string };
+  | { kind: "doc"; title: string; href: string }
+  | { kind: "incident"; key: string; title: string; href: string };
 
 export interface NotificationView {
   id: string;
@@ -14,7 +15,7 @@ export interface NotificationView {
   actorName: string | null;
   /** A GitHub-driven change (GH-3): there is no HQ actor, the bell says "GitHub". */
   fromGithub: boolean;
-  /** Null when the issue or doc was deleted since. */
+  /** Null when the issue, doc or incident was deleted since. */
   target: NotificationTarget | null;
   /** Status names of a `status_on_watched` move (null when unknown). */
   statusFrom: string | null;

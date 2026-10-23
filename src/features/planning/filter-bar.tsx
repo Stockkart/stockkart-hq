@@ -10,6 +10,7 @@ import { MultiSelect, type OptionValue, type SelectOption } from "@/components/u
 import {
   labelOptions,
   priorityOptions,
+  releaseOptions,
   statusOptions,
   typeOptions,
   userOptions,
@@ -22,9 +23,11 @@ import {
   filtersToSearchParams,
   hasActiveFilters,
   type IssueFilters,
+  RELEASE_NONE,
   TEXT_FILTER_MAX,
 } from "@/lib/issues/filters";
 import { type LabelView, type NamedOption, type StatusOption } from "@/lib/issues/views";
+import { type ReleaseOption } from "@/lib/releases/views";
 
 /** Options for the pickers; usually `ProjectMeta`. */
 export interface FilterOptions {
@@ -32,6 +35,8 @@ export interface FilterOptions {
   components: NamedOption[];
   labels: LabelView[];
   users: NamedOption[];
+  /** REL-1: shows the "Fix version" filter (`release=` in the URL) when given. */
+  releases?: ReleaseOption[];
 }
 
 interface FilterBarProps {
@@ -207,6 +212,19 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
           update((current) => ({ ...current, labels: toggled(current.labels, value, on) }))
         }
       />
+      {options.releases ? (
+        <MultiFilter
+          label="Fix version"
+          options={[
+            { value: RELEASE_NONE, label: "No fix version" },
+            ...releaseOptions(options.releases),
+          ]}
+          selected={shown.releases}
+          onToggle={(value, on) =>
+            update((current) => ({ ...current, releases: toggled(current.releases, value, on) }))
+          }
+        />
+      ) : null}
       {hasActiveFilters(shown) ? (
         <Button variant="ghost" size="sm" onClick={() => apply(EMPTY_FILTERS)}>
           <X aria-hidden="true" />

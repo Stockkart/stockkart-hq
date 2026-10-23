@@ -5,7 +5,7 @@ import { type Snippet } from "./snippet";
 /** SRCH-1/2 command-palette search. Isomorphic. */
 
 export const SEARCH_QUERY_MAX = 200;
-/** Results per group (issues, docs, diagrams, comments). */
+/** Results per group (issues, docs, diagrams, incidents, comments). */
 export const SEARCH_GROUP_LIMIT = 5;
 /** Client-side wait after the last keystroke before searching. */
 export const SEARCH_DEBOUNCE_MS = 200;
@@ -17,7 +17,7 @@ export const searchInput = z.object({
     .pipe(z.string().max(SEARCH_QUERY_MAX, "Search text is too long")),
 });
 
-export type SearchKind = "issue" | "doc" | "diagram" | "comment";
+export type SearchKind = "issue" | "doc" | "diagram" | "comment" | "incident";
 
 export interface SearchHit {
   kind: SearchKind;
@@ -38,6 +38,8 @@ export interface SearchResults {
   /** DGM-*: whiteboards and flows by title and labels (§5.7). */
   diagrams: SearchHit[];
   comments: SearchHit[];
+  /** INC-1: incidents by title and summary (`INC-3 Checkout down`). */
+  incidents: SearchHit[];
 }
 
 export const EMPTY_RESULTS: SearchResults = {
@@ -46,4 +48,5 @@ export const EMPTY_RESULTS: SearchResults = {
   docs: [],
   diagrams: [],
   comments: [],
+  incidents: [],
 };

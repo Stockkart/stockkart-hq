@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import {
   BELL_LATEST,
+  digestFrequencyInput,
   markAllReadInput,
   notificationIdInput,
   notifyEmailInput,
@@ -67,7 +68,7 @@ export async function markAllNotificationsReadAction(
   );
 }
 
-/** NTF-2 email digest opt-in: stored only, no email is sent yet ("coming soon"). */
+/** NTF-2 email digest opt-in; the digest job (`server/email/digest.ts`) sends to opted-in users. */
 export async function setNotifyEmailAction(
   input: unknown,
 ): Promise<ActionResult<{ notifyEmail: boolean }>> {
@@ -76,6 +77,19 @@ export async function setNotifyEmailAction(
     notifyEmailInput,
     input,
     (data) => notificationService.setNotifyEmail(session.user.id, data.enabled),
+    () => refreshPages(PROFILE),
+  );
+}
+
+/** NTF-2 digest cadence (daily / weekly) of the session user. */
+export async function setDigestFrequencyAction(
+  input: unknown,
+): Promise<ActionResult<{ digestFrequency: "daily" | "weekly" }>> {
+  const session = await requireSession();
+  return runAction(
+    digestFrequencyInput,
+    input,
+    (data) => notificationService.setDigestFrequency(session.user.id, data.frequency),
     () => refreshPages(PROFILE),
   );
 }

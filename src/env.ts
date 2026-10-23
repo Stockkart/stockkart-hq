@@ -33,6 +33,28 @@ const optionalString = z
   .optional()
   .transform((value) => (value === "" ? undefined : value));
 
+/**
+ * A sender for the `from` field: `address` or `Name <address>`. No line breaks, quotes or
+ * angle brackets in the name, so the value can never inject an email header.
+ */
+export function isSenderAddress(value: string): boolean {
+  const address = "[^\\s<>@\"',;]+@[^\\s<>@\"',;]+\\.[A-Za-z]{2,}";
+  return new RegExp(`^(?:${address}|[^<>\\r\\n"]{1,100} <${address}>)$`).test(value);
+}
+
+/** An origin for links in emails: https (http only for loopback), no path, query or hash. */
+export function isPublicOrigin(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  const secure =
+    url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname));
+  return secure && url.pathname === "/" && !url.search && !url.hash && !url.username;
+}
+
 export const envSchema = z.object({
   DATABASE_URL: z
     .string()
@@ -77,6 +99,39 @@ export const envSchema = z.object({
   // GH-1 webhook HMAC secret (`openssl rand -hex 32`). Optional so the app starts without
   // it, but the webhook then FAILS CLOSED: it answers 503 and accepts nothing.
   GITHUB_WEBHOOK_SECRET: optionalString,
+  // NTF-2 email digest via Resend. All three optional: until every one is set no email is
+  // ever sent (fail closed) and the profile says "Email isn't set up". Formats are checked
+  // only when set.
+  RESEND_API_KEY: optionalString.pipe(
+    z
+      .string()
+      .regex(/^re_[A-Za-z0-9_-]{8,200}$/, "RESEND_API_KEY must be a Resend API key (re_…)")
+      .optional(),
+  ),
+  // `HQ <hq@mail.example.com>` or `hq@mail.example.com`, on a domain verified in Resend.
+  RESEND_FROM_EMAIL: optionalString.pipe(
+    z
+      .string()
+      .refine(isSenderAddress, "RESEND_FROM_EMAIL must be an address or `Name <address>`")
+      .optional(),
+  ),
+  // The public URL of HQ (origin only), used for the links in emails. https only (http is
+  // allowed for localhost).
+  APP_BASE_URL: optionalString.pipe(
+    z
+      .url()
+      .refine(
+        isPublicOrigin,
+        "APP_BASE_URL must be an https origin (no path), e.g. https://hq.example.com",
+      )
+      .transform((value) => new URL(value).origin)
+      .optional(),
+  ),
+  // NTF-2 digest job: Vercel Cron sends `Authorization: Bearer <CRON_SECRET>`
+  // (`openssl rand -hex 32`). Optional, but /api/cron/digest then answers 503 (fail closed).
+  CRON_SECRET: optionalString.pipe(
+    z.string().min(32, "CRON_SECRET must be at least 32 characters").optional(),
+  ),
   // Development aid: `1` logs database round trips per request (counts and timings only,
   // never SQL text or parameters). Off unless set to exactly "1".
   HQ_LOG_QUERIES: z

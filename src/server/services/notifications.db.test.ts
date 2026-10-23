@@ -504,6 +504,17 @@ describeDb("notifications, watchers and @mentions (Postgres)", () => {
       expect(trips()).toBe(1);
     });
 
+    it("profile (with the NTF-2 digest settings): one round trip", async () => {
+      const { read, trips } = counted();
+      const [, , , , , digest] = await Promise.all([
+        ...layout(read, ada),
+        createProfileService(db, { read }).get(ada),
+        createNotificationQueries(db, { read }).digestSettings(ada),
+      ]);
+      expect(trips()).toBe(1);
+      expect(digest).toMatchObject({ digestFrequency: "daily" });
+    });
+
     it("issue page (with watchers): one round trip", async () => {
       const issue = await newIssue(ada);
       const { read, trips } = counted();

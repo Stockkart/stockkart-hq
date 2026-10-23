@@ -74,7 +74,10 @@ export const LINK_RELATION_LABELS: Record<LinkRelation, string> = {
  * target of @mentions (ISS-7, DOC-9, MY-1). `sprint` is the subject of the sprint
  * lifecycle activity (SPR-1/2: `sprint_started` holds the burndown's start snapshot).
  * `attachment` is the subject of ISS-9 activity and notifications (added in migration 0004;
- * Postgres enum values can only be appended, so keep new values at the end). */
+ * Postgres enum values can only be appended, so keep new values at the end).
+ * `service` and `release` (SVC-1, REL-1) are added in migration 0005, so no later SQL
+ * migration may use them until 0005 is applied everywhere (see AGENTS.md "P2 slice notes");
+ * `incident` (INC-1) has existed since 0001. */
 export const ENTITY_TYPES = [
   "issue",
   "doc",
@@ -84,9 +87,14 @@ export const ENTITY_TYPES = [
   "user",
   "sprint",
   "attachment",
+  "service",
+  "release",
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
-/** Things that can be commented on (SPEC §8 `comments.entity_type`). */
+/**
+ * Things that can be commented on (SPEC §8 `comments.entity_type`). Doc comments are
+ * page-level (DOC-11, `anchor_id` null) or inline (DOC-13, anchored to a text selection).
+ */
 export const COMMENT_ENTITY_TYPES = ["issue", "doc"] as const;
 export type CommentEntityType = (typeof COMMENT_ENTITY_TYPES)[number];

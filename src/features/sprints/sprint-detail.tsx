@@ -8,6 +8,7 @@ import { type PlanningIssue } from "@/lib/issues/views";
 import { formatDateRange } from "@/lib/sprints/dates";
 import { type Burndown, type SprintSummary } from "@/lib/sprints/views";
 
+import { RetroLink } from "./retro-link";
 import { SprintActions, type SprintContext } from "./sprint-actions";
 import { BurndownPanel } from "./sprint-charts";
 import { applySprintChange } from "./sprint-state";
@@ -66,7 +67,17 @@ export function SprintDetail({
             {sprint.goal ? ` · ${sprint.goal}` : null}
           </p>
         </div>
-        <SprintActions sprint={sprint} context={context} onChange={applyChange} />
+        <div className="flex flex-wrap items-center gap-2">
+          {sprint.state === "closed" && !sprint.id.startsWith("new:") ? (
+            <RetroLink
+              projectKey={projectKey}
+              sprintId={sprint.id}
+              sprintName={sprint.name}
+              retroDocId={sprint.retroDocId}
+            />
+          ) : null}
+          <SprintActions sprint={sprint} context={context} onChange={applyChange} />
+        </div>
       </div>
 
       {burndown ? (

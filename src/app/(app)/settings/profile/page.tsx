@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { GithubLoginForm } from "@/features/settings/github-login-form";
 import { NotificationSettings } from "@/features/settings/notification-settings";
 import { requirePageSession } from "@/server/auth/require-session";
+import { EMAIL_NOT_CONFIGURED_MESSAGE, emailConfigured } from "@/server/email";
 import { notificationQueries, profileService } from "@/server/services";
 
 export const metadata: Metadata = { title: "Profile" };
@@ -13,9 +14,9 @@ export default async function ProfilePage() {
   // Layouts and pages render in parallel, so each page checks the session itself too.
   const session = await requirePageSession();
   // Scoped to the session user; batched with the layout's reads (one round trip).
-  const [profile, notifyEmail] = await Promise.all([
+  const [profile, digest] = await Promise.all([
     profileService.get(session.user.id),
-    notificationQueries.notifyEmail(session.user.id),
+    notificationQueries.digestSettings(session.user.id),
   ]);
   if (!profile) redirect("/login");
 
@@ -34,7 +35,13 @@ export default async function ProfilePage() {
         <dd>{profile.email}</dd>
       </dl>
       <GithubLoginForm initialLogin={profile.githubLogin} />
-      <NotificationSettings initialNotifyEmail={notifyEmail} />
+      <NotificationSettings
+        initialNotifyEmail={digest.notifyEmail}
+        initialFrequency={digest.digestFrequency}
+        // NTF-2 fails closed without Resend: the choice is saved, nothing is sent.
+        emailReady={emailConfigured()}
+        notConfiguredMessage={EMAIL_NOT_CONFIGURED_MESSAGE}
+      />
     </div>
   );
 }

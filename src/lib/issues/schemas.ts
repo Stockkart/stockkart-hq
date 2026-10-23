@@ -21,6 +21,14 @@ const title = z
 const priority = z.literal([...PRIORITIES]);
 const isoDate = z.iso.date();
 
+/** RDM-1: a start and a due date (either may be null); the due date is not before the start. */
+export const issueScheduleSchema = z
+  .object({ startDate: isoDate.nullable(), dueDate: isoDate.nullable() })
+  .refine((value) => !value.startDate || !value.dueDate || value.startDate <= value.dueDate, {
+    message: "The end date is before the start date",
+    path: ["dueDate"],
+  });
+
 export const createIssueInput = z.object({
   projectKey: z.string().regex(PROJECT_KEY_PATTERN),
   title,
@@ -32,6 +40,8 @@ export const createIssueInput = z.object({
   componentId: id.nullish(),
   /** BLG-3: a planned or active sprint of the project; omitted = the backlog. */
   sprintId: id.nullish(),
+  /** REL-1 "Fix version": a release of the project; omitted = none. */
+  releaseId: id.nullish(),
 });
 export type CreateIssueInput = z.input<typeof createIssueInput>;
 
@@ -52,9 +62,22 @@ export const updateIssueFieldInput = z.discriminatedUnion("field", [
   z.object({ issueId: id, field: z.literal("parent"), value: id.nullable() }),
   /** BLG-3: a planned or active sprint, or null for the backlog. */
   z.object({ issueId: id, field: z.literal("sprint"), value: id.nullable() }),
+  /**
+   * RDM-1 roadmap bar: `start_date` and `due_date` together, so a moved bar is one write
+   * (one activity row per date that changed) and never briefly ends before it starts.
+   */
+  z.object({ issueId: id, field: z.literal("schedule"), value: issueScheduleSchema }),
+  /** REL-1 "Fix version": a release of the issue's project, or null for none. */
+  z.object({ issueId: id, field: z.literal("release"), value: id.nullable() }),
 ]);
 export type UpdateIssueFieldInput = z.input<typeof updateIssueFieldInput>;
 export type IssueField = UpdateIssueFieldInput["field"];
+
+/** ISS-14 clone: a copy of the issue (see `cloneIssue` for what is copied). */
+export const cloneIssueInput = z.object({ issueId: id });
+
+/** ISS-14 convert: change the issue's type, within the ISS-3 parent rules. */
+export const convertIssueTypeInput = z.object({ issueId: id, type: z.enum(ISSUE_TYPES) });
 
 /** A label name: trimmed, spaces to dashes, lower case (shared with project settings). */
 export const labelNameSchema = z

@@ -11,10 +11,12 @@ import {
   type renameComponentInput,
   type renameLabelInput,
   type renameStatusInput,
+  type setAutoRetroInput,
   type setComponentRepoInput,
   type setLabelColorInput,
   type setStatusCategoryInput,
   type setStatusDefaultInput,
+  type setStatusWipLimitInput,
   type updateProjectInput,
 } from "@/lib/settings/schemas";
 import { SPRINT_ACTIONS, WONT_DO_STATUS_NAME } from "@/lib/sprints/constants";
@@ -143,6 +145,16 @@ export function createProjectSettingsService(
           sprintLengthDays: input.sprintLengthDays,
         })
         .where(and(eq(projects.id, project.id), isNull(projects.archivedAt)))
+        .returning({ id: projects.id });
+      if (rows.length === 0) throw notFound(`Project ${input.projectKey}`);
+    },
+
+    /** SPR-5: whether completing a sprint makes its retro doc. */
+    async setAutoRetro(_actorId: string, input: z.output<typeof setAutoRetroInput>): Promise<void> {
+      const rows = await db
+        .update(projects)
+        .set({ autoRetro: input.autoRetro })
+        .where(and(eq(projects.key, input.projectKey), isNull(projects.archivedAt)))
         .returning({ id: projects.id });
       if (rows.length === 0) throw notFound(`Project ${input.projectKey}`);
     },
@@ -311,6 +323,28 @@ export function createProjectSettingsService(
           `${current.name} is already the default for ${DEFAULT_LABELS[current.isDefaultFor]}; make another status that default first`,
         );
       }
+    },
+
+    /**
+     * BRD-5: the column's WIP limit (null = none). Only the board reads it, and it spans one
+     * status, so it is a plain UPDATE (no workflow lock).
+     */
+    async setStatusWipLimit(
+      _actorId: string,
+      input: z.output<typeof setStatusWipLimitInput>,
+    ): Promise<void> {
+      const rows = await db
+        .update(statuses)
+        .set({ wipLimit: input.wipLimit })
+        .where(
+          and(
+            eq(statuses.id, input.statusId),
+            // Archived projects are read-only, as for the general settings.
+            sql`${statuses.projectId} IN (SELECT id FROM projects WHERE archived_at IS NULL)`,
+          ),
+        )
+        .returning({ id: statuses.id });
+      if (rows.length === 0) throw notFound("Status");
     },
 
     /**

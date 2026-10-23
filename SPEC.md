@@ -617,21 +617,21 @@ All tables: `id uuid pk`, `created_at`, `updated_at` unless noted. Soft-deletabl
 
 | Table | Key columns |
 |---|---|
-| `users` | stockkart_user_id (unique), name, email, avatar_url, github_login, last_login_at, notify_email (NTF-2 opt-in, default false) |
+| `users` | stockkart_user_id (unique), name, email, avatar_url, github_login, last_login_at, notify_email (NTF-2 opt-in, default false), digest_frequency (`daily`/`weekly`), last_digest_at, email_unsubscribe_token_hash (sha-256 hex) |
 | `login_attempts` | key (`email:…` / `ip:…`), attempted_at, success — for AUTH-8 |
-| `projects` | key (unique), name, description, lead_id, default_assignee_id (PRJ-3), issue_counter, sprint_length_days, archived_at |
+| `projects` | key (unique), name, description, lead_id, default_assignee_id (PRJ-3), issue_counter, incident_counter, sprint_length_days, auto_retro (SPR-5), archived_at |
 | `components` | project_id, name, github_repo (`Stockkart/inventory-api`) |
-| `statuses` | project_id, name, category (`todo`/`in_progress`/`done`), position, is_default_for (`bug`/`other`/null) |
+| `statuses` | project_id, name, category (`todo`/`in_progress`/`done`), position, is_default_for (`bug`/`other`/null), wip_limit (BRD-5, null or 1–999) |
 | `labels` | project_id, name, color |
 | `issues` | project_id, number (unique per project), type, title, description (jsonb), description_text, status_id, priority (0–3), assignee_id, reporter_id, parent_id, component_id, sprint_id, release_id, story_points, due_date, start_date, rank (text), resolved_at, deleted_at, search (tsvector, generated) |
 | `issue_labels` | issue_id, label_id (pk both) |
 | `issue_links` | source_issue_id, target_issue_id, type (`blocks`/`relates`/`duplicates`) — inverse shown automatically |
-| `entity_links` | from_type, from_id, to_type, to_id, created_by — issue↔doc↔diagram↔incident |
-| `comments` | entity_type (`issue`/`doc`), entity_id, author_id, body (jsonb), body_text, edited_at, deleted_at |
+| `entity_links` | from_type, from_id, to_type, to_id, created_by — issue↔doc↔diagram↔incident↔service↔release |
+| `comments` | entity_type (`issue`/`doc`), entity_id, author_id, body (jsonb), body_text, edited_at, anchor_id + anchor_text (DOC-13, doc comments only), resolved_at, resolved_by, parent_id (threads), deleted_at |
 | `activity` | entity_type, entity_id, actor_id (nullable for GitHub), action, field, from_value, to_value, meta (jsonb), created_at |
 | `watchers` | issue_id, user_id (pk both), created_at — no `id`/`updated_at` |
-| `sprints` | project_id, name, goal, start_date, end_date, state (`planned`/`active`/`closed`), closed_at |
-| `releases` | project_id, name, release_date, state, notes_doc_id |
+| `sprints` | project_id, name, goal, start_date, end_date, state (`planned`/`active`/`closed`), closed_at, retro_doc_id (SPR-5) |
+| `releases` | project_id, name (unique per project), description, release_date, state, released_at, notes_doc_id |
 | `docs` | project_id, parent_id, type, title, content (jsonb), content_text, status, owner_id, updated_by, version (int), position, adr_number, adr_status, adr_superseded_by, template_id, deleted_at, search (tsvector) |
 | `doc_versions` | doc_id, version, content, author_id, created_at |
 | `diagrams` | project_id, kind (`whiteboard`/`flow`), title, scene (jsonb, < 2 MB), scene_text (labels, for search), thumbnail_key, version, owner_id, updated_by, template_id, position, deleted_at, search (tsvector) |
@@ -641,8 +641,12 @@ All tables: `id uuid pk`, `created_at`, `updated_at` unless noted. Soft-deletabl
 | `github_refs` | issue_id, repo, kind (`branch`/`pr`/`commit`), number, sha, ref_name, title, url, state (PRs: `open`/`draft`/`closed`/`merged`), author_login, merged_at; partial unique per kind |
 | `github_deliveries` | delivery_id (pk, `X-GitHub-Delivery`), event, received_at — webhook dedupe, pruned after 30 days (no `id`/`updated_at`) |
 | `github_pr_merges` | repo, number (pk both), created_at — GH-3 closes a merged PR's issues once, whatever the delivery order or replays |
-| `incidents` | project_id, title, severity, status, started_at, resolved_at, commander_id, postmortem_doc_id, timeline (jsonb) |
-| `services` | project_id, name, repo, runtime, environments (jsonb), links (jsonb), owner_id, notes |
+| `incidents` | project_id, number (unique per project, from incident_counter), title, severity (`sev1`–`sev3`), status (`investigating`/`mitigated`/`resolved`), started_at, mitigated_at, resolved_at, commander_id, summary, postmortem_doc_id, deleted_at, search (tsvector) |
+| `incident_services` | incident_id, service_id (pk both), created_at — no `id`/`updated_at` |
+| `incident_timeline` | incident_id, at, author_id, kind (`note`/`status_change`/`action`), body, created_at — append-only, no `updated_at` |
+| `services` | project_id, name, slug (unique per project, also while soft-deleted), description, repo, runtime, environments (jsonb array), links (jsonb array), owner_id, notes, position, deleted_at — **no secrets** |
+| `email_deliveries` | user_id, kind (`digest`), period_start, period_end, sent_at, provider_id, status (`pending`/`sent`/`failed`/`skipped`), error_code; unique (user_id, kind, period_start) |
+| `imports` | project_id, kind (`issues_csv`), filename, created_by, status (`previewed`/`applied`/`failed`), row_count, created_count, error_count, report (jsonb), created_at, applied_at — no `updated_at`; the CSV itself is not stored |
 | `todos` | user_id, text, done, position, promoted_issue_id |
 | `saved_views` | user_id, project_id, name (unique per user and project), filter (jsonb), shared, position |
 | `notifications` | user_id, type, entity_type, entity_id, actor_id, meta, read_at, dedupe_key (unique, nullable), created_at — no `updated_at` |

@@ -63,6 +63,16 @@ const results: SearchResults = {
     },
   ],
   comments: [],
+  incidents: [
+    {
+      kind: "incident",
+      id: "n1",
+      href: "/STK/incidents/INC-3",
+      title: "INC-3 Outbox stuck",
+      context: "SEV2",
+      snippet: null,
+    },
+  ],
 };
 
 async function openPalette() {
@@ -139,6 +149,10 @@ describe("CommandPalette (SRCH-1/2, §5.7)", () => {
       "ADR-0008 Scheduled outbox dispatch",
     );
     expect(screen.getByRole("group", { name: "Diagrams" })).toHaveTextContent("Email outbox flow");
+    // INC-1: incidents are searched too.
+    expect(screen.getByRole("group", { name: "Incidents" })).toHaveTextContent(
+      "INC-3 Outbox stuck",
+    );
     // Stored markup is shown as text: no element is created from it.
     const issue = screen.getByRole("option", { name: /STK-45/ });
     expect(issue).toHaveTextContent("<script>alert(1)</script> the outbox runs twice");
@@ -185,7 +199,7 @@ describe("CommandPalette (SRCH-1/2, §5.7)", () => {
   it("opens the New ADR dialog and creates the ADR in the current project", async () => {
     searchAction.mockResolvedValue({
       ok: true,
-      data: { jump: null, issues: [], docs: [], diagrams: [], comments: [] },
+      data: { jump: null, issues: [], docs: [], diagrams: [], comments: [], incidents: [] },
     });
     docActions.createAdrAction.mockResolvedValue({
       ok: true,
@@ -206,7 +220,7 @@ describe("CommandPalette (SRCH-1/2, §5.7)", () => {
   it("opens the New doc dialog from the New doc action", async () => {
     searchAction.mockResolvedValue({
       ok: true,
-      data: { jump: null, issues: [], docs: [], diagrams: [], comments: [] },
+      data: { jump: null, issues: [], docs: [], diagrams: [], comments: [], incidents: [] },
     });
     const { user } = await openPalette();
     await user.keyboard("new doc{Enter}");
@@ -216,7 +230,7 @@ describe("CommandPalette (SRCH-1/2, §5.7)", () => {
   it("opens quick create as a bug from the Create bug action", async () => {
     searchAction.mockResolvedValue({
       ok: true,
-      data: { jump: null, issues: [], docs: [], diagrams: [], comments: [] },
+      data: { jump: null, issues: [], docs: [], diagrams: [], comments: [], incidents: [] },
     });
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

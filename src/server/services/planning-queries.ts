@@ -20,6 +20,7 @@ import {
   ASSIGNEE_NONE,
   type IssueFilters,
   type IssueSort,
+  RELEASE_NONE,
 } from "@/lib/issues/filters";
 import { formatIssueKey, issuePath, parseIssueKey } from "@/lib/issues/keys";
 import { type PlanningIssue } from "@/lib/issues/views";
@@ -107,6 +108,15 @@ export function createPlanningQueries(db: AppDatabase, { read = directRead }: Qu
     }
     if (filters.components.length > 0) {
       conditions.push(inArray(issues.componentId, filters.components));
+    }
+    if (filters.releases.length > 0) {
+      // REL-1 fix version: any of the picked releases, or none (`RELEASE_NONE`).
+      const ids = filters.releases.filter((value) => value !== RELEASE_NONE);
+      const options: SQL[] = [];
+      if (ids.length > 0) options.push(inArray(issues.releaseId, ids));
+      if (filters.releases.includes(RELEASE_NONE)) options.push(isNull(issues.releaseId));
+      const either = or(...options);
+      if (either) conditions.push(either);
     }
     if (filters.labels.length > 0) {
       // Any of the chosen labels (OR within a dimension, AND across dimensions).
@@ -198,6 +208,7 @@ export function createPlanningQueries(db: AppDatabase, { read = directRead }: Qu
             priority: issues.priority,
             storyPoints: issues.storyPoints,
             sprintId: issues.sprintId,
+            releaseId: issues.releaseId,
             rank: issues.rank,
             createdAt: issues.createdAt,
             updatedAt: issues.updatedAt,
@@ -264,6 +275,7 @@ export function createPlanningQueries(db: AppDatabase, { read = directRead }: Qu
         storyPoints: row.storyPoints,
         labels: parseLabels(row.labels),
         sprintId: row.sprintId,
+        releaseId: row.releaseId,
         rank: row.rank,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,

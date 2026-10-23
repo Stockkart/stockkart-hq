@@ -54,18 +54,38 @@ describe("default-deny access policy", () => {
     "/api/auth/session",
     "/api/auth/csrf",
     "/api/webhooks/github",
+    "/api/cron/digest",
+    "/unsubscribe",
     "/_next/static/chunks/a.js",
   ])("lets anonymous requests reach public path %s", (path) => {
     expect(isPublicPath(path)).toBe(true);
     expect(handleRequest(requestFor(path, null)).headers.get("x-middleware-next")).toBe("1");
   });
 
-  it.each(["/api/authx", "/api/auth", "/login/extra", "/api/webhooks/github/x", "/_next/data/x"])(
-    "does not treat look-alike path %s as public",
-    (path) => {
-      expect(isPublicPath(path)).toBe(false);
-    },
-  );
+  it.each([
+    "/api/authx",
+    "/api/auth",
+    "/login/extra",
+    "/api/webhooks/github/x",
+    "/_next/data/x",
+    // NTF-2 exemptions are exact paths: nothing below or beside them is public.
+    "/api/cron",
+    "/api/cron/",
+    "/api/cron/digest/",
+    "/api/cron/digest/x",
+    "/api/cron/other",
+    "/unsubscribe/",
+    "/unsubscribe/x",
+    "/unsubscribex",
+    "/settings/unsubscribe",
+  ])("does not treat look-alike path %s as public", (path) => {
+    expect(isPublicPath(path)).toBe(false);
+  });
+
+  it("still requires a session next to the NTF-2 exemptions", () => {
+    expect(handleRequest(requestFor("/api/cron/other", null)).status).toBe(401);
+    expect(handleRequest(requestFor("/unsubscribe/x", null)).status).toBe(307);
+  });
 
   it("lets a signed-in user through", () => {
     for (const path of ["/", "/my-work", "/api/files/abc"]) {

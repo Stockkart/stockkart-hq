@@ -38,6 +38,7 @@ export function createSettingsQueries(db: AppDatabase, { read = directRead }: Qu
               leadId: projects.leadId,
               defaultAssigneeId: projects.defaultAssigneeId,
               sprintLengthDays: projects.sprintLengthDays,
+              autoRetro: projects.autoRetro,
             })
             .from(projects)
             .where(and(eq(projects.id, projectId), isNull(projects.archivedAt)))
@@ -51,6 +52,7 @@ export function createSettingsQueries(db: AppDatabase, { read = directRead }: Qu
               category: statuses.category,
               position: statuses.position,
               isDefaultFor: statuses.isDefaultFor,
+              wipLimit: statuses.wipLimit,
               issueCount: countWhere(
                 and(eq(issues.statusId, statuses.id), isNull(issues.deletedAt)),
               ),

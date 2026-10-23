@@ -23,6 +23,8 @@ const projectSettingsService = vi.hoisted(() => ({
   renameComponent: vi.fn(),
   setComponentRepo: vi.fn(),
   deleteComponent: vi.fn(),
+  setStatusWipLimit: vi.fn(),
+  setAutoRetro: vi.fn(),
 }));
 const savedViewService = vi.hoisted(() => ({
   create: vi.fn(),
@@ -79,6 +81,8 @@ const cases: [string, AnyAction, unknown][] = [
   ["setStatusDefaultAction", settings.setStatusDefaultAction, { statusId: ID, kind: "bug" }],
   ["moveStatusAction", settings.moveStatusAction, { statusId: ID, afterStatusId: null }],
   ["deleteStatusAction", settings.deleteStatusAction, { statusId: ID, moveToStatusId: ID2 }],
+  ["setStatusWipLimitAction", settings.setStatusWipLimitAction, { statusId: ID, wipLimit: 4 }],
+  ["setAutoRetroAction", settings.setAutoRetroAction, { projectKey: "STK", autoRetro: true }],
   [
     "createLabelAction",
     settings.createLabelAction,
@@ -184,5 +188,27 @@ describe("settings, saved view, bulk and trash server actions", () => {
     ).resolves.toMatchObject({ ok: false });
     expect(projectSettingsService.setComponentRepo).not.toHaveBeenCalled();
     expect(projectSettingsService.setLabelColor).not.toHaveBeenCalled();
+  });
+
+  it.each([0, 1000, 2.5, -1, "4"])(
+    "refuses the WIP limit %s before the service runs (BRD-5: 1–999 or none)",
+    async (wipLimit) => {
+      authMock.mockResolvedValue(session);
+      await expect(
+        settings.setStatusWipLimitAction({ statusId: ID, wipLimit }),
+      ).resolves.toMatchObject({ ok: false });
+      expect(projectSettingsService.setStatusWipLimit).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([1, 999, null])("accepts the WIP limit %s", async (wipLimit) => {
+    authMock.mockResolvedValue(session);
+    await expect(
+      settings.setStatusWipLimitAction({ statusId: ID, wipLimit }),
+    ).resolves.toMatchObject({ ok: true });
+    expect(projectSettingsService.setStatusWipLimit).toHaveBeenCalledWith(USER, {
+      statusId: ID,
+      wipLimit,
+    });
   });
 });

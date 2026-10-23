@@ -8,7 +8,7 @@ import { DocEditor } from "@/features/docs/doc-editor";
 import { docTree } from "@/features/docs/doc-route";
 import { requireProject, resolveProjectKey } from "@/features/issue/project-route";
 import { requirePageSession } from "@/server/auth/require-session";
-import { docQueries, fileQueries, issueQueries } from "@/server/services";
+import { commentService, docQueries, fileQueries, issueQueries } from "@/server/services";
 import { projectIdByKey } from "@/server/services/sql";
 import { storageConfigured } from "@/server/storage";
 
@@ -36,20 +36,33 @@ export default async function DocPage({ params }: Props) {
   // ONE round trip for the page and the docs layout: every query takes the project by key
   // and the doc by its id, so none waits for another. Rows for a doc that turns out not to
   // exist (or to be in another project) are simply not rendered: the page 404s.
-  const [, doc, ancestors, linkedIssues, versions, users, projectKeys, adrs, tree, attachments] =
-    await Promise.all([
-      requireProject(key),
-      docQueries.getDoc(projectId, docUuid),
-      docQueries.ancestors(docUuid),
-      docQueries.linkedIssues(docUuid),
-      docQueries.listVersions(docUuid),
-      docQueries.listUsers(),
-      issueQueries.listProjectKeys(),
-      docQueries.supersedeOptions(projectId, docUuid),
-      docTree(key),
-      // ISS-9 attachments panel; same batch.
-      fileQueries.listAttachments("doc", docUuid),
-    ]);
+  const [
+    ,
+    doc,
+    ancestors,
+    linkedIssues,
+    versions,
+    users,
+    projectKeys,
+    adrs,
+    tree,
+    attachments,
+    threads,
+  ] = await Promise.all([
+    requireProject(key),
+    docQueries.getDoc(projectId, docUuid),
+    docQueries.ancestors(docUuid),
+    docQueries.linkedIssues(docUuid),
+    docQueries.listVersions(docUuid),
+    docQueries.listUsers(),
+    issueQueries.listProjectKeys(),
+    docQueries.supersedeOptions(projectId, docUuid),
+    docTree(key),
+    // ISS-9 attachments panel; same batch.
+    fileQueries.listAttachments("doc", docUuid),
+    // DOC-11 / DOC-13 comment threads; same batch.
+    commentService.listForDoc(docUuid),
+  ]);
   if (!doc) notFound();
   const storageReady = storageConfigured();
   const target = { entityType: "doc", entityId: doc.id } as const;
@@ -68,6 +81,10 @@ export default async function DocPage({ params }: Props) {
         projectKeys={projectKeys}
         adrs={adrs}
         childCount={tree.filter((item) => item.parentId === doc.id).length}
+        comments={{
+          threads,
+          currentUser: { id: session.user.id, name: session.user.name ?? "You" },
+        }}
         attachmentsPanel={
           <AttachmentsPanel
             target={target}

@@ -20,7 +20,7 @@ const sprintActions = vi.hoisted(() => ({
 vi.mock("@/server/actions/sprints", () => sprintActions);
 const bulkActions = vi.hoisted(() => ({ bulkEditIssuesAction: vi.fn() }));
 vi.mock("@/server/actions/bulk", () => bulkActions);
-const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 vi.mock("next/link", () => ({
   default: ({ href, children, ...props }: { href: string; children: React.ReactNode }) => (
@@ -217,6 +217,7 @@ describe("Backlog sprint sections (BLG-3)", () => {
       open: tally(1, 5),
       done: tally(1, 2),
       wontDo: tally(0, 0),
+      retroDocId: null,
     },
     {
       id: "sp-8",
@@ -229,6 +230,7 @@ describe("Backlog sprint sections (BLG-3)", () => {
       open: tally(0, 0),
       done: tally(0, 0),
       wontDo: tally(0, 0),
+      retroDocId: null,
     },
   ];
   const done = { id: "s-done", name: "Done", category: "done" as const };
@@ -363,5 +365,83 @@ describe("Board (BRD-1/2)", () => {
       const todo = screen.getByRole("region", { name: /Todo/ });
       expect(within(todo).getByRole("link", { name: /STK-8/ })).toBeInTheDocument();
     });
+  });
+});
+
+describe("Board WIP limits (BRD-5)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    issueActions.updateIssueFieldAction.mockResolvedValue({ ok: true, data: {} });
+  });
+
+  const inProgress: StatusOption = {
+    id: "s-prog",
+    name: "In Progress",
+    category: "in_progress",
+    wipLimit: 1,
+  };
+  const limited: StatusOption[] = [
+    { id: "s-todo", name: "Todo", category: "todo", wipLimit: null },
+    inProgress,
+    { id: "s-done", name: "Done", category: "done" },
+  ];
+
+  it("shows count / limit, and turns a column over its limit amber with a text badge", () => {
+    render(
+      <Board
+        issues={[issue(1, { status: inProgress }), issue(2, { status: inProgress }), issue(3)]}
+        statuses={limited}
+        projectKey="STK"
+      />,
+    );
+    const column = screen.getByRole("region", { name: /In Progress/ });
+    expect(within(column).getByText("2 / 1")).toBeInTheDocument();
+    expect(within(column).getByText("2 issues, WIP limit 1")).toBeInTheDocument();
+    expect(within(column).getByText("Over WIP limit")).toBeInTheDocument();
+    expect(column.className).toMatch(/amber/);
+    const todo = screen.getByRole("region", { name: /Todo/ });
+    expect(within(todo).queryByText("Over WIP limit")).toBeNull();
+    expect(todo.className).not.toMatch(/amber/);
+  });
+
+  it("does not flag a column at its limit", () => {
+    render(
+      <Board issues={[issue(1, { status: inProgress })]} statuses={limited} projectKey="STK" />,
+    );
+    const column = screen.getByRole("region", { name: /In Progress/ });
+    expect(within(column).getByText("1 / 1")).toBeInTheDocument();
+    expect(within(column).queryByText("Over WIP limit")).toBeNull();
+  });
+
+  it("allows a move into a full column, with a warning toast", async () => {
+    const user = userEvent.setup();
+    render(
+      <Board
+        issues={[issue(1, { status: inProgress }), issue(2)]}
+        statuses={limited}
+        projectKey="STK"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Move STK-2 to…" }));
+    await user.click(await screen.findByRole("menuitem", { name: "In Progress" }));
+    await waitFor(() =>
+      expect(issueActions.updateIssueFieldAction).toHaveBeenCalledWith({
+        issueId: "i2",
+        field: "status",
+        value: "s-prog",
+      }),
+    );
+    expect(toast.warning).toHaveBeenCalledWith("In Progress is over its WIP limit", {
+      description: "2 issues, limit 1.",
+    });
+  });
+
+  it("moves into a column with room without a warning", async () => {
+    const user = userEvent.setup();
+    render(<Board issues={[issue(2)]} statuses={limited} projectKey="STK" />);
+    await user.click(screen.getByRole("button", { name: "Move STK-2 to…" }));
+    await user.click(await screen.findByRole("menuitem", { name: "In Progress" }));
+    await waitFor(() => expect(issueActions.updateIssueFieldAction).toHaveBeenCalled());
+    expect(toast.warning).not.toHaveBeenCalled();
   });
 });

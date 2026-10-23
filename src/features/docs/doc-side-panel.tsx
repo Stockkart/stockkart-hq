@@ -2,7 +2,7 @@
 
 import { Plus, X } from "lucide-react";
 import Link from "next/link";
-import { useId, useState, useTransition } from "react";
+import { type ReactNode, useId, useState, useTransition } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Combobox } from "@/components/ui/combobox";
@@ -21,6 +21,8 @@ interface DocSidePanelProps {
   createdAt: Date;
   updatedAt: Date;
   updatedByName: string | null;
+  /** Shown first (the DOC-11/DOC-13 comments panel). */
+  before?: ReactNode;
 }
 
 /** §5.5 side panel: Linked issues (DOC-9), version history (read-only) and details. */
@@ -32,9 +34,11 @@ export function DocSidePanel({
   createdAt,
   updatedAt,
   updatedByName,
+  before,
 }: DocSidePanelProps) {
   return (
     <aside className="flex flex-col gap-6 xl:sticky xl:top-6 xl:self-start xl:border-l xl:pl-6">
+      {before}
       <LinkedIssues docId={docId} projectKey={projectKey} links={linkedIssues} />
       <section aria-labelledby="doc-versions-heading" className="flex flex-col gap-2">
         <h2 id="doc-versions-heading" className="text-sm font-semibold">

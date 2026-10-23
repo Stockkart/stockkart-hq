@@ -3,6 +3,7 @@ import { type AnyExtension } from "@tiptap/core";
 import { mergeRegistries } from "@/lib/registry";
 
 import { attachmentFeature } from "./attachments";
+import { commentAnchorFeature } from "./comment-mark";
 import { diagramEmbedFeature } from "./diagram-embed";
 import { calloutFeature, mermaidFeature, tableFeature } from "./doc-blocks";
 import { mentionFeature } from "./mentions";
@@ -26,6 +27,7 @@ const FEATURES: readonly EditorFeature[] = [
   mentionFeature,
   attachmentFeature,
   diagramEmbedFeature,
+  commentAnchorFeature,
   // A new editor feature adds one line here.
 ];
 

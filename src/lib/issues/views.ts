@@ -1,3 +1,4 @@
+import { type ReleaseOption } from "@/lib/releases/views";
 import { type RichTextDoc } from "@/lib/rich-text";
 import { type SprintOption } from "@/lib/sprints/views";
 
@@ -9,6 +10,8 @@ export interface StatusOption {
   id: string;
   name: string;
   category: StatusCategory;
+  /** BRD-5: the board column's WIP limit; only the project's status list carries it. */
+  wipLimit?: number | null;
 }
 
 export interface NamedOption {
@@ -49,6 +52,11 @@ export interface PlanningIssue extends IssueSummary {
   labels: LabelView[];
   /** BLG-3: the sprint the issue is in (any state), or null for the backlog. */
   sprintId: string | null;
+  /**
+   * REL-1 "Fix version" (any state), or null. Optional only so read models built elsewhere
+   * (fixtures, optimistic copies) need not carry it; `listIssues` always sets it.
+   */
+  releaseId?: string | null;
   /** Backlog order (`fractional-indexing` key). */
   rank: string;
   createdAt: Date;
@@ -95,6 +103,8 @@ export interface IssueDetail extends IssueSummary {
   dueDate: string | null;
   /** The sprint the issue is in (any state), or null for the backlog. */
   sprintId: string | null;
+  /** REL-1 "Fix version" (any state), or null. */
+  releaseId: string | null;
   createdAt: Date;
   updatedAt: Date;
   resolvedAt: Date | null;
@@ -120,6 +130,8 @@ export interface ProjectMeta {
   epics: IssueSummary[];
   /** Sprint picker: the active and planned sprints (closed ones take no new issues). */
   sprints: SprintOption[];
+  /** REL-1 "Fix version" picker: unreleased releases first (by date), then released ones. */
+  releases: ReleaseOption[];
 }
 
 export interface CommentView {

@@ -27,6 +27,8 @@ export interface SprintSummary {
   open: SprintTally;
   done: SprintTally;
   wontDo: SprintTally;
+  /** SPR-5: the sprint's live retro doc (a soft-deleted one counts as none). */
+  retroDocId: string | null;
 }
 
 /** One x position of the burndown chart (SPR-3). Null values: a day still to come. */

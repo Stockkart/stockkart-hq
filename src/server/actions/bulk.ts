@@ -11,6 +11,7 @@ import {
   DOC_PAGE,
   ISSUE_VIEWS,
   refreshPages,
+  RELEASE_VIEWS,
   SPRINT_PAGE,
   SPRINTS,
   TODOS,
@@ -29,6 +30,16 @@ export async function bulkEditIssuesAction(input: unknown): Promise<ActionResult
     input,
     (data) => bulkService.bulkEdit(session.user.id, data),
     // As the single-field edits (and deletes) refresh, plus the trash.
-    () => refreshPages(...ISSUE_VIEWS, DOC_PAGE, SPRINTS, SPRINT_PAGE, ADR_LOG, TODOS, TRASH),
+    () =>
+      refreshPages(
+        ...ISSUE_VIEWS,
+        DOC_PAGE,
+        SPRINTS,
+        SPRINT_PAGE,
+        ADR_LOG,
+        TODOS,
+        TRASH,
+        ...RELEASE_VIEWS,
+      ),
   );
 }

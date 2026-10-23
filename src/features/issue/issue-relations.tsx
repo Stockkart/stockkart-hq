@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, Plus, X } from "lucide-react";
+import { FileText, Plus, Siren, X } from "lucide-react";
 import Link from "next/link";
 import { useId, useState, useTransition } from "react";
 
@@ -10,6 +10,7 @@ import { Combobox } from "@/components/ui/combobox";
 import { Select } from "@/components/ui/select";
 import { searchIssueOptions } from "@/features/search/issue-picker-search";
 import { docPath, type LinkedDocView } from "@/lib/docs/views";
+import { type IncidentRefView } from "@/lib/incidents/views";
 import {
   type IssueType,
   LINK_RELATION_LABELS,
@@ -148,10 +149,19 @@ interface LinksProps {
   mentions: MentionView[];
   /** Docs that mention or link this issue (DOC-9). */
   docs?: LinkedDocView[];
+  /** Incidents this issue is a follow-up of (INC-2). */
+  incidents?: IncidentRefView[];
 }
 
 /** ISS-6 links, worded from this issue (inverse derived), plus where it is mentioned. */
-export function Links({ issueId, projectKey, links, mentions, docs = [] }: LinksProps) {
+export function Links({
+  issueId,
+  projectKey,
+  links,
+  mentions,
+  docs = [],
+  incidents = [],
+}: LinksProps) {
   const [adding, setAdding] = useState(false);
   const [relation, setRelation] = useState<LinkRelation>("blocks");
   const [target, setTarget] = useState<{ key: string; label: string } | null>(null);
@@ -252,7 +262,10 @@ export function Links({ issueId, projectKey, links, mentions, docs = [] }: Links
         </form>
       ) : null}
 
-      {visible.length === 0 && mentions.length === 0 && docs.length === 0 ? (
+      {visible.length === 0 &&
+      mentions.length === 0 &&
+      docs.length === 0 &&
+      incidents.length === 0 ? (
         <p className="text-sm text-muted-foreground">No links.</p>
       ) : (
         <ul className="flex flex-col divide-y rounded-md border">
@@ -306,6 +319,24 @@ export function Links({ issueId, projectKey, links, mentions, docs = [] }: Links
                   className="truncate rounded-sm outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
                 >
                   {doc.title}
+                </Link>
+              </span>
+            </li>
+          ))}
+          {incidents.map((incident) => (
+            <li
+              key={`incident-${incident.id}`}
+              className="flex items-center gap-3 px-3 py-1.5 text-sm"
+            >
+              <span className="w-28 shrink-0 text-xs text-muted-foreground">From incident</span>
+              <span className="flex min-w-0 flex-1 items-center gap-2">
+                <Siren aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+                <Link
+                  href={incident.href}
+                  className="flex min-w-0 items-center gap-2 rounded-sm outline-none hover:underline focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                >
+                  <span className="font-mono text-xs text-muted-foreground">{incident.key}</span>
+                  <span className="truncate">{incident.title}</span>
                 </Link>
               </span>
             </li>

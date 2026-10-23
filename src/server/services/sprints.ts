@@ -11,6 +11,7 @@ import { directRead, type Read } from "@/server/db/read-batch";
 import { type AppDatabase, type RunAtomic } from "@/server/db/types";
 
 import { conflict, invalid, notFound, pgErrorInfo, UNIQUE_VIOLATION } from "./errors";
+import { createSprintRetroService, type EnsuredRetro } from "./sprint-retros";
 import { rowsOf } from "./sql";
 
 export type CreateSprintData = z.output<typeof createSprintInput>;
@@ -23,6 +24,8 @@ export interface CompletedSprint {
   /** Where they went: a planned sprint, or null for the backlog. */
   targetSprintId: string | null;
   completedPoints: number;
+  /** SPR-5: the retro doc made because the project has `auto_retro` on, else null. */
+  retroDocId: string | null;
 }
 
 export interface SprintServiceOptions {
@@ -47,6 +50,7 @@ const liveProject = sql`AND project_id IN (SELECT id FROM projects WHERE archive
  */
 export function createSprintService(db: AppDatabase, options: SprintServiceOptions) {
   const read = options.read ?? directRead;
+  const retros = createSprintRetroService(db, options);
 
   /** Why a guarded write changed nothing: the sprint's current state (null = no sprint). */
   async function currentState(sprintId: string): Promise<string | null> {
@@ -305,7 +309,8 @@ export function createSprintService(db: AppDatabase, options: SprintServiceOptio
           FROM moved
         ),
         completed AS (
-          SELECT COALESCE(sum(i.story_points), 0)::int AS points
+          SELECT COALESCE(sum(i.story_points), 0)::int AS points,
+            COALESCE(jsonb_agg(i.id ORDER BY i.id), '[]'::jsonb) AS ids
           FROM issues i JOIN statuses st ON st.id = i.status_id
           WHERE i.sprint_id IN (SELECT id FROM closed) AND i.deleted_at IS NULL
             AND st.category = 'done' AND st.name <> ${WONT_DO_STATUS_NAME}
@@ -315,6 +320,8 @@ export function createSprintService(db: AppDatabase, options: SprintServiceOptio
           SELECT 'sprint', c.id, ${actorId}::uuid, ${SPRINT_ACTIONS.completed},
             jsonb_build_object(
               'completedPoints', (SELECT points FROM completed),
+              -- SPR-5: what the retro lists as completed, even when made later.
+              'completedIssueIds', (SELECT ids FROM completed),
               'carriedIssueIds', COALESCE((SELECT jsonb_agg(id ORDER BY id) FROM moved),
                 '[]'::jsonb),
               'carriedTo', (SELECT id FROM target))
@@ -338,11 +345,34 @@ export function createSprintService(db: AppDatabase, options: SprintServiceOptio
         }),
       );
       if (!row?.closed) throw stateError(await currentState(id), "completed", "active");
+      // SPR-5: right after the completion (see `createSprintRetroService` for why not in
+      // it). A failure here must not report the completion, which did happen, as failed:
+      // it is logged, and the sprint page offers "Create retro".
+      let retroDocId: string | null = null;
+      try {
+        retroDocId =
+          (await retros.ensureRetro(actorId, id, { onlyIfEnabled: true }))?.docId ?? null;
+      } catch (error) {
+        console.error(
+          `[retro] sprint ${id}: auto retro failed:`,
+          error instanceof Error ? error.message : error,
+        );
+      }
       return {
         carried: row.carried,
         targetSprintId: row.target_sprint_id,
         completedPoints: row.completed_points,
+        retroDocId,
       };
+    },
+
+    /** SPR-5 "Create retro" for a sprint completed without one (or whose retro was deleted). */
+    createRetro(actorId: string, sprintId: string): Promise<EnsuredRetro> {
+      return retros.ensureRetro(actorId, sprintId).then((retro) => {
+        // Never null without `onlyIfEnabled`; checked for the type.
+        if (!retro) throw invalid("Could not create the retro");
+        return retro;
+      });
     },
   };
 }

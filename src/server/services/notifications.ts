@@ -2,7 +2,7 @@ import { and, eq, isNull, lte, type SQL, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { type EntityType } from "@/lib/issues/constants";
-import { type NotificationType } from "@/lib/notifications/constants";
+import { type DigestFrequency, type NotificationType } from "@/lib/notifications/constants";
 import { notifications, users } from "@/server/db/schema";
 import { type AppDatabase } from "@/server/db/types";
 
@@ -234,13 +234,36 @@ export function createNotificationService(db: AppDatabase) {
       return { marked: rows.length };
     },
 
-    /** NTF-2 opt-in, stored only (no email is sent yet). Always the session user. */
+    /**
+     * NTF-2 opt-in. Always the session user. Turning it ON starts the first digest period
+     * now (`last_digest_at`), so the first email holds what arrives from here on, never a
+     * backlog from before the opt-in.
+     */
     async setNotifyEmail(userId: string, enabled: boolean): Promise<{ notifyEmail: boolean }> {
       const [row] = await db
         .update(users)
-        .set({ notifyEmail: enabled, updatedAt: sql`now()` })
+        .set({
+          notifyEmail: enabled,
+          lastDigestAt: sql`CASE WHEN ${enabled}::boolean AND NOT ${users.notifyEmail}
+            THEN now() ELSE ${users.lastDigestAt} END`,
+          updatedAt: sql`now()`,
+        })
         .where(eq(users.id, userId))
         .returning({ notifyEmail: users.notifyEmail });
+      if (!row) throw notFound("User");
+      return row;
+    },
+
+    /** NTF-2 cadence (daily / weekly). Always the session user. */
+    async setDigestFrequency(
+      userId: string,
+      frequency: DigestFrequency,
+    ): Promise<{ digestFrequency: DigestFrequency }> {
+      const [row] = await db
+        .update(users)
+        .set({ digestFrequency: frequency, updatedAt: sql`now()` })
+        .where(eq(users.id, userId))
+        .returning({ digestFrequency: users.digestFrequency });
       if (!row) throw notFound("User");
       return row;
     },

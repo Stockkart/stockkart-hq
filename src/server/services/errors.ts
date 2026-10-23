@@ -38,3 +38,4 @@ export function pgErrorInfo(error: unknown): { code: string; constraint?: string
 
 export const UNIQUE_VIOLATION = "23505";
 export const FOREIGN_KEY_VIOLATION = "23503";
+export const DEADLOCK_DETECTED = "40P01";

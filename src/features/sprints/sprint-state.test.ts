@@ -18,6 +18,7 @@ const sprint = (id: string, overrides: Partial<SprintSummary> = {}): SprintSumma
   open: tally(0, 0),
   done: tally(0, 0),
   wontDo: tally(0, 0),
+  retroDocId: null,
   ...overrides,
 });
 

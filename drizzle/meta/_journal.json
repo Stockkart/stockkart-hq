@@ -36,6 +36,13 @@
       "when": 1792614827755,
       "tag": "0004_p1_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792699176097,
+      "tag": "0005_p2_foundation",
+      "breakpoints": true
     }
   ]
 }

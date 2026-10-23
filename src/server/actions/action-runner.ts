@@ -2,7 +2,12 @@ import { type z } from "zod";
 
 import { type ActionResult } from "@/lib/action-result";
 import { batchReads } from "@/server/db/client";
-import { FOREIGN_KEY_VIOLATION, pgErrorInfo, ServiceError } from "@/server/services/errors";
+import {
+  DEADLOCK_DETECTED,
+  FOREIGN_KEY_VIOLATION,
+  pgErrorInfo,
+  ServiceError,
+} from "@/server/services/errors";
 
 /**
  * Shared body of the server actions (not itself a server action: no "use server", so it can
@@ -32,6 +37,10 @@ export async function runAction<S extends z.ZodType, T>(
     // and the write.
     if (pgErrorInfo(error)?.code === FOREIGN_KEY_VIOLATION) {
       return { ok: false, error: "Something it refers to no longer exists; reload and retry" };
+    }
+    // Two writers waited on each other's row locks; Postgres rolled this one back whole.
+    if (pgErrorInfo(error)?.code === DEADLOCK_DETECTED) {
+      return { ok: false, error: "Another change got in the way; try again" };
     }
     throw error;
   }

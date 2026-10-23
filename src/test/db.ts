@@ -38,6 +38,14 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   return {
     db: drizzle({ client: pool, schema, casing: "snake_case" }),
     async close() {
+      // `pool.end()` can resolve while a client's socket is still closing; the forced DROP
+      // below then terminates it (57P01 admin_shutdown) and the pool re-emits that as an
+      // unhandled 'error'. That is the expected end of this throwaway database: ignore it
+      // (and only it) so it is not reported against whichever test file runs next.
+      pool.on("error", (error) => {
+        if ("code" in error && error.code === "57P01") return;
+        throw error;
+      });
       await pool.end();
       const cleanup = new Pool({ connectionString: testDatabaseUrl().toString(), max: 1 });
       try {

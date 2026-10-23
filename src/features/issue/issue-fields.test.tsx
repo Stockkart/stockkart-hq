@@ -33,6 +33,10 @@ const meta: ProjectMeta = {
     { id: "sp-7", name: "Sprint 7", state: "active" },
     { id: "sp-8", name: "Sprint 8", state: "planned" },
   ],
+  releases: [
+    { id: "r-14", name: "api-v1.4", state: "unreleased" },
+    { id: "r-13", name: "api-v1.3", state: "released" },
+  ],
 };
 const issue: IssueDetail = {
   id: "i5",
@@ -52,6 +56,7 @@ const issue: IssueDetail = {
   storyPoints: null,
   dueDate: null,
   sprintId: null,
+  releaseId: null,
   createdAt: new Date(),
   updatedAt: new Date(),
   resolvedAt: null,
@@ -172,6 +177,34 @@ describe("IssueFields side panel (ISS-5) with our pickers", () => {
       expect(actions.updateIssueFieldAction).toHaveBeenLastCalledWith({
         issueId: "i5",
         field: "sprint",
+        value: null,
+      }),
+    );
+  });
+
+  it("sets and clears the fix version (REL-1)", async () => {
+    const user = userEvent.setup();
+    renderFields();
+    const release = screen.getByRole("combobox", { name: "Fix version" });
+    expect(release).toHaveTextContent("None");
+    await user.click(release);
+    // Released ones are listed too, marked as such.
+    expect(screen.getByRole("option", { name: /api-v1\.3/ })).toHaveTextContent("Released");
+    await user.click(screen.getByRole("option", { name: /api-v1\.4/ }));
+    expect(release).toHaveTextContent("api-v1.4");
+    await waitFor(() =>
+      expect(actions.updateIssueFieldAction).toHaveBeenCalledWith({
+        issueId: "i5",
+        field: "release",
+        value: "r-14",
+      }),
+    );
+    await user.click(release);
+    await user.click(screen.getByRole("option", { name: "None" }));
+    await waitFor(() =>
+      expect(actions.updateIssueFieldAction).toHaveBeenLastCalledWith({
+        issueId: "i5",
+        field: "release",
         value: null,
       }),
     );

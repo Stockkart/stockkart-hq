@@ -37,6 +37,7 @@ const summaryRow = z.object({
   open: tally,
   done: tally,
   wont_do: tally,
+  retro_doc_id: z.string().nullable(),
 });
 
 const timelineRow = z.object({
@@ -108,7 +109,9 @@ export function createSprintQueries(db: AppDatabase, { read = directRead }: Quer
             s.end_date::text AS end_date, s.state::text AS state,
             ${epochMs(sql`s.closed_at`)} AS closed_ms,
             ${tallyOf("open")} AS open, ${tallyOf("done")} AS done,
-            ${tallyOf("wont_do")} AS wont_do
+            ${tallyOf("wont_do")} AS wont_do,
+            (SELECT d.id::text FROM docs d WHERE d.id = s.retro_doc_id AND d.deleted_at IS NULL)
+              AS retro_doc_id
           FROM sprints s
           WHERE s.project_id = ${projectId}
           ORDER BY CASE s.state WHEN 'active' THEN 0 WHEN 'planned' THEN 1 ELSE 2 END,
@@ -127,6 +130,7 @@ export function createSprintQueries(db: AppDatabase, { read = directRead }: Quer
         open: row.open,
         done: row.done,
         wontDo: row.wont_do,
+        retroDocId: row.retro_doc_id,
       }));
     },
 

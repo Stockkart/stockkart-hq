@@ -16,12 +16,14 @@ import { Select, type SelectOption } from "@/components/ui/select";
 import {
   labelOptions,
   priorityOptions,
+  releaseOptions,
   sprintOptions,
   statusOptions,
   userOptions,
 } from "@/features/issue/field-options";
 import { BULK_MAX, type BulkChange } from "@/lib/issues/bulk";
 import { type LabelView, type NamedOption, type StatusOption } from "@/lib/issues/views";
+import { type ReleaseOption } from "@/lib/releases/views";
 import { type SprintOption } from "@/lib/sprints/views";
 
 /** "Unassigned" / "Backlog" in the pickers (a value, unlike a cleared picker). */
@@ -32,6 +34,8 @@ export interface BulkOptions {
   users: NamedOption[];
   labels: LabelView[];
   sprints: SprintOption[];
+  /** REL-1 "Fix version" picker; without it the bar shows no such picker. */
+  releases?: ReleaseOption[];
 }
 
 interface BulkBarProps {
@@ -47,8 +51,9 @@ interface BulkBarProps {
 const plural = (count: number) => `${count} ${count === 1 ? "issue" : "issues"}`;
 
 /**
- * ISS-12 bulk bar, shown while rows are selected: set status, priority, assignee or sprint,
- * add or remove a label, or delete, for every selected issue at once. Each picker applies
+ * ISS-12 bulk bar, shown while rows are selected: set status, priority, assignee, sprint or
+ * fix version (REL-1), add or remove a label, or delete, for every selected issue at once.
+ * Each picker applies
  * on pick (one deliberate choice); delete asks first. A named group placed BEFORE the rows,
  * so keyboard users reach it in a few Tab stops (Shift+Tab from the list).
  */
@@ -167,6 +172,28 @@ export function BulkBar({
           );
         }}
       />
+      {options.releases ? (
+        <Select
+          variant="chip"
+          label="Set fix version"
+          aria-label={`Set the fix version of ${what}`}
+          placeholder="Fix version"
+          disabled={disabled}
+          value={null}
+          options={[{ value: NONE, label: "None" }, ...releaseOptions(options.releases)]}
+          onChange={(value) => {
+            if (value === null) return;
+            const releaseId = value === NONE ? null : value;
+            const name = options.releases?.find((release) => release.id === releaseId)?.name;
+            onApply(
+              { kind: "release", releaseId },
+              releaseId
+                ? `Set fix version ${name} on ${what}`
+                : `Cleared the fix version of ${what}`,
+            );
+          }}
+        />
+      ) : null}
       <Select
         variant="chip"
         label="Add label"
