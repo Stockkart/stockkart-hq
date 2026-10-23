@@ -149,6 +149,7 @@ describeDb("costs (Postgres)", () => {
       ]);
       const expected = rows.find((row) => row.field === "expectedAmount");
       expect(expected?.to_value).toBeNull();
+      expect(expected?.from_value).toBeNull();
     });
 
     it("links only the project's live services", async () => {
@@ -250,6 +251,19 @@ describeDb("costs (Postgres)", () => {
         fxRate: null,
         baseAmountMinor: 99900,
       });
+    });
+
+    it("keeps a saved entry's own currency after the item's currency changes", async () => {
+      const { id } = await costs.createItem(ada, item());
+      await costs.setEntry(ada, entry(id, { amountMinor: 10000 }));
+      await costs.updateItem(
+        ada,
+        updateCostItemInput.parse({ ...rawItem({ currency: "INR" }), itemId: id }),
+      );
+      // The Month tab re-sends the entry in its own currency (USD) with its rate.
+      await costs.setEntry(ada, entry(id, { amountMinor: 10000, notes: "edited" }));
+      const [row] = await queries.entriesBetween(projectId, "2030-02", "2030-02");
+      expect(row).toMatchObject({ currency: "USD", baseAmountMinor: 832500, notes: "edited" });
     });
 
     it("clears an entry", async () => {
@@ -510,6 +524,15 @@ describeDb("COST-7 monthly reminder (Postgres)", () => {
     });
     // February: a new month, a new reminder (yearly item not due then: nothing missing).
     await expect(runAt("2031-02-01T03:00:00Z")).resolves.toEqual({ projects: 0, notified: 0 });
+  });
+
+  it("falls back to the lead when every chosen recipient was deleted", async () => {
+    const carl = await createTestUser(db, "Carl Gone");
+    await costs.updateSettings(lead, settings({ reminderUserIds: [carl] }));
+    await db.execute(sql`DELETE FROM users WHERE id = ${carl}::uuid`);
+    await costs.createItem(lead, item({ name: "Hosting" }));
+    await expect(runAt("2030-03-02T03:00:00Z")).resolves.toEqual({ projects: 1, notified: 1 });
+    expect((await reminders()).map((row) => row.user_id)).toEqual([lead]);
   });
 
   it("does not count items added after the month", async () => {

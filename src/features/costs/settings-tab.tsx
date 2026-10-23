@@ -146,7 +146,7 @@ export function SettingsTab({
         />
         <span id={id("day-hint")} className="text-xs text-muted-foreground">
           From this day of each month, the recipients get a bell reminder if last month&apos;s costs
-          are not all entered (in-app only).
+          are not all entered (in the bell; no email).
         </span>
       </div>
       <div className="flex flex-col gap-1">

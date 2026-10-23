@@ -67,6 +67,18 @@ const isNameTaken = (error: unknown) => {
   return info?.code === UNIQUE_VIOLATION && info.constraint === NAME_CONSTRAINT;
 };
 
+/**
+ * The per-project costs lock (transaction-scoped advisory lock `hq.costs:<projectId>`):
+ * entry writes take it shared, the settings save exclusive, so an entry is never converted
+ * against a base currency that is being changed at the same time.
+ */
+function costsLock(projectId: string, mode: "shared" | "exclusive"): SQL {
+  const key = sql`hashtextextended(${`hq.costs:${projectId}`}, 0)`;
+  return mode === "shared"
+    ? sql`SELECT pg_advisory_xact_lock_shared(${key})`
+    : sql`SELECT pg_advisory_xact_lock(${key})`;
+}
+
 /** A bigint column read as text → a safe integer (`MAX_AMOUNT_MINOR` keeps it safe). */
 const minor = z.coerce
   .number()
@@ -182,7 +194,8 @@ const expectedIn = (period: SQL) => sql`(i.deleted_at IS NULL AND i.active
  * whose reminder day has come (day of `today` ≥ `reminder_day`, default 1) and whose
  * PREVIOUS month has expected items without an entry. Columns: `project_id`,
  * `project_key`, `month` ("YYYY-MM"), `missing_count`, `first_item` (the bell entry's
- * entity) and `recipients` (`reminder_user_ids`, or the project lead when that is empty).
+ * entity) and `recipients` (the `reminder_user_ids` that still exist, or the project lead
+ * when none do).
  * Shared by the cron job, the costs page banner and the My Work card, so all three agree.
  */
 export function costReminderRows(today: string): SQL {
@@ -194,14 +207,18 @@ export function costReminderRows(today: string): SQL {
       SELECT p.id AS project_id, p.key AS project_key, ${period} AS period,
         coalesce(s.reminder_day, ${DEFAULT_REMINDER_DAY}) AS reminder_day,
         CASE
-          WHEN cardinality(coalesce(s.reminder_user_ids, '{}'::uuid[])) > 0
-            THEN s.reminder_user_ids
+          WHEN cardinality(r_live.ids) > 0 THEN r_live.ids
           WHEN p.lead_id IS NOT NULL THEN ARRAY[p.lead_id]
           ELSE '{}'::uuid[]
         END AS recipients,
         m.missing_count, m.first_item
       FROM projects p
       LEFT JOIN cost_settings s ON s.project_id = p.id
+      -- Stored recipients who still exist; none left means the lead (as when none are set).
+      CROSS JOIN LATERAL (
+        SELECT ARRAY(SELECT u.id FROM users u
+          WHERE u.id = ANY(coalesce(s.reminder_user_ids, '{}'::uuid[]))) AS ids
+      ) r_live
       CROSS JOIN LATERAL (
         SELECT count(*)::int AS missing_count,
           (array_agg(i.id ORDER BY i.position, i.id))[1] AS first_item
@@ -403,9 +420,10 @@ export function createCostService(db: AppDatabase, options: CostServiceOptions) 
           change_activity AS (
             INSERT INTO activity (entity_type, entity_id, actor_id, action, field, from_value,
               to_value)
-            SELECT 'cost_item', u.id, ${actorId}::uuid, 'updated', c.field, c.from_value,
+            SELECT 'cost_item', u.id, ${actorId}::uuid, 'updated', c.field,
               -- The expected amount is a plan, not a payment; still, keep money out of the
-              -- activity feed (COST-9): record only that it changed.
+              -- activity feed (COST-9): record only that it changed, neither side.
+              CASE WHEN c.field = 'expectedAmount' THEN NULL ELSE c.from_value END,
               CASE WHEN c.field = 'expectedAmount' THEN NULL ELSE c.to_value END
             FROM updated u, changes c
           )
@@ -545,9 +563,9 @@ export function createCostService(db: AppDatabase, options: CostServiceOptions) 
     /**
      * COST-2 one month's amount (insert or replace). In the base currency the base amount is
      * the amount; otherwise `fxRate` is required and the base amount is amount × rate
-     * (half-up). A "no charge" month is stored as 0 in the base currency. The statement
-     * re-checks the base currency it converted to, so a settings change in between can
-     * never leave a wrongly converted entry.
+     * (half-up). A "no charge" month is stored as 0 in the base currency. The write holds
+     * the project's costs lock (shared) and re-checks the base currency it converted to,
+     * so a concurrent settings change cannot leave a wrongly converted entry.
      */
     async setEntry(
       actorId: string,
@@ -568,7 +586,12 @@ export function createCostService(db: AppDatabase, options: CostServiceOptions) 
         baseAmount = converted;
       }
       const period = monthToPeriod(input.month);
-      const result = await db.execute(sql`
+      // Shared lock vs the settings save's exclusive one (same key): an entry and a base
+      // currency change never interleave. The upsert is a SECOND statement, so its snapshot
+      // is taken after the lock and its guard sees any settings change committed before.
+      const results = await options.runAtomic([
+        costsLock(item.project_id, "shared"),
+        sql`
         WITH guard AS (
           SELECT 1 FROM cost_items i
           LEFT JOIN cost_settings s ON s.project_id = i.project_id
@@ -600,8 +623,9 @@ export function createCostService(db: AppDatabase, options: CostServiceOptions) 
           FROM saved
         )
         SELECT id::text FROM saved
-      `);
-      const [row] = rowsOf(result, z.object({ id: z.string() }));
+      `,
+      ]);
+      const [row] = rowsOf(results.at(-1), z.object({ id: z.string() }));
       if (!row) throw conflict("The costs settings changed; reload and try again");
       return { id: row.id, baseAmountMinor: baseAmount, fxRate };
     },
@@ -685,11 +709,14 @@ export function createCostService(db: AppDatabase, options: CostServiceOptions) 
     /**
      * COST-8 settings (created on the first save). Recipients are kept only if they are HQ
      * users. The base currency cannot change once the project has entries: the statement
-     * itself refuses it (no row), so no entry can be read against the wrong base.
+     * itself refuses it (no row), run under the project's costs lock (exclusive) so no
+     * entry write (shared lock) can slip in between the check and the change.
      */
     async updateSettings(_actorId: string, input: UpdateCostSettingsData): Promise<void> {
       const project = await projectByKey(input.projectKey);
-      const result = await db.execute(sql`
+      const results = await options.runAtomic([
+        costsLock(project.id, "exclusive"),
+        sql`
         WITH has_entries AS (
           SELECT EXISTS (
             SELECT 1 FROM cost_entries e JOIN cost_items i ON i.id = e.item_id
@@ -718,8 +745,9 @@ export function createCostService(db: AppDatabase, options: CostServiceOptions) 
           RETURNING id
         )
         SELECT id::text FROM saved
-      `);
-      if (rowsOf(result, z.object({ id: z.string() })).length === 0) {
+      `,
+      ]);
+      if (rowsOf(results.at(-1), z.object({ id: z.string() })).length === 0) {
         throw conflict("The base currency cannot change once costs are entered");
       }
     },
@@ -840,7 +868,7 @@ export function createCostQueries(db: AppDatabase, { read = directRead }: { read
 export type CostQueries = ReturnType<typeof createCostQueries>;
 
 /**
- * COST-7 monthly reminder job (in-app only, no email), run by `/api/cron/monthly`. ONE
+ * COST-7 monthly reminder job (a bell entry; no email of its own), run by `/api/cron/monthly`. ONE
  * statement: for every project due today (`costReminderRows`), a `cost_reminder` bell
  * entry per recipient with `dedupe_key = cost_reminder:<projectId>:<YYYY-MM>:<userId>`
  * and `meta = { month, missingCount }`, `ON CONFLICT DO NOTHING`; so the daily cron

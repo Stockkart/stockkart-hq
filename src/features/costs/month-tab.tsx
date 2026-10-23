@@ -65,6 +65,11 @@ interface EntryPatch {
   fxRate: string | null;
 }
 
+/** The currency a row's amount is in: the saved entry's, else (new / no charge) the item's. */
+function entryCurrency(item: CostItemView, entry: CostEntryView | null): CostCurrency {
+  return entry && entry.kind !== "no_charge" ? entry.currency : item.currency;
+}
+
 /**
  * COST-4/5 Month tab: one row per active item with this month's amount (inline money
  * input), kind, notes and the change vs last month; "Copy last month", "Mark no charge";
@@ -123,9 +128,11 @@ export function MonthTab({
   }
 
   function save(item: CostItemView, patch: EntryPatch) {
-    const previous = entries;
+    const existing = entries.find((entry) => entry.itemId === item.id && entry.month === month);
     const noCharge = patch.kind === "no_charge";
-    const currency: CostCurrency = noCharge ? base : item.currency;
+    // A saved entry keeps its own currency (the item's may have changed since); only a new
+    // entry, or one that was "no charge" (stored in the base), takes the item's.
+    const currency: CostCurrency = noCharge ? base : entryCurrency(item, existing ?? null);
     const amountMinor = noCharge ? 0 : patch.amountMinor;
     const fxRate = currency === base ? null : patch.fxRate;
     if (currency !== base && !fxRate) {
@@ -137,7 +144,6 @@ export function MonthTab({
       toast.error("That amount is too large");
       return;
     }
-    const existing = previous.find((entry) => entry.itemId === item.id && entry.month === month);
     replaceEntry(item.id, {
       id: existing?.id ?? `pending-${item.id}`,
       itemId: item.id,
@@ -163,7 +169,8 @@ export function MonthTab({
         }),
       );
       if (result === null) {
-        setEntries(previous);
+        // Roll back this row only: other rows may have edits in flight.
+        replaceEntry(item.id, existing ?? null);
         setAnnouncement(`${item.name} could not be saved`);
       } else {
         setAnnouncement(`Saved ${item.name} for ${monthLabel(month)}`);
@@ -172,11 +179,11 @@ export function MonthTab({
   }
 
   function clear(item: CostItemView) {
-    const previous = entries;
+    const existing = entries.find((entry) => entry.itemId === item.id && entry.month === month);
     replaceEntry(item.id, null);
     startSave(async () => {
       const result = await callAction(() => clearCostEntryAction({ itemId: item.id, month }));
-      if (result === null) setEntries(previous);
+      if (result === null) replaceEntry(item.id, existing ?? null);
       else setAnnouncement(`Cleared ${item.name} for ${monthLabel(month)}`);
     });
   }
@@ -388,8 +395,9 @@ function MonthRowView({
   onClear: () => void;
 }) {
   const { item, entry } = row;
-  const foreign = item.currency !== base && entry?.kind !== "no_charge";
-  const savedRate = entry?.fxRate ?? defaultRate(item.currency, base, usdToInr) ?? "";
+  const currency = entryCurrency(item, entry);
+  const foreign = currency !== base && entry?.kind !== "no_charge";
+  const savedRate = entry?.fxRate ?? defaultRate(currency, base, usdToInr) ?? "";
   const [rate, setRate] = useState(savedRate ? formatRate(savedRate) : "");
   const [rateError, setRateError] = useState<string | null>(null);
   const [notes, setNotes] = useState(entry?.notes ?? "");
@@ -455,7 +463,7 @@ function MonthRowView({
           <MoneyInput
             label={`${item.name} amount`}
             labelHidden
-            currency={entry?.kind === "no_charge" ? base : item.currency}
+            currency={entry?.kind === "no_charge" ? base : currency}
             value={entry?.amountMinor ?? null}
             disabled={entry?.kind === "no_charge"}
             onCommit={saveAmount}
@@ -463,7 +471,7 @@ function MonthRowView({
           {foreign ? (
             <div className="flex items-center gap-1 text-xs text-muted-foreground">
               <label htmlFor={rateId} className="whitespace-nowrap">
-                1 {item.currency} =
+                1 {currency} =
               </label>
               <Input
                 id={rateId}

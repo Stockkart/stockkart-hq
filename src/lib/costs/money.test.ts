@@ -105,6 +105,9 @@ describe("FX (COST-3, half-up rounding)", () => {
     expect(defaultRate("INR", "USD", "83.250000")).toBe("0.012012"); // 0.0120120…
     expect(defaultRate("USD", "USD", "83.25")).toBeNull();
     expect(defaultRate("USD", "INR", null)).toBeNull();
+    // 1 / 0.000001 = 1,000,000 does not fit numeric(12,6): no pre-fill.
+    expect(defaultRate("INR", "USD", "0.000001")).toBeNull();
+    expect(defaultRate("INR", "USD", "0.000002")).toBe("500000.000000");
   });
 });
 

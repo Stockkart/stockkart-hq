@@ -69,7 +69,11 @@ export const COST_ENTRY_KIND_LABELS: Record<CostEntryKind, string> = {
  * stay exact JavaScript integers: `COST_ITEMS_MAX` items × 12 months × this ≈ 2.4e15.
  */
 export const MAX_AMOUNT_MINOR = 999_999_999_999;
-/** Live cost items per project (keeps every year sum a safe integer, see above). */
+/**
+ * Live cost items per project (keeps every year sum a safe integer, see above). A
+ * count-then-insert check, so two concurrent creates may pass it together: a soft cap, and
+ * sums stay safe integers far beyond it.
+ */
 export const COST_ITEMS_MAX = 200;
 
 /** `numeric(12,6)`: at most 6 integer and 6 fraction digits; always > 0. */

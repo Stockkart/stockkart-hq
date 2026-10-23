@@ -166,8 +166,11 @@ export function defaultRate(
   if (from === to || usdToInr === null) return null;
   if (from === "USD") return parseFxRate(usdToInr).ok ? microToRate(rateToMicro(usdToInr)) : null;
   const micro = rateToMicro(usdToInr);
+  // 1 / x at 6 decimals (half-up): e.g. 1 / 83.25 = 0.012012, about 5 significant digits
+  // (≤ 0.004% off). Only a pre-fill; the entry's rate stays editable.
   const inverse = divideHalfUp(FX_ONE * FX_ONE, micro);
-  return inverse === 0n ? null : microToRate(inverse);
+  const max = 10n ** BigInt(FX_RATE_INTEGER_DIGITS + FX_RATE_SCALE) - 1n;
+  return inverse === 0n || inverse > max ? null : microToRate(inverse);
 }
 
 /** A rate for display: "83.25" (trailing zeros dropped). */

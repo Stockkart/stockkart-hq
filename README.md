@@ -587,7 +587,8 @@ the **IMR** (infrastructure monthly run-rate) and the cash paid each month. SPEC
   AWS Textract, GitHub, Grafana Cloud and Razorpay fees, without amounts, linked to the
   registry's default services where they exist; pressing it again adds nothing. Archive
   an item you stopped paying for (its past months still count); drag or use "Move up/down"
-  to reorder.
+  to reorder. Changing an item's currency applies to new months; saved entries keep their
+  own currency and rate.
 - **Month** tab (default: this month, `?month=YYYY-MM`, ‹ › to switch): type each item's
   amount inline (Enter or leaving the field saves; Esc reverts), pick actual / estimate /
   no charge, add a note. "Copy last month" pre-fills the missing monthly and usage rows as
@@ -612,7 +613,8 @@ full-text search.
 
 ### Monthly reminder (COST-7)
 
-In-app only (the bell), never email. From the reminder day of each month (Stockkart time,
+In the bell only: the reminder sends no email of its own (if the NTF-2 digest is ever
+enabled, an unread reminder is listed there like any other bell entry). From the reminder day of each month (Stockkart time,
 Asia/Kolkata), if **last month** has expected items without an amount (active monthly and
 usage items, and yearly items in their renewal month), each recipient gets one
 `cost_reminder` bell entry ("October 2026 costs are not added yet (5 items missing)") that

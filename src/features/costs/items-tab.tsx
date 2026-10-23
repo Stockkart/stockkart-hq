@@ -126,11 +126,15 @@ export function ItemsTab({
   }
 
   function setActive(item: CostItemView, active: boolean) {
-    const previous = items;
-    setItems(items.map((entry) => (entry.id === item.id ? { ...entry, active } : entry)));
+    const patchActive = (value: boolean) =>
+      setItems((current) =>
+        current.map((entry) => (entry.id === item.id ? { ...entry, active: value } : entry)),
+      );
+    patchActive(active);
     startTransition(async () => {
       const result = await callAction(() => setCostItemActiveAction({ itemId: item.id, active }));
-      if (result === null) setItems(previous);
+      // Roll back this item only: other rows may have changes in flight.
+      if (result === null) patchActive(item.active);
       else setAnnouncement(`${item.name} ${active ? "reactivated" : "archived"}`);
     });
   }
