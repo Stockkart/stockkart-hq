@@ -172,6 +172,7 @@ Default statuses (one set per project):
 | BRD-3 | Board scope: active sprint (if any) or all open issues | P0 |
 | BRD-4 | Swimlanes: none / assignee / epic / priority | P1 |
 | BRD-5 | WIP limit per column (column turns amber when over) | P2 |
+| BRD-6 | Board view: filter by issue type (none picked = every type) and show/hide status columns, in the URL (`types=`, `hide=`); without them the project's board defaults apply (Settings → Views; "Save as default" / "Reset to default" on the board). At least one column stays visible; cards in hidden columns are counted with a "Show" link; hidden columns are no drop targets, but "Move to…" lists every status. WIP counts are of the cards shown | P2 |
 
 ### 4.7 Sprints
 
@@ -207,6 +208,7 @@ Default statuses (one set per project):
 | VW-1 | Issue list view with sortable columns and filter bar: type, status, priority, assignee, component, label, sprint, text | P0 |
 | VW-2 | Filters reflected in the URL (shareable between teammates) | P0 |
 | VW-3 | Saved views (personal or shared), e.g. "Open P0/P1 bugs — inventory-api" | P1 |
+| VW-4 | Issue list defaults per project (Settings → Views): default issue types and hidden statuses, applied only when the URL has no `type`/`status` and no saved view is open (a saved view's own filters win); shown as active filter chips; "Clear filters" returns to them, "Show all" drops them (`type=all`), "Save as default" stores the current types and statuses | P2 |
 | SRCH-1 | Global search (`Cmd/Ctrl+K`) over issues, docs, diagrams, comments; `STK-123` jumps directly | P0 |
 | SRCH-2 | Postgres full-text search with ranking; result type icons and snippets | P0 |
 | SRCH-3 | Command palette actions in the same box: "Create bug", "Go to board", "New ADR" | P1 |
@@ -636,7 +638,7 @@ All tables: `id uuid pk`, `created_at`, `updated_at` unless noted. Soft-deletabl
 |---|---|
 | `users` | stockkart_user_id (unique), name, email, avatar_url, github_login, last_login_at, notify_email (NTF-2 opt-in, default false), digest_frequency (`daily`/`weekly`), last_digest_at, email_unsubscribe_token_hash (sha-256 hex) |
 | `login_attempts` | key (`email:…` / `ip:…`), attempted_at, success — for AUTH-8 |
-| `projects` | key (unique), name, description, lead_id, default_assignee_id (PRJ-3), issue_counter, incident_counter, sprint_length_days, auto_retro (SPR-5), archived_at |
+| `projects` | key (unique), name, description, lead_id, default_assignee_id (PRJ-3), issue_counter, incident_counter, sprint_length_days, auto_retro (SPR-5), board_issue_types / list_issue_types (`issue_type[]`, null = every type), board_hidden_status_ids / list_hidden_status_ids (`uuid[]`, default empty; BRD-6, VW-4), archived_at |
 | `components` | project_id, name, github_repo (`Stockkart/inventory-api`) |
 | `statuses` | project_id, name, category (`todo`/`in_progress`/`done`), position, is_default_for (`bug`/`other`/null), wip_limit (BRD-5, null or 1–999) |
 | `labels` | project_id, name, color |

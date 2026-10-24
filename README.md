@@ -337,6 +337,30 @@ every plan; see [Vercel regions](https://vercel.com/docs/regions) and
 [configuring function regions](https://vercel.com/docs/functions/configuring-functions/region),
 checked 2026-10-20). If Neon moves, change `regions` with it.
 
+## Board and issue-list views (BRD-6, VW-4)
+
+Each project has default views, set in **Project settings → Views** (one save for both):
+
+- **Board**: the issue types shown (none picked = all types) and the columns shown (a
+  checkbox per status, in workflow order). On the board the toolbar has a **Type** filter,
+  a **Columns** menu, and, when the view differs from the defaults, **Save as default** and
+  **Reset to default**. URL: `?types=task,bug` (`types=all` = every type) and
+  `?hide=<statusId>,…` (`hide=none` = no hidden column), next to `scope=all`; a missing
+  param means the project default, unknown values are ignored. Cards in hidden columns are
+  counted ("N issues in hidden columns · Show"); hidden columns take no drops, but every
+  card's **Move to…** still lists all statuses. WIP counts are of the cards a column shows,
+  so the type filter narrows them (as the sprint scope does).
+- **Issues list**: the default types and the statuses hidden by default. They apply only
+  when the URL has no `type`/`status` and no saved view is open (a saved view keeps its
+  own filters), and show as active chips. **Clear filters** returns to them, **Show all**
+  drops them (`?type=all`), **Save as default** stores the current types and statuses.
+
+At least one status stays visible on each (the settings and the server refuse otherwise;
+a stored set that covers every status shows them all). Deleting a status removes it from
+both hidden sets in the delete's own statement. The defaults come with the project query,
+and the list applies them inside its one issue query, so both pages stay one round trip.
+Changing defaults writes no activity row (settings never do).
+
 ## GitHub integration
 
 Branches, pull requests and commits that mention an issue key show in the issue's
@@ -820,6 +844,9 @@ into a new Neon branch, never straight over `main`).
 - [ ] Costs (COST-1…9): apply migration `0007_costs` to each Neon branch on its own
       (it adds enum values; see AGENTS.md), set `CRON_SECRET` in Vercel (Production) for the
       monthly reminder, then check `/api/cron/monthly` without the header: 401.
+- [ ] Board and list views (BRD-6, VW-4): apply migration `0008_view_defaults` to each Neon
+      branch. It only adds nullable / defaulted columns (no enum values), so it may be
+      applied before the deploy: the code built for 0007 keeps working.
 
 ## Security notes
 
