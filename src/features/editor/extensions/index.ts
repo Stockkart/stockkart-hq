@@ -6,6 +6,7 @@ import { attachmentFeature } from "./attachments";
 import { commentAnchorFeature } from "./comment-mark";
 import { diagramEmbedFeature } from "./diagram-embed";
 import { calloutFeature, mermaidFeature, tableFeature } from "./doc-blocks";
+import { markdownPasteFeature } from "./markdown-paste";
 import { mentionFeature } from "./mentions";
 import {
   type EditorExtensionContext,
@@ -28,6 +29,7 @@ const FEATURES: readonly EditorFeature[] = [
   attachmentFeature,
   diagramEmbedFeature,
   commentAnchorFeature,
+  markdownPasteFeature,
   // A new editor feature adds one line here.
 ];
 

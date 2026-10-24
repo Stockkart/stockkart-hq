@@ -17,12 +17,18 @@ describe("editor feature registry", () => {
       "diagramEmbed",
       // DOC-13 inline comment anchors: doc editors only.
       "commentAnchor",
+      "markdownPaste",
     ]);
     // @mentions (ISS-7, DOC-9) and attachments (ISS-9, DOC-8) are in every editor.
-    expect(featuresFor("issue").map((feature) => feature.name)).toEqual(["mention", "attachments"]);
+    expect(featuresFor("issue").map((feature) => feature.name)).toEqual([
+      "mention",
+      "attachments",
+      "markdownPaste",
+    ]);
     expect(featuresFor("comment").map((feature) => feature.name)).toEqual([
       "mention",
       "attachments",
+      "markdownPaste",
     ]);
     const attachmentExtensions = ["attachmentUpload", "image", "fileAttachment", "attachmentPaste"];
     expect(featureExtensions({ variant: "doc", projectKeys: [] }).map((e) => e.name)).toEqual([
@@ -33,10 +39,12 @@ describe("editor feature registry", () => {
       ...attachmentExtensions,
       "diagramEmbed",
       "commentAnchor",
+      "markdownPaste",
     ]);
     expect(featureExtensions({ variant: "issue", projectKeys: [] }).map((e) => e.name)).toEqual([
       "mention",
       ...attachmentExtensions,
+      "markdownPaste",
     ]);
   });
 
@@ -70,6 +78,7 @@ describe("editor feature registry", () => {
       "image",
       "fileAttachment",
       "attachmentPaste",
+      "markdownPaste",
       "sample1",
     ]);
     expect(labels(featureToolbarGroups("comment", features))).toEqual([["Attach file", "Sample"]]);
