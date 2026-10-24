@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { useResolvedTheme } from "@/features/theme/use-resolved-theme";
 import { cn } from "@/lib/utils";
 
 import { type MermaidResult, renderMermaid } from "./mermaid-render";
@@ -16,16 +17,18 @@ const SHADOW_STYLE = "<style>:host{display:block}svg{max-width:100%;height:auto}
  * Live, debounced Mermaid preview (DOC-7). Invalid syntax shows an inline error; it never
  * throws into the editor. The SVG comes only from `renderMermaid` (strict mode + DOMPurify)
  * and goes into a shadow root inside a paint-contained box, so the `<style>` mermaid puts in
- * its SVG applies to the diagram only and nothing can be drawn outside the preview.
+ * its SVG applies to the diagram only and nothing can be drawn outside the preview. It
+ * re-renders in mermaid's `dark` / `default` theme when the app theme changes.
  */
 export function MermaidPreview({ source, className }: { source: string; className?: string }) {
   const [result, setResult] = useState<MermaidResult | null>(null);
   const host = useRef<HTMLDivElement>(null);
+  const theme = useResolvedTheme();
 
   useEffect(() => {
     let cancelled = false;
     const timer = setTimeout(() => {
-      void renderMermaid(source).then((next) => {
+      void renderMermaid(source, theme).then((next) => {
         // A newer source may have started rendering meanwhile; drop stale results.
         if (!cancelled) setResult(next);
       });
@@ -34,7 +37,7 @@ export function MermaidPreview({ source, className }: { source: string; classNam
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [source]);
+  }, [source, theme]);
 
   const svg = result?.kind === "svg" ? result.svg : null;
   useEffect(() => {

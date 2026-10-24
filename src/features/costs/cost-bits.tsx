@@ -89,7 +89,10 @@ export function BudgetBar({ ratio, over, label }: { ratio: number; over: boolean
       className="h-2 w-full overflow-hidden rounded-full bg-muted"
     >
       <div
-        className={cn("h-full rounded-full", over ? "bg-amber-500" : "bg-primary")}
+        className={cn(
+          "h-full rounded-full",
+          over ? "bg-amber-700 dark:bg-amber-400" : "bg-primary",
+        )}
         style={{ width: `${Math.min(percent, 100)}%` }}
       />
     </div>

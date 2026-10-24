@@ -35,6 +35,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { callAction } from "@/features/issue/client-utils";
 import { matchesShortcut } from "@/features/shell/shortcuts";
+import { useResolvedTheme } from "@/features/theme/use-resolved-theme";
 import {
   FLOW_GRID,
   FLOW_NODE_LABELS,
@@ -65,7 +66,6 @@ export interface FlowCanvasProps {
   scene: FlowScene;
   onChange?: (scene: FlowScene) => void;
   readOnly?: boolean;
-  dark: boolean;
   projectKey: string;
   /** DGM-7: open a linked issue or doc. */
   onOpenLink: (link: FlowNodeLink) => void;
@@ -102,10 +102,11 @@ function FlowEditor({
   scene,
   onChange,
   readOnly = false,
-  dark,
   projectKey,
   onOpenLink,
 }: FlowCanvasProps) {
+  // The canvas follows the app theme live (DGM-2). Exports stay light (lib/diagrams/flow-svg).
+  const colorMode = useResolvedTheme();
   const [nodes, setNodes, onNodesChange] = useNodesState<FlowNode>(sceneToNodes(scene));
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(sceneToEdges(scene));
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -299,7 +300,7 @@ function FlowEditor({
             nodesFocusable
             edgesFocusable={!readOnly}
             deleteKeyCode={readOnly ? null : ["Backspace", "Delete"]}
-            colorMode={dark ? "dark" : "light"}
+            colorMode={colorMode}
           >
             <Background gap={FLOW_GRID} />
             <MiniMap

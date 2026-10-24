@@ -94,7 +94,7 @@ export function LabelDot({ color }: { color: string | null }) {
   return (
     <span
       aria-hidden="true"
-      className="inline-block size-2.5 shrink-0 rounded-full border border-black/10 bg-muted-foreground/40"
+      className="inline-block size-2.5 shrink-0 rounded-full border border-foreground/20 bg-muted-foreground/40"
       style={color ? { backgroundColor: color } : undefined}
     />
   );

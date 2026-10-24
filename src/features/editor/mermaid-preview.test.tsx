@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { type RichTextDoc } from "@/lib/rich-text";
@@ -63,6 +63,27 @@ describe("MermaidPreview (DOC-7)", () => {
     render(<MermaidPreview source="  " />);
     expect(await screen.findByText("Write a diagram to see it here.")).toBeInTheDocument();
     expect(mermaidMock.parse).not.toHaveBeenCalled();
+  });
+
+  it("renders in mermaid's dark theme in dark mode and re-renders on a theme change", async () => {
+    document.documentElement.className = "dark";
+    try {
+      render(<MermaidPreview source={"flowchart LR\n  A --> B"} />);
+      await waitFor(() => expect(mermaidMock.render).toHaveBeenCalledTimes(1));
+      expect(mermaidMock.initialize).toHaveBeenLastCalledWith(
+        expect.objectContaining({ theme: "dark", securityLevel: "strict" }),
+      );
+      await act(async () => {
+        document.documentElement.className = "";
+        await Promise.resolve();
+      });
+      await waitFor(() => expect(mermaidMock.render).toHaveBeenCalledTimes(2));
+      expect(mermaidMock.initialize).toHaveBeenLastCalledWith(
+        expect.objectContaining({ theme: "neutral", securityLevel: "strict" }),
+      );
+    } finally {
+      document.documentElement.className = "";
+    }
   });
 });
 
