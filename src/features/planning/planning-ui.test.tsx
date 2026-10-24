@@ -20,6 +20,13 @@ const sprintActions = vi.hoisted(() => ({
 vi.mock("@/server/actions/sprints", () => sprintActions);
 const bulkActions = vi.hoisted(() => ({ bulkEditIssuesAction: vi.fn() }));
 vi.mock("@/server/actions/bulk", () => bulkActions);
+const settingsActions = vi.hoisted(() => ({ saveViewDefaultsAction: vi.fn() }));
+vi.mock("@/server/actions/settings", () => settingsActions);
+const router = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn(), push: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => router,
+  usePathname: () => "/STK/board",
+}));
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
 vi.mock("next/link", () => ({
@@ -39,6 +46,12 @@ const statuses: StatusOption[] = [
   { id: "s-done", name: "Done", category: "done" },
 ];
 const ada = { id: "u-ada", name: "Ada Lovelace" };
+/** BRD-6: every type, no hidden column (the defaults of a fresh project). */
+const viewProps = {
+  scope: "sprint" as const,
+  view: { types: [], hidden: [] },
+  defaults: { types: [], hidden: [] },
+};
 
 function issue(n: number, overrides: Partial<PlanningIssue> = {}): PlanningIssue {
   return {
@@ -324,7 +337,7 @@ describe("Board (BRD-1/2)", () => {
   ];
 
   it("shows the card fields", () => {
-    render(<Board issues={issues} statuses={statuses} projectKey="STK" />);
+    render(<Board issues={issues} statuses={statuses} projectKey="STK" {...viewProps} />);
     const card = screen.getByRole("link", { name: /STK-7/ }).closest("li");
     const scope = within(card ?? document.body);
     expect(scope.getByText("STK-7")).toBeInTheDocument();
@@ -337,7 +350,7 @@ describe("Board (BRD-1/2)", () => {
 
   it("moves a card with the Move to… menu (keyboard alternative)", async () => {
     const user = userEvent.setup();
-    render(<Board issues={issues} statuses={statuses} projectKey="STK" />);
+    render(<Board issues={issues} statuses={statuses} projectKey="STK" {...viewProps} />);
     await user.click(screen.getByRole("button", { name: "Move STK-8 to…" }));
     await user.click(await screen.findByRole("menuitem", { name: "In Progress" }));
     await waitFor(() =>
@@ -357,7 +370,7 @@ describe("Board (BRD-1/2)", () => {
   it("rolls a failed move back to the original column", async () => {
     issueActions.updateIssueFieldAction.mockResolvedValue({ ok: false, error: "Status not found" });
     const user = userEvent.setup();
-    render(<Board issues={issues} statuses={statuses} projectKey="STK" />);
+    render(<Board issues={issues} statuses={statuses} projectKey="STK" {...viewProps} />);
     await user.click(screen.getByRole("button", { name: "Move STK-8 to…" }));
     await user.click(await screen.findByRole("menuitem", { name: "Done" }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Status not found"));
@@ -392,6 +405,7 @@ describe("Board WIP limits (BRD-5)", () => {
         issues={[issue(1, { status: inProgress }), issue(2, { status: inProgress }), issue(3)]}
         statuses={limited}
         projectKey="STK"
+        {...viewProps}
       />,
     );
     const column = screen.getByRole("region", { name: /In Progress/ });
@@ -406,7 +420,12 @@ describe("Board WIP limits (BRD-5)", () => {
 
   it("does not flag a column at its limit", () => {
     render(
-      <Board issues={[issue(1, { status: inProgress })]} statuses={limited} projectKey="STK" />,
+      <Board
+        issues={[issue(1, { status: inProgress })]}
+        statuses={limited}
+        projectKey="STK"
+        {...viewProps}
+      />,
     );
     const column = screen.getByRole("region", { name: /In Progress/ });
     expect(within(column).getByText("1 / 1")).toBeInTheDocument();
@@ -420,6 +439,7 @@ describe("Board WIP limits (BRD-5)", () => {
         issues={[issue(1, { status: inProgress }), issue(2)]}
         statuses={limited}
         projectKey="STK"
+        {...viewProps}
       />,
     );
     await user.click(screen.getByRole("button", { name: "Move STK-2 to…" }));
@@ -438,10 +458,163 @@ describe("Board WIP limits (BRD-5)", () => {
 
   it("moves into a column with room without a warning", async () => {
     const user = userEvent.setup();
-    render(<Board issues={[issue(2)]} statuses={limited} projectKey="STK" />);
+    render(<Board issues={[issue(2)]} statuses={limited} projectKey="STK" {...viewProps} />);
     await user.click(screen.getByRole("button", { name: "Move STK-2 to…" }));
     await user.click(await screen.findByRole("menuitem", { name: "In Progress" }));
     await waitFor(() => expect(issueActions.updateIssueFieldAction).toHaveBeenCalled());
     expect(toast.warning).not.toHaveBeenCalled();
+  });
+});
+
+describe("Board view: types and hidden columns (BRD-6)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    issueActions.updateIssueFieldAction.mockResolvedValue({ ok: true, data: {} });
+    settingsActions.saveViewDefaultsAction.mockResolvedValue({ ok: true, data: undefined });
+  });
+
+  const [todo, prog, done] = statuses as [StatusOption, StatusOption, StatusOption];
+  const issues = [
+    issue(1, { type: "bug" }),
+    issue(2, { type: "task", status: prog }),
+    issue(3, { type: "epic", status: done }),
+  ];
+  const cards = () =>
+    screen.queryAllByRole("link", { name: /^STK-\d+:/ }).map((l) => l.textContent);
+
+  it("shows only the picked types, and writes them to the URL", async () => {
+    const user = userEvent.setup();
+    render(
+      <Board
+        issues={issues}
+        statuses={statuses}
+        {...viewProps}
+        projectKey="STK"
+        view={{ types: ["bug"], hidden: [] }}
+      />,
+    );
+    expect(cards()).toEqual(["STK-1: Issue 1"]);
+    await user.click(screen.getByRole("combobox", { name: "Type: Bug" }));
+    await user.click(screen.getByRole("option", { name: "Task" }));
+    await waitFor(() => expect(router.replace).toHaveBeenCalled());
+    expect(String(router.replace.mock.calls.at(-1)?.[0])).toBe("/STK/board?types=task%2Cbug");
+  });
+
+  it("hides columns, counts their cards, and Show brings them back", async () => {
+    const user = userEvent.setup();
+    render(
+      <Board
+        issues={issues}
+        statuses={statuses}
+        {...viewProps}
+        projectKey="STK"
+        view={{ types: [], hidden: [done.id] }}
+      />,
+    );
+    // A hidden column is no region and so no drop target.
+    expect(screen.queryByRole("region", { name: /Done/ })).toBeNull();
+    expect(screen.getAllByRole("region")).toHaveLength(2);
+    expect(screen.getByText(/1 issue in hidden columns/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show" }));
+    await waitFor(() => expect(router.replace).toHaveBeenCalled());
+    expect(String(router.replace.mock.calls.at(-1)?.[0])).toBe("/STK/board");
+  });
+
+  it("still offers hidden statuses in Move to…, so no card gets stuck", async () => {
+    const user = userEvent.setup();
+    render(
+      <Board
+        issues={issues}
+        statuses={statuses}
+        {...viewProps}
+        projectKey="STK"
+        view={{ types: [], hidden: [done.id] }}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Move STK-1 to…" }));
+    const items = await screen.findAllByRole("menuitem");
+    expect(items.map((item) => item.textContent)).toEqual(["Todo", "In Progress", "Done"]);
+    await user.click(screen.getByRole("menuitem", { name: "Done" }));
+    await waitFor(() =>
+      expect(issueActions.updateIssueFieldAction).toHaveBeenCalledWith({
+        issueId: "i1",
+        field: "status",
+        value: done.id,
+      }),
+    );
+  });
+
+  it("toggles columns in the Columns menu, keeping the last one visible", async () => {
+    const user = userEvent.setup();
+    render(
+      <Board
+        issues={issues}
+        statuses={statuses}
+        {...viewProps}
+        projectKey="STK"
+        view={{ types: [], hidden: [todo.id, prog.id] }}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /Columns/ }));
+    const last = await screen.findByRole("menuitemcheckbox", { name: "Done" });
+    expect(last).toHaveAttribute("aria-checked", "true");
+    expect(last).toHaveAttribute("aria-disabled", "true");
+    await user.click(screen.getByRole("menuitemcheckbox", { name: "Todo" }));
+    await waitFor(() => expect(router.replace).toHaveBeenCalled());
+    expect(String(router.replace.mock.calls.at(-1)?.[0])).toBe(`/STK/board?hide=${prog.id}`);
+  });
+
+  it("saves a changed view as the default and resets to it", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <Board issues={issues} statuses={statuses} {...viewProps} projectKey="STK" />,
+    );
+    // At the defaults: nothing to save or reset.
+    expect(screen.queryByRole("button", { name: "Save as default" })).toBeNull();
+    rerender(
+      <Board
+        issues={issues}
+        statuses={statuses}
+        {...viewProps}
+        scope="all"
+        projectKey="STK"
+        view={{ types: ["bug"], hidden: [done.id] }}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Save as default" }));
+    await waitFor(() =>
+      expect(settingsActions.saveViewDefaultsAction).toHaveBeenCalledWith({
+        projectKey: "STK",
+        board: { issueTypes: ["bug"], hiddenStatusIds: [done.id] },
+      }),
+    );
+    // Now the default: the plain URL (scope kept) shows it.
+    await waitFor(() =>
+      expect(router.replace).toHaveBeenCalledWith("/STK/board?scope=all", {
+        scroll: false,
+      }),
+    );
+    router.replace.mockClear();
+    await user.click(screen.getByRole("button", { name: "Reset to default" }));
+    await waitFor(() =>
+      expect(router.replace).toHaveBeenCalledWith("/STK/board?scope=all", { scroll: false }),
+    );
+  });
+
+  it("counts the cards a column shows against its WIP limit (type filter applied)", () => {
+    const limited = statuses.map((status) =>
+      status.id === prog.id ? { ...status, wipLimit: 1 } : status,
+    );
+    render(
+      <Board
+        issues={[issue(4, { type: "bug", status: prog }), issue(5, { type: "task", status: prog })]}
+        statuses={limited}
+        {...viewProps}
+        projectKey="STK"
+        view={{ types: ["bug"], hidden: [] }}
+      />,
+    );
+    const column = screen.getByRole("region", { name: /In Progress/ });
+    expect(within(column).getByText("1 / 1")).toBeInTheDocument();
   });
 });

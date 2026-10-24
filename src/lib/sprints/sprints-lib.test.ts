@@ -93,5 +93,12 @@ describe("board scope URL param (BRD-3)", () => {
   it("writes the default as the plain URL", () => {
     expect(boardHref("STK", "sprint")).toBe("/STK/board");
     expect(boardHref("STK", "all")).toBe("/STK/board?scope=all");
+    // BRD-6: the view params come along (the scope from `view` never overrides `scope`).
+    expect(boardHref("STK", "all", new URLSearchParams("types=bug&scope=sprint"))).toBe(
+      "/STK/board?scope=all&types=bug",
+    );
+    expect(boardHref("STK", "sprint", new URLSearchParams("hide=none"))).toBe(
+      "/STK/board?hide=none",
+    );
   });
 });
