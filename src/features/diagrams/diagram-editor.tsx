@@ -55,7 +55,6 @@ import { DiagramKindIcon } from "./diagram-thumbnail";
 import { LazyFlowCanvas, LazyWhiteboardCanvas } from "./lazy-canvases";
 import { diagramPng, diagramSvg, downloadBlob, exportFilename } from "./render";
 import { ThumbnailUploader } from "./thumbnail";
-import { useDarkMode } from "./use-dark-mode";
 
 type Saver = Autosaver<DiagramScene>;
 
@@ -109,7 +108,6 @@ export function DiagramEditor({
   links: DiagramLinkView[];
 }) {
   const router = useRouter();
-  const dark = useDarkMode();
   const titleId = useId();
   const [titleText, setTitleText] = useState(diagram.title);
   const [state, setState] = useState<SaverState<DiagramScene>>({
@@ -288,7 +286,6 @@ export function DiagramEditor({
       scene={canvasScene}
       onChange={readOnly ? undefined : onSceneChange}
       readOnly={readOnly}
-      dark={dark}
       onNavigate={openPath}
     />
   ) : (
@@ -297,7 +294,6 @@ export function DiagramEditor({
       scene={canvasScene}
       onChange={readOnly ? undefined : onSceneChange}
       readOnly={readOnly}
-      dark={dark}
       projectKey={diagram.projectKey}
       onOpenLink={(link) => openPath(nodeLinkPath(link, diagram.projectKey))}
     />

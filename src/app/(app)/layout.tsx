@@ -12,6 +12,7 @@ import {
   sprintQueries,
 } from "@/server/services";
 import { projectIdByKey } from "@/server/services/sql";
+import { getThemePreference } from "@/server/theme/preference";
 
 export default async function AppLayout({ children }: Readonly<{ children: ReactNode }>) {
   // Second gate after the proxy (S-2): the app shell never renders without a session.
@@ -21,12 +22,15 @@ export default async function AppLayout({ children }: Readonly<{ children: React
   // page's own reads. The sidebar's saved views (VW-3) come in the same batch. The bell's
   // unread count (NTF-1) rides along in the same batch too: no round trip of its own, and
   // no client polling that would keep Neon's compute awake.
-  const [issueTemplates, sprintOptions, savedViews, unreadNotifications] = await Promise.all([
-    issueQueries.issueTemplates(),
-    sprintQueries.openSprintOptionsByProject(),
-    savedViewService.listViews(session.user.id, projectIdByKey(DEFAULT_PROJECT_KEY)),
-    notificationQueries.unreadCount(session.user.id),
-  ]);
+  // The theme cookie is read locally (no DB round trip).
+  const [issueTemplates, sprintOptions, savedViews, unreadNotifications, themePreference] =
+    await Promise.all([
+      issueQueries.issueTemplates(),
+      sprintQueries.openSprintOptionsByProject(),
+      savedViewService.listViews(session.user.id, projectIdByKey(DEFAULT_PROJECT_KEY)),
+      notificationQueries.unreadCount(session.user.id),
+      getThemePreference(),
+    ]);
 
   return (
     <div className="flex min-h-dvh">
@@ -43,6 +47,7 @@ export default async function AppLayout({ children }: Readonly<{ children: React
           issueTemplates={issueTemplates}
           sprintOptions={sprintOptions}
           unreadNotifications={unreadNotifications}
+          themePreference={themePreference}
         />
         <main id="main" className="flex-1 p-6">
           {children}

@@ -19,13 +19,14 @@ import {
   type WhiteboardScene,
 } from "@/lib/diagrams/scene";
 
+import { useResolvedTheme } from "@/features/theme/use-resolved-theme";
+
 import { toExcalidrawElements } from "./excalidraw-elements";
 
 export interface WhiteboardCanvasProps {
   scene: WhiteboardScene;
   onChange?: (scene: WhiteboardScene) => void;
   readOnly?: boolean;
-  dark: boolean;
   /** An element link to an app path (`/STK/issues/STK-1`) opens in the app (DGM-7). */
   onNavigate: (path: string) => void;
 }
@@ -52,9 +53,10 @@ export default function WhiteboardCanvas({
   scene,
   onChange,
   readOnly = false,
-  dark,
   onNavigate,
 }: WhiteboardCanvasProps) {
+  // The canvas follows the app theme live (DGM-1). Exports stay light (render.ts).
+  const theme = useResolvedTheme();
   const api = useRef<ExcalidrawImperativeAPI | null>(null);
   // Read once: the editor remounts this canvas (new key) to load another scene.
   const [initialData] = useState(() => ({
@@ -110,7 +112,7 @@ export default function WhiteboardCanvas({
         }}
         onChange={handleChange}
         viewModeEnabled={readOnly}
-        theme={dark ? "dark" : "light"}
+        theme={theme}
         autoFocus={!readOnly}
         UIOptions={{
           tools: { image: false },

@@ -5,9 +5,11 @@ import { Button } from "@/components/ui/button";
 import { QuickCreate } from "@/features/issue/quick-create";
 import { NotificationBell } from "@/features/notifications/notification-bell";
 import { CommandPalette } from "@/features/search/command-palette";
+import { ThemeSwitcher } from "@/features/theme/theme-switcher";
 import { type IssueType } from "@/lib/issues/constants";
 import { type RichTextDoc } from "@/lib/rich-text";
 import { type SprintOption } from "@/lib/sprints/views";
+import { DEFAULT_THEME_PREFERENCE, type ThemePreference } from "@/lib/theme/theme";
 import { signOutAction } from "@/server/actions/auth";
 
 import { DEFAULT_PROJECT_KEY } from "./nav-items";
@@ -21,6 +23,8 @@ interface TopBarProps {
   sprintOptions?: Record<string, SprintOption[]>;
   /** NTF-1 bell badge, loaded with the page (the layout's batched read). */
   unreadNotifications?: number;
+  /** The `hq_theme` cookie, read by the layout, for the theme switcher's first render. */
+  themePreference?: ThemePreference;
 }
 
 function initials(name: string): string {
@@ -35,6 +39,7 @@ export function TopBar({
   issueTemplates,
   sprintOptions,
   unreadNotifications = 0,
+  themePreference = DEFAULT_THEME_PREFERENCE,
 }: TopBarProps) {
   return (
     <header className="flex h-14 items-center gap-3 border-b px-4">
@@ -49,6 +54,7 @@ export function TopBar({
       />
       <ShortcutHelp />
       <NotificationBell initialUnread={unreadNotifications} />
+      <ThemeSwitcher initialPreference={themePreference} />
       <Link
         href="/settings/profile"
         title={`${userName}: profile`}

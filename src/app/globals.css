@@ -1,7 +1,23 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-@custom-variant dark (&:is(.dark *));
+/*
+ * Theme (README "Dark mode"). The root layout renders `<html>` from the `hq_theme` cookie:
+ * `dark` → class `dark`; `system` (or no cookie) → class `theme-system`, which turns dark
+ * only while the OS prefers dark; `light` → no class. No inline script is needed (S-9).
+ * `dark:` utilities and the dark tokens below both use this variant, so they always switch
+ * together.
+ */
+@custom-variant dark {
+  &:is(.dark, .dark *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:is(.theme-system, .theme-system *) {
+      @slot;
+    }
+  }
+}
 
 @theme inline {
   --color-background: var(--background);
@@ -37,6 +53,8 @@
 }
 
 :root {
+  /* Native scrollbars, form controls and the canvas default follow the theme. */
+  color-scheme: light;
   --radius: 0.625rem;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -66,6 +84,18 @@
   --chart-ideal: oklch(0.55 0 0);
   --chart-scope: oklch(0.58 0.15 55);
   --chart-completed: oklch(0.52 0.14 155);
+  /* COST-6 year chart, one per category (≥ 3:1 on the background in each theme). */
+  --chart-cost-hosting: oklch(0.6 0.15 262);
+  --chart-cost-database: oklch(0.62 0.14 155);
+  --chart-cost-storage: oklch(0.6 0.14 70);
+  --chart-cost-email: oklch(0.62 0.17 20);
+  --chart-cost-ai-ocr: oklch(0.6 0.16 300);
+  --chart-cost-domain-dns: oklch(0.6 0.1 200);
+  --chart-cost-monitoring: oklch(0.6 0.15 110);
+  --chart-cost-source-control: oklch(0.55 0.02 260);
+  --chart-cost-payments: oklch(0.65 0.16 340);
+  --chart-cost-saas-other: oklch(0.6 0.1 40);
+  --chart-cost-other: oklch(0.6 0.02 90);
   /* DOC-13 open comment anchors: a pale background under the normal text colour (≥ 12:1)
      plus an underline (≥ 3:1 against it), so the highlight never relies on colour alone. */
   --comment-highlight: oklch(0.95 0.07 95);
@@ -73,37 +103,52 @@
   --comment-underline: oklch(0.5 0.13 60);
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.72 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.7 0.19 22);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --chart-remaining: oklch(0.72 0.15 262);
-  --chart-ideal: oklch(0.7 0 0);
-  --chart-scope: oklch(0.78 0.13 70);
-  --chart-completed: oklch(0.75 0.14 155);
-  --comment-highlight: oklch(0.38 0.08 80);
-  --comment-highlight-active: oklch(0.46 0.1 80);
-  --comment-underline: oklch(0.85 0.14 88);
+/* Dark tokens: `:root.dark`, and `:root.theme-system` while the OS prefers dark. */
+:root {
+  @variant dark {
+    color-scheme: dark;
+    --background: oklch(0.145 0 0);
+    --foreground: oklch(0.985 0 0);
+    --card: oklch(0.205 0 0);
+    --card-foreground: oklch(0.985 0 0);
+    --popover: oklch(0.205 0 0);
+    --popover-foreground: oklch(0.985 0 0);
+    --primary: oklch(0.922 0 0);
+    --primary-foreground: oklch(0.205 0 0);
+    --secondary: oklch(0.269 0 0);
+    --secondary-foreground: oklch(0.985 0 0);
+    --muted: oklch(0.269 0 0);
+    --muted-foreground: oklch(0.72 0 0);
+    --accent: oklch(0.269 0 0);
+    --accent-foreground: oklch(0.985 0 0);
+    --destructive: oklch(0.7 0.19 22);
+    --border: oklch(1 0 0 / 10%);
+    --input: oklch(1 0 0 / 15%);
+    --ring: oklch(0.556 0 0);
+    --sidebar: oklch(0.205 0 0);
+    --sidebar-foreground: oklch(0.985 0 0);
+    --sidebar-accent: oklch(0.269 0 0);
+    --sidebar-accent-foreground: oklch(0.985 0 0);
+    --sidebar-border: oklch(1 0 0 / 10%);
+    --chart-remaining: oklch(0.72 0.15 262);
+    --chart-ideal: oklch(0.7 0 0);
+    --chart-scope: oklch(0.78 0.13 70);
+    --chart-completed: oklch(0.75 0.14 155);
+    --chart-cost-hosting: oklch(0.6 0.15 262);
+    --chart-cost-database: oklch(0.62 0.14 155);
+    --chart-cost-storage: oklch(0.7 0.14 70);
+    --chart-cost-email: oklch(0.62 0.17 20);
+    --chart-cost-ai-ocr: oklch(0.6 0.16 300);
+    --chart-cost-domain-dns: oklch(0.66 0.1 200);
+    --chart-cost-monitoring: oklch(0.68 0.15 110);
+    --chart-cost-source-control: oklch(0.55 0.02 260);
+    --chart-cost-payments: oklch(0.65 0.16 340);
+    --chart-cost-saas-other: oklch(0.72 0.1 40);
+    --chart-cost-other: oklch(0.7 0.02 90);
+    --comment-highlight: oklch(0.38 0.08 80);
+    --comment-highlight-active: oklch(0.46 0.1 80);
+    --comment-underline: oklch(0.85 0.14 88);
+  }
 }
 
 @layer base {

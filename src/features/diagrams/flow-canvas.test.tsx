@@ -37,13 +37,7 @@ function setup() {
   const onChange = vi.fn();
   render(
     <div style={{ width: 800, height: 600 }}>
-      <FlowCanvas
-        scene={scene}
-        onChange={onChange}
-        dark={false}
-        projectKey="STK"
-        onOpenLink={vi.fn()}
-      />
+      <FlowCanvas scene={scene} onChange={onChange} projectKey="STK" onOpenLink={vi.fn()} />
     </div>,
   );
   return { onChange };
