@@ -13,6 +13,7 @@ const actions = vi.hoisted(() => ({
   handbookPublishPreviewAction: vi.fn(),
   handbookPullPreviewAction: vi.fn(),
   handbookPullApplyAction: vi.fn(),
+  handbookTestConnectionAction: vi.fn(),
 }));
 vi.mock("@/server/actions/handbook", () => actions);
 const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
@@ -171,5 +172,74 @@ describe("Settings → Handbook tab (DOC-14)", () => {
       }),
     );
     expect(await screen.findByRole("button", { name: "Imported" })).toBeTruthy();
+  });
+
+  it("tests the connection on click and shows ✓ or the classified reason", async () => {
+    const user = userEvent.setup();
+    actions.handbookTestConnectionAction
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { repo: "Stockkart/engineering-handbook", defaultBranch: "main" },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: "The GitHub App can't get access to … (installation_token.422).",
+      });
+    render(<HandbookTab projectKey="STK" config={config} docs={docs} publications={[]} />);
+    expect(actions.handbookTestConnectionAction).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
+    expect(
+      await screen.findByText(
+        "✓ Connected to Stockkart/engineering-handbook (default branch main).",
+      ),
+    ).toBeTruthy();
+    expect(actions.handbookTestConnectionAction).toHaveBeenCalledWith({ projectKey: "STK" });
+    expect(toast.success).toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Test connection" }));
+    expect(await screen.findByText(/installation_token\.422/)).toBeTruthy();
+    expect(toast.error).toHaveBeenCalledWith(
+      "The GitHub App can't get access to … (installation_token.422).",
+    );
+  });
+
+  it("offers no connection test until the App is configured", () => {
+    render(
+      <HandbookTab
+        projectKey="STK"
+        config={{ ...config, configured: false }}
+        docs={docs}
+        publications={[]}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Test connection" })).toBeNull();
+  });
+
+  it("shows a failed publication's reason, also for old github_<status> codes", () => {
+    const failed = (n: number, errorCode: string): HandbookPublicationView => ({
+      id: id(n),
+      branch: `hq/publish-20260501-${n}`,
+      state: "failed",
+      prNumber: null,
+      prUrl: null,
+      errorCode,
+      createdAt: new Date("2026-05-01T00:00:00Z"),
+      mergedAt: null,
+      createdByName: "Ada",
+      docCount: 1,
+    });
+    render(
+      <HandbookTab
+        projectKey="STK"
+        config={config}
+        docs={docs}
+        publications={[failed(10, "installation_token.422"), failed(11, "github_422")]}
+      />,
+    );
+    expect(
+      screen.getByText(
+        /^The GitHub App can't get access to Stockkart\/engineering-handbook\..*\(installation_token\.422\)\.$/,
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("GitHub refused a request (HTTP 422) (github_422).")).toBeTruthy();
   });
 });

@@ -9,6 +9,7 @@ import {
   GIT_SHA_PATTERN,
   HANDBOOK_NOT_CONFIGURED_MESSAGE,
 } from "@/lib/handbook/constants";
+import { describeHandbookError, withErrorCode } from "@/lib/handbook/github-errors";
 import { type publishInput, type publishPreviewInput } from "@/lib/handbook/schemas";
 import { type PublishOutcome, type PublishPreview } from "@/lib/handbook/views";
 import { findSecretInText } from "@/lib/service-registry/secrets";
@@ -124,8 +125,10 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
       return await fn();
     } catch (error) {
       if (error instanceof HandbookNotConfigured) throw invalid(HANDBOOK_NOT_CONFIGURED_MESSAGE);
+      // The classified reason and its code (`installation_token.422` …), e.g. "The GitHub
+      // App can't get access to …": only a busy GitHub says to try again later.
       if (error instanceof HandbookGithubError) {
-        throw invalid(`GitHub request failed (${error.code}); try again later`);
+        throw invalid(withErrorCode(error.message, error.code));
       }
       throw error;
     }
@@ -497,7 +500,9 @@ export function createHandbookPublishService(db: AppDatabase, deps: HandbookPubl
         // A timed-out create may still have made the branch, so it is always mentioned.
         const leftover = ` The branch ${branch} may remain on GitHub; delete it there.`;
         if (code === "internal") throw error;
-        throw invalid(`Publishing failed (${code}).${leftover}`);
+        const reason =
+          error instanceof HandbookGithubError ? error.message : describeHandbookError(code);
+        throw invalid(`Publishing failed: ${withErrorCode(reason, code)}${leftover}`);
       }
     },
   };

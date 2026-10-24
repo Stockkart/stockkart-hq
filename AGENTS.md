@@ -513,7 +513,15 @@ and conflict rules; keep these seams intact:
   the next publish of its docs.
 - "Check handbook now" is rate-limited through `login_attempts` rows keyed
   `handbook_check:<projectId>` with `success = true` (shared across instances; never counted
-  as failed sign-ins, which use `email:` / `ip:` keys and `NOT success`).
+  as failed sign-ins, which use `email:` / `ip:` keys and `NOT success`). "Test connection"
+  (`handbookTestConnectionAction` → `handbookPullService.testConnection` →
+  `github.testConnection`: a fresh token + the default branch, reads only) uses the same
+  mechanism under `handbook_connection:<projectId>`.
+- GitHub failures: `HandbookGithubError` carries the request `kind`; its `code` is
+  `<kind>.<status>` (`installation_token.422`, `update_ref.timeout` …) and its message is
+  `describeHandbookError` (`lib/handbook/github-errors.ts`, isomorphic; the README
+  Troubleshooting table lists the cases). GitHub's error body is read only to pick a hint
+  (`failureHint`), never stored, logged or shown. Services show `withErrorCode(message, code)`.
 - **On the doc page** (no temporary mount any more): `DocDetail.handbook` comes from
   `docQueries.getDoc` (the `handbookSyncColumns` + open-publication joins shared with
   `handbookQueries`), so there is no extra read; `page.tsx` passes `handbookConfigured()`

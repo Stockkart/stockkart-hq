@@ -1,7 +1,15 @@
+import { generateKeyPairSync } from "node:crypto";
+
 import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
+import { z } from "zod";
 
-import { GIT_NULL_SHA, type HandbookSyncStatus } from "@/lib/handbook/constants";
+import {
+  GIT_NULL_SHA,
+  HANDBOOK_NOT_CONFIGURED_MESSAGE,
+  type HandbookSyncStatus,
+} from "@/lib/handbook/constants";
+import { githubAccessMessage, withErrorCode } from "@/lib/handbook/github-errors";
 import { rt } from "@/lib/rich-text";
 import { createBatchedRead, type Read } from "@/server/db/read-batch";
 import {
@@ -15,6 +23,7 @@ import {
 import { seed } from "@/server/db/seed";
 import { type AppDatabase, transactionRunner } from "@/server/db/types";
 import { gitBlobSha } from "@/server/handbook/git-blob";
+import { createHandbookGithub } from "@/server/handbook/github-app";
 import { createGithubWebhookHandler } from "@/server/github/webhook";
 import { createTestDatabase, createTestUser, describeDb, type TestDatabase } from "@/test/db";
 import { pullRequestPayload, pushPayload, sha, webhookRequest } from "@/test/github-fixtures";
@@ -32,12 +41,16 @@ import {
   PREVIEW_STALE_MESSAGE,
   REMOVED_MESSAGE,
 } from "./handbook-publish";
-import { CHECK_RATE_LIMITED_MESSAGE, createHandbookPullService } from "./handbook-pull";
+import {
+  CHECK_RATE_LIMITED_MESSAGE,
+  CONNECTION_RATE_LIMITED_MESSAGE,
+  createHandbookPullService,
+} from "./handbook-pull";
 import { createHandbookQueries } from "./handbook-queries";
 import { createIssueQueries } from "./issue-queries";
 import { createImportQueries } from "./imports";
 import { createSettingsQueries } from "./settings-queries";
-import { projectIdByKey } from "./sql";
+import { projectIdByKey, rowsOf } from "./sql";
 
 /**
  * DOC-14 two-way sync against Postgres: publish → PR → merge webhook → push webhooks → pull,
@@ -477,7 +490,7 @@ describeDb("handbook sync (Postgres)", () => {
 
   it("records a failed publication (short code, branch noted) and frees the doc", async () => {
     const doc = await newDoc("Fails once", "Text.");
-    repo.failAt("openPullRequest", "github_422");
+    repo.failAt("openPullRequest", "open_pull_request.422", "no_commits");
     await expect(
       publishService().publish(actor, {
         projectKey: "STK",
@@ -486,10 +499,12 @@ describeDb("handbook sync (Postgres)", () => {
         acknowledgedPublic: true,
         confirmSpecialPath: false,
       }),
-    ).rejects.toThrow(/Publishing failed \(github_422\)\. The branch hq\/publish-\S+ may remain/);
+    ).rejects.toThrow(
+      /^Publishing failed: Nothing changed: the handbook already has this content \(open_pull_request\.422\)\. The branch hq\/publish-\S+ may remain/,
+    );
     expect(await publicationOf(doc.id)).toMatchObject({
       state: "failed",
-      errorCode: "github_422",
+      errorCode: "open_pull_request.422",
       prNumber: null,
     });
     const logged = await db
@@ -500,8 +515,10 @@ describeDb("handbook sync (Postgres)", () => {
 
     // Failing before the PR request puts the pinned path back.
     const early = await newDoc("Fails early", "Text.");
-    repo.failAt("commitFiles", "github_409");
-    await expect(publish([early.id])).rejects.toThrow(/Publishing failed \(github_409\)/);
+    repo.failAt("commitFiles", "create_tree.409");
+    await expect(publish([early.id])).rejects.toThrow(
+      /Publishing failed: GitHub refused the create_tree request \(HTTP 409\) \(create_tree\.409\)/,
+    );
     const [unpinned] = await db
       .select({ path: docs.handbookPath })
       .from(docs)
@@ -638,6 +655,96 @@ describeDb("handbook sync (Postgres)", () => {
       by: second.id,
       n: first.number,
     });
+  });
+
+  it("tests the connection: ✓, the token 422 reason, the rate limit, not configured", async () => {
+    await db.execute(sql`DELETE FROM login_attempts WHERE key LIKE 'handbook_%'`);
+    const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const config = {
+      repo: FAKE_HANDBOOK_REPO,
+      appId: "1",
+      installationId: "2",
+      privateKey: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+    };
+    const echo = "RAW-GITHUB-ECHO";
+    let tokenStatus = 201;
+    const requests: string[] = [];
+    // A fetch fake standing in for GitHub (never the network).
+    const fetchFake = async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      requests.push(`${init?.method ?? "GET"} ${url.pathname}`);
+      const reply = (body: unknown, status = 200) =>
+        new Response(JSON.stringify(body), {
+          status,
+          headers: { "content-type": "application/json" },
+        });
+      if (url.pathname === "/app/installations/2/access_tokens") {
+        return tokenStatus === 201
+          ? reply(
+              {
+                token: "ghs_testtoken00000000000000",
+                expires_at: new Date(Date.now() + 3600_000).toISOString(),
+                repositories: [{ full_name: FAKE_HANDBOOK_REPO }],
+              },
+              201,
+            )
+          : reply({ message: `Not accessible ${echo}` }, tokenStatus);
+      }
+      if (url.pathname === `/repos/${FAKE_HANDBOOK_REPO}`) {
+        return reply({ full_name: FAKE_HANDBOOK_REPO, default_branch: "main" });
+      }
+      if (url.pathname === `/repos/${FAKE_HANDBOOK_REPO}/git/ref/heads/main`) {
+        return reply({ object: { sha: "1".repeat(40) } });
+      }
+      return reply({}, 404);
+    };
+    const lines: unknown[] = [];
+    const service = (
+      github = createHandbookGithub({
+        config,
+        fetch: fetchFake,
+        log: (line) => lines.push(line),
+      }),
+    ) => createHandbookPullService(db, { runAtomic: transactionRunner(db), github });
+
+    await expect(service().testConnection(actor, "STK")).resolves.toEqual({
+      repo: FAKE_HANDBOOK_REPO,
+      defaultBranch: "main",
+    });
+    expect(
+      requests.every((request) => request.startsWith("GET ") || request.includes("access_tokens")),
+    ).toBe(true);
+    // Once a minute per project, on its own key (it never blocks "Check handbook now").
+    await expect(service().testConnection(actor, "STK")).rejects.toThrow(
+      CONNECTION_RATE_LIMITED_MESSAGE,
+    );
+    const keys = rowsOf(
+      await db.execute(sql`SELECT key, success FROM login_attempts WHERE key LIKE 'handbook_%'`),
+      z.object({ key: z.string(), success: z.boolean() }),
+    );
+    expect(keys).toEqual([{ key: `handbook_connection:${projectId}`, success: true }]);
+
+    await db.execute(sql`DELETE FROM login_attempts WHERE key LIKE 'handbook_connection:%'`);
+    tokenStatus = 422;
+    const refused = await service()
+      .testConnection(actor, "STK")
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+    expect(refused).toBeInstanceOf(Error);
+    const message = refused instanceof Error ? refused.message : "";
+    expect(message).toBe(
+      withErrorCode(githubAccessMessage(FAKE_HANDBOOK_REPO), "installation_token.422"),
+    );
+    expect(message).not.toMatch(/later/);
+    expect(JSON.stringify([message, lines])).not.toContain(echo);
+
+    const unconfigured = fakeHandbookRepo({ configured: false });
+    await expect(service(unconfigured.github).testConnection(actor, "STK")).rejects.toThrow(
+      HANDBOOK_NOT_CONFIGURED_MESSAGE,
+    );
+    expect(unconfigured.calls).toEqual([]);
   });
 
   it("checks the handbook (rate-limited), baselines matching docs and imports new files", async () => {
@@ -793,8 +900,10 @@ describeDb("handbook sync (Postgres)", () => {
 
     // A publication recorded failed whose PR was opened anyway still syncs on merge.
     const timedOut = await newDoc("Timed out", "Text.");
-    repo.failAt("openPullRequest", "github_timeout");
-    await expect(publish([timedOut.id])).rejects.toThrow(/Publishing failed \(github_timeout\)/);
+    repo.failAt("openPullRequest", "open_pull_request.timeout");
+    await expect(publish([timedOut.id])).rejects.toThrow(
+      /Publishing failed: GitHub didn't answer the open_pull_request request in time \(open_pull_request\.timeout\)/,
+    );
     repo.failAt(null);
     const failedPub = await publicationOf(timedOut.id);
     expect(failedPub?.state).toBe("failed");

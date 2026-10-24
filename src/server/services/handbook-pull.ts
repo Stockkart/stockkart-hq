@@ -3,10 +3,16 @@ import { generateKeyBetween } from "fractional-indexing";
 import { z } from "zod";
 
 import { GIT_NULL_SHA, HANDBOOK_NOT_CONFIGURED_MESSAGE } from "@/lib/handbook/constants";
+import { withErrorCode } from "@/lib/handbook/github-errors";
 import { isImportableHandbookFile, parsePulledFile } from "@/lib/handbook/parse-file";
 import { type importHandbookFileInput, type pullApplyInput } from "@/lib/handbook/schemas";
 import { shortSha } from "@/lib/handbook/sync-state";
-import { type CheckOutcome, type PullPreview, type PullState } from "@/lib/handbook/views";
+import {
+  type CheckOutcome,
+  type ConnectionTestOutcome,
+  type PullPreview,
+  type PullState,
+} from "@/lib/handbook/views";
 import { extractPlainText } from "@/lib/rich-text";
 import { lineDiff } from "@/lib/text/line-diff";
 import { docs, projects } from "@/server/db/schema";
@@ -38,6 +44,8 @@ export type ImportFileData = z.output<typeof importHandbookFileInput>;
 export const CHECK_INTERVAL_SECONDS = 60;
 export const CHECK_RATE_LIMITED_MESSAGE =
   "The handbook was checked less than a minute ago; try again shortly";
+export const CONNECTION_RATE_LIMITED_MESSAGE =
+  "The connection was tested less than a minute ago; try again shortly";
 
 export interface HandbookPullDeps {
   runAtomic: RunAtomic;
@@ -61,6 +69,7 @@ export interface HandbookPullDeps {
  *   check     lists the default branch's tree (one call) and records every mapped doc's
  *             blob, baselining docs whose export already matches; returns unmapped files.
  *   import    creates a doc from an unmapped file with the importer's conversion.
+ *   test      "Test connection": a fresh token and the default branch (reads only).
  */
 export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDeps) {
   const read = deps.read ?? directRead;
@@ -75,8 +84,9 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
       return await fn();
     } catch (error) {
       if (error instanceof HandbookNotConfigured) throw invalid(HANDBOOK_NOT_CONFIGURED_MESSAGE);
+      // The classified reason and its code; never GitHub's response body.
       if (error instanceof HandbookGithubError) {
-        throw invalid(`GitHub request failed (${error.code}); try again later`);
+        throw invalid(withErrorCode(error.message, error.code));
       }
       throw error;
     }
@@ -138,11 +148,30 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
     return hqUnchanged ? "repo_ahead" : "both_changed";
   }
 
-  /** The rate limit as a reservation (like AUTH-8's): count + insert in one locked step. */
-  async function reserveCheck(projectId: string): Promise<boolean> {
-    const key = `handbook_check:${projectId}`;
+  /** A live (not archived) project's id. */
+  async function liveProjectId(projectKey: string): Promise<string> {
+    const [project] = await read(
+      db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(and(eq(projects.key, projectKey), isNull(projects.archivedAt)))
+        .limit(1),
+    );
+    if (!project) throw notFound(`Project ${projectKey}`);
+    return project.id;
+  }
+
+  /**
+   * The rate limit as a reservation (like AUTH-8's): count + insert in one locked step.
+   * `scope` keeps "Check handbook now" and "Test connection" apart (one a minute each).
+   */
+  async function reserveCheck(
+    projectId: string,
+    scope: "handbook_check" | "handbook_connection" = "handbook_check",
+  ): Promise<boolean> {
+    const key = `${scope}:${projectId}`;
     const [, reserved] = await deps.runAtomic([
-      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`hq.handbook_check:${projectId}`}, 0))`,
+      sql`SELECT pg_advisory_xact_lock(hashtextextended(${`hq.${scope}:${projectId}`}, 0))`,
       // `success = true`: these rows never count as failed sign-ins (AUTH-8 counts
       // `NOT success` rows of `email:` / `ip:` keys only).
       sql`
@@ -289,15 +318,8 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
     /** "Check handbook now" (Settings → Handbook). */
     async check(_actorId: string, projectKey: string): Promise<CheckOutcome> {
       requireConfigured();
-      const [project] = await read(
-        db
-          .select({ id: projects.id })
-          .from(projects)
-          .where(and(eq(projects.key, projectKey), isNull(projects.archivedAt)))
-          .limit(1),
-      );
-      if (!project) throw notFound(`Project ${projectKey}`);
-      if (!(await reserveCheck(project.id))) throw conflict(CHECK_RATE_LIMITED_MESSAGE);
+      const projectId = await liveProjectId(projectKey);
+      if (!(await reserveCheck(projectId))) throw conflict(CHECK_RATE_LIMITED_MESSAGE);
 
       const readAt = await dbNow();
       const tree = await guarded(async () => {
@@ -349,6 +371,21 @@ export function createHandbookPullService(db: AppDatabase, deps: HandbookPullDep
         .filter((entry) => !claimed.has(entry.path.toLowerCase()))
         .map((entry) => ({ path: entry.path, sha: entry.sha }));
       return { checked: updates.length, drifted, newFiles };
+    },
+
+    /**
+     * "Test connection" (Settings → Handbook): a fresh installation token and the repo's
+     * default branch, so a setup problem shows as its classified reason (e.g. the App lacks a
+     * permission: `installation_token.422`). Reads only, nothing is written to GitHub or to the
+     * docs; once a minute per project, like "Check handbook now".
+     */
+    async testConnection(_actorId: string, projectKey: string): Promise<ConnectionTestOutcome> {
+      requireConfigured();
+      const projectId = await liveProjectId(projectKey);
+      if (!(await reserveCheck(projectId, "handbook_connection"))) {
+        throw conflict(CONNECTION_RATE_LIMITED_MESSAGE);
+      }
+      return guarded(() => github.testConnection());
     },
 
     /** "Import" of a "New in handbook" file, with the importer's conversion (IMP-1/2). */
