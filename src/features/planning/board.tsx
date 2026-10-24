@@ -368,7 +368,7 @@ function Column({
       className={cn(
         "flex w-72 shrink-0 flex-col rounded-lg border bg-muted/30",
         // BRD-5: amber when over the WIP limit (the badge says it in text too).
-        wip.over && "border-amber-500 bg-amber-50 dark:border-amber-400 dark:bg-amber-950/40",
+        wip.over && "border-amber-600 bg-amber-50 dark:border-amber-400 dark:bg-amber-950/40",
         isOver && "ring-2 ring-ring/50",
       )}
     >

@@ -21,22 +21,26 @@ import { formatMoney, formatMoneyCompact } from "@/lib/costs/money";
  * renders the same numbers as a table (`ChartFigure`).
  */
 
-/** One colour per category; mid-lightness so they read on light and dark backgrounds. */
+/**
+ * One colour per category: `--chart-cost-*` tokens (globals.css), so each theme gets values
+ * with at least 3:1 against its background and the bars switch without a re-render.
+ */
 const COLORS: Record<CostCategory, string> = {
-  hosting: "oklch(0.6 0.15 262)",
-  database: "oklch(0.62 0.14 155)",
-  storage: "oklch(0.7 0.14 70)",
-  email: "oklch(0.62 0.17 20)",
-  ai_ocr: "oklch(0.6 0.16 300)",
-  domain_dns: "oklch(0.66 0.1 200)",
-  monitoring: "oklch(0.68 0.15 110)",
-  source_control: "oklch(0.55 0.02 260)",
-  payments: "oklch(0.65 0.16 340)",
-  saas_other: "oklch(0.72 0.1 40)",
-  other: "oklch(0.7 0.02 90)",
+  hosting: "var(--chart-cost-hosting)",
+  database: "var(--chart-cost-database)",
+  storage: "var(--chart-cost-storage)",
+  email: "var(--chart-cost-email)",
+  ai_ocr: "var(--chart-cost-ai-ocr)",
+  domain_dns: "var(--chart-cost-domain-dns)",
+  monitoring: "var(--chart-cost-monitoring)",
+  source_control: "var(--chart-cost-source-control)",
+  payments: "var(--chart-cost-payments)",
+  saas_other: "var(--chart-cost-saas-other)",
+  other: "var(--chart-cost-other)",
 };
 
-const AXIS = { stroke: "var(--muted-foreground)", fontSize: 12 };
+// Recharts draws tick text with `fill` (it defaults to the axis line colour, --border).
+const AXIS = { fill: "var(--muted-foreground)", fontSize: 12 };
 
 export function YearCategoryChart({
   bars,
@@ -66,12 +70,18 @@ export function YearCategoryChart({
             borderRadius: 6,
             fontSize: 12,
           }}
+          // Recharts colours each row with its series colour; text uses the text token instead.
+          itemStyle={{ color: "var(--popover-foreground)" }}
           cursor={{ fill: "var(--muted)" }}
           formatter={(value) =>
             typeof value === "number" ? formatMoney(value, currency) : String(value)
           }
         />
-        <Legend wrapperStyle={{ fontSize: 12, color: "var(--muted-foreground)" }} />
+        <Legend
+          wrapperStyle={{ fontSize: 12, color: "var(--muted-foreground)" }}
+          // Series colours are tuned for marks (3:1), not text: labels use the text token.
+          labelStyle={{ color: "var(--foreground)" }}
+        />
         {categories.map((category) => (
           <Bar
             key={category}

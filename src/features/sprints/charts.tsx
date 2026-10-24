@@ -22,7 +22,8 @@ import { type BurndownPoint, type VelocityBar } from "@/lib/sprints/views";
  * numbers as a table.
  */
 
-const AXIS = { stroke: "var(--muted-foreground)", fontSize: 12 };
+// Recharts draws tick text with `fill` (it defaults to the axis line colour, --border).
+const AXIS = { fill: "var(--muted-foreground)", fontSize: 12 };
 const TOOLTIP = {
   contentStyle: {
     background: "var(--popover)",
@@ -32,6 +33,8 @@ const TOOLTIP = {
     fontSize: 12,
   },
   labelStyle: { color: "var(--popover-foreground)" },
+  // Recharts colours each row with its series colour; text uses the text token instead.
+  itemStyle: { color: "var(--popover-foreground)" },
 };
 
 export function BurndownChart({ points }: { points: BurndownPoint[] }) {
@@ -42,7 +45,11 @@ export function BurndownChart({ points }: { points: BurndownPoint[] }) {
         <XAxis dataKey="label" tick={AXIS} stroke="var(--border)" />
         <YAxis allowDecimals={false} tick={AXIS} stroke="var(--border)" />
         <Tooltip {...TOOLTIP} />
-        <Legend wrapperStyle={{ fontSize: 12, color: "var(--muted-foreground)" }} />
+        <Legend
+          wrapperStyle={{ fontSize: 12, color: "var(--muted-foreground)" }}
+          // Series colours are tuned for marks (3:1), not text: labels use the text token.
+          labelStyle={{ color: "var(--foreground)" }}
+        />
         <Line
           name="Ideal"
           dataKey="ideal"

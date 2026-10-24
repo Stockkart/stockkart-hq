@@ -211,7 +211,7 @@ function Timeline({
                 </span>
               ))}
               <span
-                className="absolute top-0 z-10 -translate-x-1/2 rounded-b bg-red-600 px-1 text-[10px] font-medium text-white dark:bg-red-500"
+                className="absolute top-0 z-10 -translate-x-1/2 rounded-b bg-red-600 px-1 text-[10px] font-medium text-white"
                 style={{ left: todayX }}
               >
                 Today

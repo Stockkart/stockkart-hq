@@ -184,7 +184,7 @@ export function EpicBar({
         {progress.percent !== null ? (
           <span
             aria-hidden="true"
-            className="absolute inset-y-0 left-0 bg-primary/45"
+            className="absolute inset-y-0 left-0 bg-primary/45 dark:bg-primary/30"
             style={{ width: `${progress.percent}%` }}
           />
         ) : null}
