@@ -13,10 +13,11 @@ import { DEFAULT_PROJECT_KEY, NAV_SECTIONS } from "./nav-items";
 
 /** VW-3: the signed-in user's saved views (and shared ones) of the default project. */
 export function Sidebar({ savedViews = [] }: { savedViews?: SavedViewItem[] }) {
+  // Sticky at full viewport height: the page scrolls, the sidebar stays put (its nav scrolls).
   const pathname = usePathname();
 
   return (
-    <aside className="hidden w-56 shrink-0 flex-col border-r bg-sidebar text-sidebar-foreground md:flex">
+    <aside className="sticky top-0 hidden h-dvh w-56 shrink-0 flex-col self-start border-r bg-sidebar text-sidebar-foreground md:flex">
       <div className="flex h-14 items-center gap-2 border-b px-4 font-semibold">
         <Boxes aria-hidden="true" className="size-5" />
         <span>Stockkart HQ</span>
