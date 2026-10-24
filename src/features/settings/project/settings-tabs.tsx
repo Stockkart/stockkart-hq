@@ -8,6 +8,7 @@ import { SETTINGS_TABS, type SettingsTab } from "@/lib/settings/constants";
 const LABELS: Record<SettingsTab, string> = {
   general: "General",
   workflow: "Workflow",
+  views: "Views",
   labels: "Labels",
   components: "Components",
   import: "Import",
