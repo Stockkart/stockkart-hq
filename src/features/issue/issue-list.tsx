@@ -12,7 +12,6 @@ import { selectRowProps, useRowSelection, useSelectShortcut } from "@/features/b
 import { NAV_ITEM, NAV_LINK, useListNavigation } from "@/features/planning/use-list-navigation";
 import { type BulkChange } from "@/lib/issues/bulk";
 import {
-  filtersToSearchParams,
   hasActiveFilters,
   type IssueFilters,
   type IssueSort,
@@ -20,6 +19,7 @@ import {
 } from "@/lib/issues/filters";
 import { type PlanningIssue } from "@/lib/issues/views";
 import { cn } from "@/lib/utils";
+import { type ListDefaultsContext, listFiltersQuery } from "@/lib/views/view-defaults";
 import { bulkEditIssuesAction } from "@/server/actions/bulk";
 
 import { callAction, RelativeTime } from "./client-utils";
@@ -35,6 +35,8 @@ interface IssueListProps {
   bulkOptions: BulkOptions;
   /** VW-3: the open saved view, kept in the sort links. */
   viewId?: string;
+  /** VW-4: the list defaults, so sort links leave them out of the URL like the filter bar. */
+  listDefaults?: ListDefaultsContext;
 }
 
 interface BulkUpdate {
@@ -72,6 +74,7 @@ export function IssueList({
   sort,
   bulkOptions,
   viewId,
+  listDefaults,
 }: IssueListProps) {
   const container = useRef<HTMLDivElement>(null);
   useListNavigation(container);
@@ -139,7 +142,11 @@ export function IssueList({
         : DESC_FIRST.has(key)
           ? "desc"
           : "asc";
-    const query = filtersToSearchParams(filters, { sort: key, dir, view: viewId }).toString();
+    const query = listFiltersQuery(filters, listDefaults ?? null, {
+      sort: key,
+      dir,
+      view: viewId,
+    }).toString();
     return `/${projectKey}/issues?${query}`;
   };
   const sortLabel = COLUMNS.find((column) => column.key === sort.by)?.label ?? "Created";

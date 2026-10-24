@@ -57,6 +57,13 @@
       "when": 1792776584110,
       "tag": "0007_costs",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792821829716,
+      "tag": "0008_view_defaults",
+      "breakpoints": true
     }
   ]
 }

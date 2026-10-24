@@ -86,7 +86,13 @@ export function parseBoardScope(
   return parsed.success ? parsed.data : "sprint";
 }
 
-/** The board URL for a scope; the default is written as the plain URL. */
-export function boardHref(projectKey: string, scope: BoardScope): string {
-  return scope === "all" ? `/${projectKey}/board?scope=all` : `/${projectKey}/board`;
+/**
+ * The board URL for a scope; the default is written as the plain URL. `view` (BRD-6) adds
+ * the type and column params, as `boardViewQuery` writes them.
+ */
+export function boardHref(projectKey: string, scope: BoardScope, view?: URLSearchParams): string {
+  const params = new URLSearchParams(scope === "all" ? [["scope", "all"]] : []);
+  for (const [name, value] of view ?? []) if (name !== "scope") params.set(name, value);
+  const query = params.toString();
+  return query ? `/${projectKey}/board?${query}` : `/${projectKey}/board`;
 }

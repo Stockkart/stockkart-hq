@@ -139,14 +139,17 @@ describeDb("costs (Postgres)", () => {
       await costs.setActive(ada, id, true);
       await costs.deleteItem(ada, id);
       const rows = await activityOf(id);
-      expect(rows.map((row) => `${row.action}:${row.field ?? ""}`)).toEqual([
+      const steps = rows.map((row) => `${row.action}:${row.field ?? ""}`);
+      // One update writes one row per changed field in the same statement, so those rows
+      // share created_at and their order (by random uuid) is not meaningful: compare as a set.
+      expect([steps[0], steps.slice(1, 3).sort(), ...steps.slice(3)]).toEqual([
         "created:",
-        "updated:vendor",
-        "updated:expectedAmount",
+        ["updated:expectedAmount", "updated:vendor"],
         "archived:active",
         "reactivated:active",
         "deleted:",
       ]);
+      expect(steps).toHaveLength(6);
       const expected = rows.find((row) => row.field === "expectedAmount");
       expect(expected?.to_value).toBeNull();
       expect(expected?.from_value).toBeNull();

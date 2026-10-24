@@ -1,6 +1,7 @@
 /**
  * BRD-5 WIP limits on the board. A column counts the cards it shows, so the count follows
- * the board's scope (the active sprint, or every open issue). Isomorphic and pure.
+ * the board's scope (the active sprint, or every open issue) and its type filter (BRD-6).
+ * Isomorphic and pure.
  *
  * - at or under the limit: fine ("3 / 4");
  * - over it: the column turns amber with an "Over WIP limit" badge;

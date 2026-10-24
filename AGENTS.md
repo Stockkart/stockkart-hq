@@ -257,6 +257,19 @@ entity_id)` → `comments (id, entity_type, entity_id)` keeps a reply on its thr
     `ALTER TYPE … ADD VALUE` inside the migration transaction: as with 0004/0005, **no later
     SQL migration may use them** (default, CHECK, index predicate, backfill) until 0007 is
     applied everywhere on its own. App queries may use them freely.
+- Migration `0008_view_defaults` (BRD-6, VW-4; README "Board and issue-list views") is
+  additive only, so it may be applied before the deploy of the code that reads it:
+  `projects.board_issue_types` / `list_issue_types` (`issue_type[]`, NULL = every type,
+  otherwise 1…20 values, CHECK) and `board_hidden_status_ids` / `list_hidden_status_ids`
+  (`uuid[]`, default `'{}'`, ≤ 20, CHECK; no FK, so readers ignore unknown ids and treat
+  "every status hidden" as none, `normaliseView` in `lib/views/view-defaults.ts`). Write them
+  only through `projectSettingsService.saveViewDefaults` (one statement under the workflow
+  lock: keeps the project's own statuses, in workflow order, and at least one visible), and
+  keep `deleteStatus`'s `unhidden` CTE, which drops a deleted status from both arrays in
+  the delete statement. They load with `issueQueries.getProject` (board) and
+  `settingsQueries.getSettings`; the issue list applies them in SQL
+  (`listIssues({ listDefaults: true })`, from the joined `projects` row, mirroring
+  `listDefaultFilters`), so no page gains a round trip. No activity rows.
 - @user mentions: `extractUserMentionIds(doc)` (`lib/mentions.ts`) reads `mention` nodes;
   `userMentionSyncCtes` / `userMentionSyncStatement` (`services/sql.ts`) keep the
   `to_type = 'user'` mention links in sync, like the issue-key ones, and RETURN the newly

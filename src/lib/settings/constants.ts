@@ -50,10 +50,12 @@ export const WIP_LIMIT_MIN = 1;
 export const WIP_LIMIT_MAX = 999;
 
 /** Settings tabs, also the `?tab=` URL value. `import`: IMP-4 CSV import of issues;
- * `handbook`: DOC-14 engineering-handbook sync. */
+ * `handbook`: DOC-14 engineering-handbook sync; `views`: BRD-6 / VW-4 board and issue-list
+ * defaults. */
 export const SETTINGS_TABS = [
   "general",
   "workflow",
+  "views",
   "labels",
   "components",
   "import",

@@ -9,10 +9,17 @@ import { ViewControls } from "@/features/views/view-controls";
 import {
   DEFAULT_SORT,
   filtersToSearchParams,
+  type IssueFilters,
   parseIssueFilters,
   parseIssueSort,
 } from "@/lib/issues/filters";
 import { VIEW_PARAM, viewFilterOf } from "@/lib/views/saved-views";
+import {
+  LIST_ALL_VALUE,
+  type ListDefaultsContext,
+  listDefaultFilters,
+  listUsesDefaults,
+} from "@/lib/views/view-defaults";
 import { requirePageSession } from "@/server/auth/require-session";
 import { issueQueries, planningQueries, savedViewService } from "@/server/services";
 import { ISSUE_LIST_LIMIT } from "@/server/services/planning-queries";
@@ -31,36 +38,55 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 /**
  * VW-1/VW-2: filters and sort come from the URL; invalid params are ignored. VW-3: a saved
  * view is a link to this page with its filters, plus `view=<id>` (kept while filtering, so
- * "Update view" can store the changed filters).
+ * "Update view" can store the changed filters). VW-4: with no `type`/`status` param and no
+ * saved view, the project's list defaults (types, hidden statuses) apply; the issue query
+ * reads them from the joined project row, so the page is still one round trip, and the
+ * filter bar shows them as active chips. `type=all` drops them.
  */
 export default async function IssuesPage({ params, searchParams }: Props) {
   // Layouts and pages render in parallel, so each page checks the session itself too.
   const session = await requirePageSession();
   const { projectKey } = await params;
   const raw = await searchParams;
-  const filters = parseIssueFilters(raw);
+  const urlFilters = parseIssueFilters(raw);
   const sort = parseIssueSort(raw);
   // Only an explicit, valid sort goes back into URLs; the default stays implicit.
   const sortParams = sort === DEFAULT_SORT ? {} : { sort: sort.by, dir: sort.dir };
   const rawView = raw[VIEW_PARAM];
   const viewId = z.uuid().safeParse(Array.isArray(rawView) ? rawView[0] : rawView);
   const preserved = { ...sortParams, view: viewId.success ? viewId.data : undefined };
-  const query = filtersToSearchParams(filters, preserved).toString();
-  const key = resolveProjectKey(projectKey, `/issues${query ? `?${query}` : ""}`);
+  const usesDefaults = listUsesDefaults(raw, viewId.success);
+  const query = filtersToSearchParams(urlFilters, preserved);
+  // An explicit "no type, no status" (`type=all`) survives the upper-case redirect.
+  if (!usesDefaults && !viewId.success && !query.has("type") && !query.has("status")) {
+    query.set("type", LIST_ALL_VALUE);
+  }
+  const queryText = query.toString();
+  const key = resolveProjectKey(projectKey, `/issues${queryText ? `?${queryText}` : ""}`);
   // One round trip: the queries find the project by key themselves.
   const projectId = projectIdByKey(key);
   const [project, issues, meta, activeView] = await Promise.all([
     requireProject(key),
     planningQueries.listIssues(projectId, {
       scope: "all",
-      filters,
+      filters: urlFilters,
       sort,
       currentUserId: session.user.id,
+      listDefaults: usesDefaults,
     }),
     issueQueries.getProjectMeta(projectId),
     // Readable only when it is the user's own or shared (null otherwise).
     viewId.success ? savedViewService.getView(session.user.id, projectId, viewId.data) : null,
   ]);
+  const statusIds = meta.statuses.map((status) => status.id);
+  const defaultFilters = listDefaultFilters(project.viewDefaults.list, statusIds);
+  // What the query applied: the URL's filters, plus the defaults when it named none.
+  const filters: IssueFilters = usesDefaults ? { ...urlFilters, ...defaultFilters } : urlFilters;
+  const listDefaults: ListDefaultsContext = {
+    ...defaultFilters,
+    statusIds,
+    canonical: !viewId.success,
+  };
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4">
@@ -72,11 +98,18 @@ export default async function IssuesPage({ params, searchParams }: Props) {
         </p>
       </div>
       <div className="flex flex-wrap items-start justify-between gap-2">
-        <FilterBar filters={filters} options={meta} preserved={preserved} />
+        <FilterBar
+          filters={filters}
+          options={meta}
+          preserved={preserved}
+          listDefaults={listDefaults}
+          projectKey={project.key}
+        />
         <ViewControls
           projectKey={project.key}
           activeView={activeView}
-          currentFilter={viewFilterOf(raw)}
+          // The filters in effect (defaults included), so a saved view keeps them.
+          currentFilter={viewFilterOf(filtersToSearchParams(filters, sortParams))}
         />
       </div>
       <LimitNotice count={issues.length} limit={ISSUE_LIST_LIMIT} />
@@ -87,6 +120,7 @@ export default async function IssuesPage({ params, searchParams }: Props) {
         sort={sort}
         bulkOptions={meta}
         viewId={preserved.view}
+        listDefaults={listDefaults}
       />
     </div>
   );

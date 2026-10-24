@@ -12,6 +12,7 @@ import { GeneralForm } from "@/features/settings/project/general-form";
 import { HandbookTab } from "@/features/settings/project/handbook/handbook-tab";
 import { LabelEditor } from "@/features/settings/project/label-editor";
 import { SettingsTabs } from "@/features/settings/project/settings-tabs";
+import { ViewDefaultsEditor } from "@/features/settings/project/view-defaults-editor";
 import { WorkflowEditor } from "@/features/settings/project/workflow-editor";
 import { SETTINGS_TABS } from "@/lib/settings/constants";
 import { requirePageSession } from "@/server/auth/require-session";
@@ -29,7 +30,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return { title: `Project settings · ${projectKey.toUpperCase()}` };
 }
 
-/** PRJ-2/PRJ-3 project settings: General, Workflow, Labels, Components; IMP-4 Import. One round trip. */
+/** PRJ-2/PRJ-3 project settings: General, Workflow, Views (BRD-6, VW-4), Labels, Components; IMP-4 Import. One round trip. */
 export default async function ProjectSettingsPage({ params, searchParams }: Props) {
   // Layouts and pages render in parallel, so each page checks the session itself too.
   await requirePageSession();
@@ -70,6 +71,13 @@ export default async function ProjectSettingsPage({ params, searchParams }: Prop
             </div>
           ),
           workflow: <WorkflowEditor projectKey={project.key} statuses={settings.statuses} />,
+          views: (
+            <ViewDefaultsEditor
+              projectKey={project.key}
+              statuses={settings.statuses}
+              defaults={settings.viewDefaults}
+            />
+          ),
           labels: <LabelEditor projectKey={project.key} labels={settings.labels} />,
           components: <ComponentEditor projectKey={project.key} components={settings.components} />,
           import: <ImportPanel projectKey={project.key} history={imports} />,

@@ -70,6 +70,12 @@ export interface ListIssuesOptions {
   currentUserId: string;
   /** Only the issues of this sprint (the sprint page, SPR-3). */
   sprintId?: string;
+  /**
+   * VW-4: also apply the project's issue-list defaults (`projects.list_issue_types` and
+   * `list_hidden_status_ids`), read in this same statement, so the page needs no earlier
+   * read. Set when the URL names no type or status; mirrors `listDefaultFilters`.
+   */
+  listDefaults?: boolean;
 }
 
 export interface RecentItem {
@@ -147,6 +153,20 @@ export function createPlanningQueries(db: AppDatabase, { read = directRead }: Qu
       if (either) conditions.push(either);
     }
     return conditions;
+  }
+
+  /**
+   * VW-4 list defaults from the joined `projects` row: the default types (null = all), and
+   * every status but the hidden ones; when the hidden ones are every status, none is hidden
+   * (as `normaliseView` does), so the list never goes blank by default.
+   */
+  function listDefaultConditions(): SQL[] {
+    return [
+      sql`(${projects.listIssueTypes} IS NULL OR ${issues.type} = ANY(${projects.listIssueTypes}))`,
+      sql`(NOT (${issues.statusId} = ANY(${projects.listHiddenStatusIds}))
+        OR NOT EXISTS (SELECT 1 FROM statuses vs WHERE vs.project_id = ${issues.projectId}
+          AND NOT (vs.id = ANY(${projects.listHiddenStatusIds}))))`,
+    ];
   }
 
   function scopeCondition(scope: IssueScope): SQL | undefined {
@@ -242,6 +262,7 @@ export function createPlanningQueries(db: AppDatabase, { read = directRead }: Qu
               scopeCondition(options.scope),
               options.sprintId ? eq(issues.sprintId, options.sprintId) : undefined,
               ...filterConditions(options.filters, options.currentUserId),
+              ...(options.listDefaults ? listDefaultConditions() : []),
             ),
           )
           .orderBy(...orderBy(options.scope, options.sort))

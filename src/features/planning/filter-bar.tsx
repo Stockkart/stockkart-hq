@@ -1,12 +1,14 @@
 "use client";
 
-import { ChevronDown, Search, X } from "lucide-react";
+import { ChevronDown, Eye, Save, Search, X } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useId, useOptimistic, useRef, useState, useTransition } from "react";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MultiSelect, type OptionValue, type SelectOption } from "@/components/ui/select";
+import { callAction } from "@/features/issue/client-utils";
 import {
   labelOptions,
   priorityOptions,
@@ -20,7 +22,6 @@ import {
   ASSIGNEE_ME,
   ASSIGNEE_NONE,
   EMPTY_FILTERS,
-  filtersToSearchParams,
   hasActiveFilters,
   type IssueFilters,
   RELEASE_NONE,
@@ -28,6 +29,15 @@ import {
 } from "@/lib/issues/filters";
 import { type LabelView, type NamedOption, type StatusOption } from "@/lib/issues/views";
 import { type ReleaseOption } from "@/lib/releases/views";
+import {
+  type ListDefaultsContext,
+  listDefaultFilters,
+  listFiltersQuery,
+  listViewOf,
+  sameView,
+  viewDefaultsOf,
+} from "@/lib/views/view-defaults";
+import { saveViewDefaultsAction } from "@/server/actions/settings";
 
 /** Options for the pickers; usually `ProjectMeta`. */
 export interface FilterOptions {
@@ -46,6 +56,13 @@ interface FilterBarProps {
   preserved?: Record<string, string | undefined>;
   /** Shown next to the filters, e.g. the backlog's "Group by". */
   children?: React.ReactNode;
+  /**
+   * VW-4 (issue list only): the project's list defaults. "Clear filters" returns to them,
+   * "Show all" drops them (`type=all`), and "Save as default" stores the current types and
+   * statuses as them (needs `projectKey`).
+   */
+  listDefaults?: ListDefaultsContext;
+  projectKey?: string;
 }
 
 /** Wait after typing in the text filter before updating the URL. */
@@ -59,10 +76,18 @@ const normalise = (value: string) => value.replace(/\s+/g, " ").trim();
  * in the URL: every change replaces the query string, the server component re-renders with
  * the parsed filters, and the link can be shared as is.
  */
-export function FilterBar({ filters, options, preserved = {}, children }: FilterBarProps) {
+export function FilterBar({
+  filters,
+  options,
+  preserved = {},
+  children,
+  listDefaults,
+  projectKey,
+}: FilterBarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [pending, startTransition] = useTransition();
+  const [saving, startSaving] = useTransition();
   // Shown at once while the new URL renders, so quick toggles never flicker back.
   const [shown, showOptimistic] = useOptimistic(filters);
   const [text, setText] = useState(filters.text);
@@ -106,7 +131,7 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
     // "Clear filters" (or Enter) sets the text from here; typing already shows it.
     if (normalise(text) !== next.text) setText(next.text);
     const { preserved: keep, pathname: path } = latest.current;
-    const query = filtersToSearchParams(next, keep).toString();
+    const query = listFiltersQuery(next, listDefaults ?? null, keep).toString();
     startTransition(() => {
       showOptimistic(next);
       router.replace(query ? `${path}?${query}` : path, { scroll: false });
@@ -116,6 +141,29 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
   /** Applies a change to the latest filters (not this render's, which may be stale). */
   function update(change: (current: IssueFilters) => IssueFilters) {
     apply(change(latest.current.filters));
+  }
+
+  /** VW-4: stores the shown types and statuses as the list defaults. */
+  function saveListDefault(key: string, defaults: ListDefaultsContext) {
+    const current = latest.current.filters;
+    const view = listViewOf(current, defaults.statusIds);
+    startSaving(async () => {
+      const ok =
+        (await callAction(() =>
+          saveViewDefaultsAction({ projectKey: key, list: viewDefaultsOf(view) }),
+        )) !== null;
+      if (!ok) return;
+      toast.success("Saved as the issue list's default filters");
+      if (!defaults.canonical) return;
+      // They are the defaults now, so the plain URL (plus the other filters) shows them.
+      const saved = {
+        ...defaults,
+        ...listDefaultFilters(viewDefaultsOf(view), defaults.statusIds),
+      };
+      const { preserved: keep, pathname: path } = latest.current;
+      const query = listFiltersQuery(current, saved, keep).toString();
+      router.replace(query ? `${path}?${query}` : path, { scroll: false });
+    });
   }
 
   function onText(value: string) {
@@ -225,7 +273,23 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
           }
         />
       ) : null}
-      {hasActiveFilters(shown) ? (
+      {listDefaults ? (
+        <ListDefaultButtons
+          shown={shown}
+          defaults={listDefaults}
+          saving={saving}
+          onClear={() =>
+            apply(
+              listDefaults.canonical
+                ? { ...EMPTY_FILTERS, types: listDefaults.types, statuses: listDefaults.statuses }
+                : // A saved view is open: its filters, not the defaults, are the baseline.
+                  EMPTY_FILTERS,
+            )
+          }
+          onShowAll={() => apply({ ...latest.current.filters, types: [], statuses: [] })}
+          onSave={projectKey ? () => saveListDefault(projectKey, listDefaults) : undefined}
+        />
+      ) : hasActiveFilters(shown) ? (
         <Button variant="ghost" size="sm" onClick={() => apply(EMPTY_FILTERS)}>
           <X aria-hidden="true" />
           Clear filters
@@ -239,6 +303,75 @@ export function FilterBar({ filters, options, preserved = {}, children }: Filter
 function toggled<T>(values: T[], value: T, on: boolean): T[] {
   const without = values.filter((item) => item !== value);
   return on ? [...without, value] : without;
+}
+
+/** The filters as a comparable string (value order within a dimension ignored). */
+function filterKey(filters: IssueFilters): string {
+  return JSON.stringify(
+    Object.entries(filters).map(([name, value]) => [
+      name,
+      Array.isArray(value) ? value.map(String).sort() : value,
+    ]),
+  );
+}
+
+/**
+ * VW-4 buttons of the issue list: "Clear filters" back to the project defaults (shown when
+ * the filters differ from them), "Show all" without the default types and statuses (when
+ * some apply), and "Save as default" for the current types and statuses (when they differ
+ * from the defaults).
+ */
+function ListDefaultButtons({
+  shown,
+  defaults,
+  saving,
+  onClear,
+  onShowAll,
+  onSave,
+}: {
+  shown: IssueFilters;
+  defaults: ListDefaultsContext;
+  saving: boolean;
+  onClear: () => void;
+  onShowAll: () => void;
+  onSave?: () => void;
+}) {
+  const baseline = defaults.canonical
+    ? { ...EMPTY_FILTERS, types: defaults.types, statuses: defaults.statuses }
+    : EMPTY_FILTERS;
+  const hasDefaults = defaults.types.length > 0 || defaults.statuses.length > 0;
+  const narrowed = shown.types.length > 0 || shown.statuses.length > 0;
+  const differs = !sameView(
+    listViewOf(shown, defaults.statusIds),
+    listViewOf(defaults, defaults.statusIds),
+  );
+  return (
+    <>
+      {filterKey(shown) !== filterKey(baseline) ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          title={hasDefaults ? "Back to the project's default filters" : undefined}
+          onClick={onClear}
+        >
+          <X aria-hidden="true" />
+          Clear filters
+        </Button>
+      ) : null}
+      {hasDefaults && narrowed ? (
+        <Button variant="ghost" size="sm" onClick={onShowAll}>
+          <Eye aria-hidden="true" />
+          Show all
+        </Button>
+      ) : null}
+      {onSave && differs ? (
+        <Button variant="outline" size="sm" disabled={saving} onClick={onSave}>
+          <Save aria-hidden="true" />
+          Save as default
+        </Button>
+      ) : null}
+    </>
+  );
 }
 
 /** One filter dimension: any of the picked values (OR), as a compact multi-select. */

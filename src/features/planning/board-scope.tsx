@@ -12,10 +12,13 @@ export function BoardScopeSwitch({
   projectKey,
   scope,
   sprintName,
+  viewQuery,
 }: {
   projectKey: string;
   scope: BoardScope;
   sprintName: string;
+  /** BRD-6: the type and column params, kept when the scope changes. */
+  viewQuery?: URLSearchParams;
 }) {
   const options: { scope: BoardScope; label: string }[] = [
     { scope: "sprint", label: sprintName },
@@ -29,7 +32,7 @@ export function BoardScopeSwitch({
           return (
             <li key={option.scope}>
               <Link
-                href={boardHref(projectKey, option.scope)}
+                href={boardHref(projectKey, option.scope, viewQuery)}
                 aria-current={current ? "page" : undefined}
                 className={cn(
                   "block rounded-sm px-2.5 py-1 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",

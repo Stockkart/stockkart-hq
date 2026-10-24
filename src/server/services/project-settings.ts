@@ -20,6 +20,7 @@ import {
   type updateProjectInput,
 } from "@/lib/settings/schemas";
 import { SPRINT_ACTIONS, WONT_DO_STATUS_NAME } from "@/lib/sprints/constants";
+import { KEEP_ONE_VISIBLE_MESSAGE, type saveViewDefaultsInput } from "@/lib/views/view-defaults";
 import { directRead, type Read } from "@/server/db/read-batch";
 import { components, projects, statuses, users } from "@/server/db/schema";
 import { type AppDatabase, type RunAtomic } from "@/server/db/types";
@@ -157,6 +158,66 @@ export function createProjectSettingsService(
         .where(and(eq(projects.key, input.projectKey), isNull(projects.archivedAt)))
         .returning({ id: projects.id });
       if (rows.length === 0) throw notFound(`Project ${input.projectKey}`);
+    },
+
+    /**
+     * BRD-6 / VW-4: the board's and/or the issue list's default types and hidden statuses.
+     * One statement under the workflow lock (so the statuses it checks cannot change
+     * meanwhile): hidden ids are kept only if they are the project's statuses (stored in
+     * workflow order), and every saved side must leave at least one status visible. Like
+     * the other settings, no activity row.
+     */
+    async saveViewDefaults(
+      _actorId: string,
+      input: z.output<typeof saveViewDefaultsInput>,
+    ): Promise<void> {
+      const projectId = sql`(SELECT id FROM projects WHERE key = ${input.projectKey})`;
+      const sets: SQL[] = [];
+      const checks: SQL[] = [];
+      const sides = [
+        ["board", input.board],
+        ["list", input.list],
+      ] as const;
+      for (const [side, value] of sides) {
+        if (!value) continue;
+        const types =
+          value.issueTypes === null
+            ? sql`NULL::issue_type[]`
+            : sql`ARRAY[${sql.join(
+                value.issueTypes.map((type) => sql`${type}`),
+                sql`, `,
+              )}]::issue_type[]`;
+        const wanted = sql`ARRAY[${sql.join(
+          value.hiddenStatusIds.map((id) => sql`${id}`),
+          sql`, `,
+        )}]::uuid[]`;
+        const hidden = sql`ARRAY(SELECT st.id FROM statuses st
+          WHERE st.project_id = projects.id AND st.id = ANY(${wanted})
+          ORDER BY st.position, st.created_at, st.id)`;
+        sets.push(
+          sql`${sql.identifier(`${side}_issue_types`)} = ${types}`,
+          sql`${sql.identifier(`${side}_hidden_status_ids`)} = ${hidden}`,
+        );
+        checks.push(sql`EXISTS (SELECT 1 FROM statuses st
+          WHERE st.project_id = projects.id AND NOT (st.id = ANY(${wanted})))`);
+      }
+      const results = await runAtomic([
+        workflowLock(projectId),
+        sql`
+          WITH p AS (
+            SELECT id FROM projects WHERE key = ${input.projectKey} AND archived_at IS NULL
+          ),
+          saved AS (
+            UPDATE projects SET ${sql.join(sets, sql`, `)}, updated_at = now()
+            FROM p WHERE projects.id = p.id AND ${sql.join(checks, sql` AND `)}
+            RETURNING projects.id
+          )
+          SELECT EXISTS (SELECT 1 FROM p) AS found, EXISTS (SELECT 1 FROM saved) AS saved
+        `,
+      ]);
+      const [row] = lastRows(results, z.object({ found: z.boolean(), saved: z.boolean() }));
+      if (!row?.found) throw notFound(`Project ${input.projectKey}`);
+      if (!row.saved) throw invalid(KEEP_ONE_VISIBLE_MESSAGE);
     },
 
     // ── Workflow ─────────────────────────────────────────────────────────────────────────
@@ -457,6 +518,17 @@ export function createProjectSettingsService(
             FROM sprints sp, s
             WHERE sp.project_id = s.project_id AND sp.state <> 'planned'
               AND (SELECT ok FROM allowed)
+          ),
+          -- BRD-6 / VW-4: the deleted status leaves the board's and the list's hidden sets.
+          unhidden AS (
+            UPDATE projects SET
+              board_hidden_status_ids = array_remove(projects.board_hidden_status_ids, s.id),
+              list_hidden_status_ids = array_remove(projects.list_hidden_status_ids, s.id),
+              updated_at = now()
+            FROM s
+            WHERE projects.id = s.project_id AND (SELECT ok FROM allowed)
+              AND (s.id = ANY(projects.board_hidden_status_ids)
+                OR s.id = ANY(projects.list_hidden_status_ids))
           ),
           deleted AS (
             DELETE FROM statuses WHERE id IN (SELECT id FROM s) AND (SELECT ok FROM allowed)

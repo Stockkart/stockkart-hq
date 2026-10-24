@@ -15,6 +15,7 @@ import {
   type ProjectMeta,
 } from "@/lib/issues/views";
 import { type RichTextDoc } from "@/lib/rich-text";
+import { type ProjectViewDefaults } from "@/lib/views/view-defaults";
 import { directRead, type Read } from "@/server/db/read-batch";
 import {
   activity,
@@ -101,12 +102,29 @@ export function createIssueQueries(db: AppDatabase, { read = directRead }: Query
             name: projects.name,
             // SPR-1: the default length of a new sprint.
             sprintLengthDays: projects.sprintLengthDays,
+            // BRD-6 / VW-4 view defaults, in the same query (no extra round trip).
+            boardIssueTypes: projects.boardIssueTypes,
+            boardHiddenStatusIds: projects.boardHiddenStatusIds,
+            listIssueTypes: projects.listIssueTypes,
+            listHiddenStatusIds: projects.listHiddenStatusIds,
           })
           .from(projects)
           .where(and(eq(projects.key, key), isNull(projects.archivedAt)))
           .limit(1),
       );
-      return project ?? null;
+      if (!project) return null;
+      const {
+        boardIssueTypes,
+        boardHiddenStatusIds,
+        listIssueTypes,
+        listHiddenStatusIds,
+        ...rest
+      } = project;
+      const viewDefaults: ProjectViewDefaults = {
+        board: { issueTypes: boardIssueTypes, hiddenStatusIds: boardHiddenStatusIds },
+        list: { issueTypes: listIssueTypes, hiddenStatusIds: listHiddenStatusIds },
+      };
+      return { ...rest, viewDefaults };
     },
 
     async listProjectKeys(): Promise<string[]> {
