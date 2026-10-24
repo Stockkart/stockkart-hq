@@ -1,3 +1,4 @@
+import { MermaidDiagram } from "./mermaid-diagram";
 import { type NodeRenderers } from "./types";
 
 /** Doc blocks (DOC-1, DOC-7) in the read-only view, e.g. the template preview. */
@@ -28,15 +29,8 @@ export const calloutRenderers: NodeRenderers = {
 
 export const mermaidRenderers: NodeRenderers = {
   mermaid: ({ node, index }) => {
-    // The read-only view shows the diagram source; the doc editor renders it live.
+    // The read-only view renders the diagram (like the editor's preview), source on demand.
     const source = node.attrs?.source;
-    return (
-      <figure key={index}>
-        <figcaption className="text-xs text-muted-foreground">Mermaid diagram</figcaption>
-        <pre>
-          <code>{typeof source === "string" ? source : ""}</code>
-        </pre>
-      </figure>
-    );
+    return <MermaidDiagram key={index} source={typeof source === "string" ? source : ""} />;
   },
 };
