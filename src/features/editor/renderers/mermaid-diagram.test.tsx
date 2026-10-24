@@ -25,7 +25,7 @@ describe("Mermaid in the read-only view (DOC-7)", () => {
   });
 
   it("renders the diagram, with the source behind a toggle", async () => {
-    const { container } = render(<RichTextView doc={doc("graph TD; A-->B")} />);
+    const { container } = render(<RichTextView projectKeys={[]} doc={doc("graph TD; A-->B")} />);
     const diagram = container.querySelector<HTMLElement>('[aria-label="Diagram preview"]');
     expect(diagram).not.toBeNull();
     await waitFor(() => expect(diagram?.shadowRoot?.querySelector("svg")).toBeTruthy(), {
@@ -39,7 +39,7 @@ describe("Mermaid in the read-only view (DOC-7)", () => {
 
   it("shows the inline error for invalid syntax instead of a diagram", async () => {
     mermaid.parse.mockRejectedValue(new Error("Parse error on line 1"));
-    render(<RichTextView doc={doc("not a diagram")} />);
+    render(<RichTextView projectKeys={[]} doc={doc("not a diagram")} />);
     expect(await screen.findByRole("alert", undefined, { timeout: 3000 })).toHaveTextContent(
       "Parse error",
     );
