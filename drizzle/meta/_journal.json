@@ -50,6 +50,13 @@
       "when": 1792760105217,
       "tag": "0006_handbook_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792776584110,
+      "tag": "0007_costs",
+      "breakpoints": true
     }
   ]
 }

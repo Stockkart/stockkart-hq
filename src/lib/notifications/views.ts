@@ -6,7 +6,16 @@ import { type NotificationType } from "./constants";
 export type NotificationTarget =
   | { kind: "issue"; key: string; title: string; href: string }
   | { kind: "doc"; title: string; href: string }
-  | { kind: "incident"; key: string; title: string; href: string };
+  | { kind: "incident"; key: string; title: string; href: string }
+  /** COST-7 `cost_reminder`: the costs page on the month to complete. */
+  | { kind: "costs"; title: string; href: string };
+
+/** COST-7 reminder details (`meta`), when valid. */
+export interface CostReminderDetails {
+  /** "YYYY-MM". */
+  month: string;
+  missingCount: number;
+}
 
 export interface NotificationView {
   id: string;
@@ -22,6 +31,8 @@ export interface NotificationView {
   statusTo: string | null;
   /** Set when the event happened in a comment (mention or new comment). */
   commentId: string | null;
+  /** `cost_reminder` only. */
+  costReminder?: CostReminderDetails | null;
   read: boolean;
   createdAt: Date;
 }

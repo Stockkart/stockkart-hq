@@ -61,6 +61,8 @@ describe("proxy (middleware) denies anonymous access", () => {
     "/api/webhooks/github",
     // NTF-2: they authenticate themselves (cron secret, unsubscribe token).
     "/api/cron/digest",
+    // COST-7 monthly jobs: the cron secret.
+    "/api/cron/monthly",
     "/unsubscribe",
   ])("lets %s through without a session", async (path) => {
     const response = await send(path);
@@ -74,6 +76,8 @@ describe("proxy (middleware) denies anonymous access", () => {
     ["/unsubscribe/x", 307],
     // Near misses stay gated too: the exemptions are exact, case and slash included.
     ["/api/cron/digest/", 401],
+    ["/api/cron/monthly/", 401],
+    ["/api/cron/monthly/x", 401],
     ["/api/cron", 401],
     ["/unsubscribe/", 307],
     ["/Unsubscribe", 307],

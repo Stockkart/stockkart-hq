@@ -15,6 +15,7 @@ import {
   SquareKanban,
   Timer,
   UserRound,
+  Wallet,
 } from "lucide-react";
 
 export interface NavItem {
@@ -37,7 +38,7 @@ const projectHref = (section: string) => `/${DEFAULT_PROJECT_KEY}/${section}`;
 
 /**
  * SPEC §5.1 app shell. Every item works: My Work, Todos, Backlog, Board, Issues, Sprints,
- * Roadmap, Releases, Docs, ADRs, Diagrams, Incidents and Services; an unknown section is a
+ * Roadmap, Releases, Docs, ADRs, Diagrams, Incidents, Services and Costs; an unknown section is a
  * 404 (`[projectKey]/[section]`). Settings opens the profile (GitHub username, GH-4).
  */
 export const NAV_SECTIONS: NavSection[] = [
@@ -62,6 +63,8 @@ export const NAV_SECTIONS: NavSection[] = [
       { label: "Diagrams", icon: Network, href: projectHref("diagrams") },
       { label: "Incidents", icon: Siren, href: projectHref("incidents") },
       { label: "Services", icon: Server, href: projectHref("services") },
+      // COST-1 (IMR: what running Stockkart costs).
+      { label: "Costs", icon: Wallet, href: projectHref("costs") },
       // PRJ-3 (statuses, labels, components; the trash is linked from there, ISS-13).
       { label: "Project settings", icon: SlidersHorizontal, href: projectHref("settings") },
     ],

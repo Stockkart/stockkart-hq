@@ -78,6 +78,8 @@ function staticActions(projectKey: string): Option[] {
     go("Go to Docs", `/${projectKey}/docs`),
     go("Go to ADRs", `/${projectKey}/adrs`),
     go("Go to Diagrams", `/${projectKey}/diagrams`),
+    // COST-1. Costs are not in full-text search: this static action is the palette's way in.
+    go("Go to Costs", `/${projectKey}/costs`),
     go("Go to My Work", "/my-work"),
     go("Go to Todos", "/todos"),
   ];

@@ -1,5 +1,6 @@
 import { sql, type SQL } from "drizzle-orm";
 import {
+  bigint,
   boolean,
   check,
   customType,
@@ -8,6 +9,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   primaryKey,
@@ -26,6 +28,17 @@ import {
   MAX_ATTACHMENT_BYTES,
 } from "@/lib/attachments/constants";
 import { DIAGRAM_KINDS, DIAGRAM_SCENE_MAX_BYTES } from "@/lib/diagrams/constants";
+import {
+  BILLING_CYCLES,
+  COST_CATEGORIES,
+  COST_ENTRY_KINDS,
+  COST_NAME_MAX,
+  DEFAULT_BASE_CURRENCY,
+  DEFAULT_REMINDER_DAY,
+  MAX_AMOUNT_MINOR,
+  REMINDER_DAY_MAX,
+  REMINDER_DAY_MIN,
+} from "@/lib/costs/constants";
 import {
   ADR_STATUSES,
   DOC_COMMENT_ANCHOR_TEXT_MAX,
@@ -160,6 +173,10 @@ export const handbookPublicationStateEnum = pgEnum(
   "handbook_publication_state",
   HANDBOOK_PUBLICATION_STATES,
 );
+// Costs (migration 0007).
+export const costCategoryEnum = pgEnum("cost_category", COST_CATEGORIES);
+export const billingCycleEnum = pgEnum("billing_cycle", BILLING_CYCLES);
+export const costEntryKindEnum = pgEnum("cost_entry_kind", COST_ENTRY_KINDS);
 
 // ── Phase 0: sign-in ─────────────────────────────────────────────────────────────────────
 
@@ -1498,6 +1515,151 @@ export const handbookPublicationDocs = pgTable(
   ],
 );
 
+// ── Costs (IMR): migration 0007 ──────────────────────────────────────────────────────────
+
+/** CHECK body: an ISO currency we support (`COST_CURRENCIES`). */
+const currencyCheck = (column: SQL) => sql`${column} IN ('INR', 'USD')`;
+/** CHECK body: minor units in 0…MAX_AMOUNT_MINOR (nullable columns pass NULL). */
+const amountCheck = (column: SQL) =>
+  sql`${column} >= 0 AND ${column} <= ${sql.raw(String(MAX_AMOUNT_MINOR))}`;
+
+/**
+ * COST-1 cost items: what Stockkart pays for (a vendor plan, a usage bill, the domain).
+ * Money is integer minor units (paise / cents) in `bigint` columns, never a float.
+ * `active = false` is "archived": no longer expected, but its entries still count. Names
+ * are unique per project (case-insensitive) among live items, which also makes "Add
+ * Stockkart defaults" idempotent by name. Activity uses `entity_type = 'cost_item'`.
+ */
+export const costItems = pgTable(
+  "cost_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    vendor: text("vendor"),
+    category: costCategoryEnum("category").notNull(),
+    /** The service-registry entry it pays for, if any (SVC-1). */
+    serviceId: uuid("service_id").references(() => services.id, { onDelete: "set null" }),
+    billingCycle: billingCycleEnum("billing_cycle").notNull(),
+    currency: text("currency").notNull(),
+    expectedAmountMinor: bigint("expected_amount_minor", { mode: "number" }),
+    /** Next (or usual) renewal; a yearly item is due in this date's month every year. */
+    renewsOn: date("renews_on"),
+    notes: text("notes"),
+    active: boolean("active").notNull().default(true),
+    /** List order per project; a fractional key like `services.position`. */
+    position: fractionalKey("position").notNull(),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("cost_items_project_name_unique")
+      .on(table.projectId, sql`lower(${table.name})`)
+      .where(sql`${table.deletedAt} IS NULL`),
+    index("cost_items_project_position_idx").on(table.projectId, table.position),
+    index("cost_items_service_idx").on(table.serviceId),
+    check(
+      "cost_items_name_length",
+      sql`char_length(${table.name}) BETWEEN 1 AND ${sql.raw(String(COST_NAME_MAX))}`,
+    ),
+    check("cost_items_currency", currencyCheck(sql`${table.currency}`)),
+    check(
+      "cost_items_expected_amount",
+      sql`${table.expectedAmountMinor} IS NULL OR (${amountCheck(sql`${table.expectedAmountMinor}`)})`,
+    ),
+  ],
+);
+
+/**
+ * COST-2 one amount per item and month. `period` is the first day of the month (CHECK).
+ * `base_amount_minor` is the amount in the project's base currency at the entry's own
+ * `fx_rate_to_base` (stored per entry and editable; never fetched): with no rate the
+ * entry is in the base currency, so both amounts are equal (CHECK). The app requires a
+ * rate whenever `currency` differs from the base currency (a CHECK cannot see
+ * `cost_settings`). A `no_charge` month has amount 0 (CHECK).
+ */
+export const costEntries = pgTable(
+  "cost_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => costItems.id, { onDelete: "cascade" }),
+    period: date("period").notNull(),
+    amountMinor: bigint("amount_minor", { mode: "number" }).notNull(),
+    currency: text("currency").notNull(),
+    fxRateToBase: numeric("fx_rate_to_base", { precision: 12, scale: 6 }),
+    baseAmountMinor: bigint("base_amount_minor", { mode: "number" }).notNull(),
+    kind: costEntryKindEnum("kind").notNull(),
+    notes: text("notes"),
+    enteredBy: uuid("entered_by").references(() => users.id, { onDelete: "set null" }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("cost_entries_item_period_unique").on(table.itemId, table.period),
+    // The month and year tabs read entries by period range (joined to the project's items).
+    index("cost_entries_period_idx").on(table.period),
+    check("cost_entries_period_first_day", sql`extract(day from ${table.period}) = 1`),
+    check("cost_entries_amount", amountCheck(sql`${table.amountMinor}`)),
+    check("cost_entries_base_amount", amountCheck(sql`${table.baseAmountMinor}`)),
+    check("cost_entries_currency", currencyCheck(sql`${table.currency}`)),
+    check("cost_entries_fx_rate", sql`${table.fxRateToBase} IS NULL OR ${table.fxRateToBase} > 0`),
+    check(
+      "cost_entries_base_without_rate",
+      sql`${table.fxRateToBase} IS NOT NULL OR ${table.baseAmountMinor} = ${table.amountMinor}`,
+    ),
+    check(
+      "cost_entries_no_charge_zero",
+      sql`${table.kind} <> 'no_charge' OR ${table.amountMinor} = 0`,
+    ),
+  ],
+);
+
+/**
+ * COST-8 per-project costs settings (one row, created on the first save; until then the
+ * defaults apply). `reminder_user_ids` empty means "the project lead" (COST-7); ids of
+ * users deleted since are ignored by the reader. `default_usd_to_inr` only pre-fills new
+ * entries' rates. The base currency cannot change once entries exist (their base amounts
+ * would mean something else): the settings write refuses it in its own statement.
+ */
+export const costSettings = pgTable(
+  "cost_settings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .unique("cost_settings_project_unique")
+      .references(() => projects.id, { onDelete: "cascade" }),
+    baseCurrency: text("base_currency").notNull().default(DEFAULT_BASE_CURRENCY),
+    monthlyBudgetMinor: bigint("monthly_budget_minor", { mode: "number" }),
+    reminderDay: integer("reminder_day").notNull().default(DEFAULT_REMINDER_DAY),
+    reminderUserIds: uuid("reminder_user_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::uuid[]`),
+    defaultUsdToInr: numeric("default_usd_to_inr", { precision: 12, scale: 6 }),
+    ...timestamps,
+  },
+  (table) => [
+    check("cost_settings_base_currency", currencyCheck(sql`${table.baseCurrency}`)),
+    check(
+      "cost_settings_budget",
+      sql`${table.monthlyBudgetMinor} IS NULL OR (${amountCheck(sql`${table.monthlyBudgetMinor}`)})`,
+    ),
+    check(
+      "cost_settings_reminder_day",
+      sql`${table.reminderDay} BETWEEN ${sql.raw(String(REMINDER_DAY_MIN))} AND ${sql.raw(String(REMINDER_DAY_MAX))}`,
+    ),
+    check(
+      "cost_settings_usd_to_inr",
+      sql`${table.defaultUsdToInr} IS NULL OR ${table.defaultUsdToInr} > 0`,
+    ),
+    check("cost_settings_reminder_users", sql`cardinality(${table.reminderUserIds}) <= 50`),
+  ],
+);
+
 export type UserRow = typeof users.$inferSelect;
 export type ProjectRow = typeof projects.$inferSelect;
 export type StatusRow = typeof statuses.$inferSelect;
@@ -1516,3 +1678,6 @@ export type ImportRow = typeof imports.$inferSelect;
 export type ReleaseRow = typeof releases.$inferSelect;
 export type HandbookPublicationRow = typeof handbookPublications.$inferSelect;
 export type HandbookPublicationDocRow = typeof handbookPublicationDocs.$inferSelect;
+export type CostItemRow = typeof costItems.$inferSelect;
+export type CostEntryRow = typeof costEntries.$inferSelect;
+export type CostSettingsRow = typeof costSettings.$inferSelect;

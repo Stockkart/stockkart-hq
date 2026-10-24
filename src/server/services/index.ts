@@ -5,6 +5,7 @@ import { storage } from "@/server/storage";
 import { createAttachmentService } from "./attachments";
 import { createBulkService } from "./bulk";
 import { createCommentService } from "./comments";
+import { createCostQueries, createCostReminderJob, createCostService } from "./costs";
 import { createDiagramQueries } from "./diagram-queries";
 import { createDiagramService } from "./diagrams";
 import { createDocQueries } from "./doc-queries";
@@ -101,3 +102,7 @@ export const handbookPullService = createHandbookPullService(db, {
   read,
   github: handbookGithub,
 });
+// Costs (IMR, COST-1…COST-9).
+export const costService = createCostService(db, { runAtomic, read });
+export const costQueries = createCostQueries(db, { read });
+export const costReminderJob = createCostReminderJob(db, { now: () => new Date() });
