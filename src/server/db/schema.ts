@@ -92,6 +92,7 @@ import {
   type ServiceEnvironment,
   type ServiceLink,
 } from "@/lib/service-registry/constants";
+import { VIEW_DEFAULT_ARRAY_MAX } from "@/lib/views/view-defaults";
 
 /**
  * SPEC §8. Phase 0 tables (users, login_attempts) plus every table Phase 1 needs, defined up
@@ -262,6 +263,23 @@ export const projects = pgTable(
     sprintLengthDays: integer("sprint_length_days").notNull().default(14),
     /** SPR-5: completing a sprint creates its retro doc from the built-in template. */
     autoRetro: boolean("auto_retro").notNull().default(false),
+    /**
+     * BRD-6 / VW-4 view defaults (migration 0008): the issue types the board and the issue
+     * list show when the URL names none (null = every type), and the statuses they hide
+     * (board columns; list status filter). Additive with defaults, so code that predates
+     * them keeps working. A status delete drops its id from both hidden arrays in the same
+     * statement (`deleteStatus`); readers also ignore ids that are not a current status.
+     */
+    boardIssueTypes: issueTypeEnum("board_issue_types").array(),
+    boardHiddenStatusIds: uuid("board_hidden_status_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::uuid[]`),
+    listIssueTypes: issueTypeEnum("list_issue_types").array(),
+    listHiddenStatusIds: uuid("list_hidden_status_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::uuid[]`),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     ...timestamps,
   },
@@ -269,6 +287,25 @@ export const projects = pgTable(
     check("projects_key_format", sql`${table.key} ~ '^[A-Z]{2,5}$'`),
     check("projects_issue_counter_nonneg", sql`${table.issueCounter} >= 0`),
     check("projects_incident_counter_nonneg", sql`${table.incidentCounter} >= 0`),
+    // BRD-6 / VW-4: small arrays (there are 7 issue types; a workflow has a handful of
+    // statuses). A type list is NULL (every type) or non-empty; cardinality() of NULL is
+    // NULL, so NULL passes.
+    check(
+      "projects_board_issue_types_size",
+      sql`cardinality(${table.boardIssueTypes}) BETWEEN 1 AND ${sql.raw(String(VIEW_DEFAULT_ARRAY_MAX))}`,
+    ),
+    check(
+      "projects_board_hidden_status_ids_size",
+      sql`cardinality(${table.boardHiddenStatusIds}) <= ${sql.raw(String(VIEW_DEFAULT_ARRAY_MAX))}`,
+    ),
+    check(
+      "projects_list_issue_types_size",
+      sql`cardinality(${table.listIssueTypes}) BETWEEN 1 AND ${sql.raw(String(VIEW_DEFAULT_ARRAY_MAX))}`,
+    ),
+    check(
+      "projects_list_hidden_status_ids_size",
+      sql`cardinality(${table.listHiddenStatusIds}) <= ${sql.raw(String(VIEW_DEFAULT_ARRAY_MAX))}`,
+    ),
   ],
 );
 

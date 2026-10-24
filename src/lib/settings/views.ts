@@ -1,5 +1,6 @@
 import { type StatusCategory, type StatusDefaultFor } from "@/lib/issues/constants";
 import { type UserOption } from "@/lib/issues/views";
+import { type ProjectViewDefaults } from "@/lib/views/view-defaults";
 
 /** Read models of the project settings page (PRJ-2, PRJ-3). Plain data only. */
 
@@ -47,6 +48,8 @@ export interface ComponentSetting {
 
 export interface ProjectSettings {
   project: ProjectGeneral;
+  /** BRD-6 / VW-4 (Views tab). */
+  viewDefaults: ProjectViewDefaults;
   statuses: StatusSetting[];
   labels: LabelSetting[];
   components: ComponentSetting[];

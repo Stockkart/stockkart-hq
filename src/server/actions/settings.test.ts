@@ -25,6 +25,7 @@ const projectSettingsService = vi.hoisted(() => ({
   deleteComponent: vi.fn(),
   setStatusWipLimit: vi.fn(),
   setAutoRetro: vi.fn(),
+  saveViewDefaults: vi.fn(),
 }));
 const savedViewService = vi.hoisted(() => ({
   create: vi.fn(),
@@ -83,6 +84,11 @@ const cases: [string, AnyAction, unknown][] = [
   ["deleteStatusAction", settings.deleteStatusAction, { statusId: ID, moveToStatusId: ID2 }],
   ["setStatusWipLimitAction", settings.setStatusWipLimitAction, { statusId: ID, wipLimit: 4 }],
   ["setAutoRetroAction", settings.setAutoRetroAction, { projectKey: "STK", autoRetro: true }],
+  [
+    "saveViewDefaultsAction",
+    settings.saveViewDefaultsAction,
+    { projectKey: "STK", board: { issueTypes: ["bug"], hiddenStatusIds: [ID] } },
+  ],
   [
     "createLabelAction",
     settings.createLabelAction,
@@ -158,6 +164,43 @@ describe("settings, saved view, bulk and trash server actions", () => {
   it.each(cases)("%s succeeds with valid input", async (_name, action, input) => {
     authMock.mockResolvedValue(session);
     await expect(action(input)).resolves.toMatchObject({ ok: true });
+  });
+
+  it("normalises view defaults and refreshes only the side that changed (BRD-6 / VW-4)", async () => {
+    authMock.mockResolvedValue(session);
+    const { revalidatePath } = await import("next/cache");
+    vi.mocked(revalidatePath).mockClear();
+    await expect(
+      settings.saveViewDefaultsAction({
+        projectKey: "STK",
+        list: { issueTypes: [], hiddenStatusIds: [ID, ID] },
+      }),
+    ).resolves.toEqual({ ok: true, data: undefined });
+    expect(projectSettingsService.saveViewDefaults).toHaveBeenCalledWith(USER, {
+      projectKey: "STK",
+      list: { issueTypes: null, hiddenStatusIds: [ID] },
+    });
+    const paths = vi.mocked(revalidatePath).mock.calls.map((call) => call[0]);
+    expect(paths).toEqual(["/[projectKey]/settings", "/[projectKey]/issues"]);
+  });
+
+  it.each([
+    [{ projectKey: "STK" }],
+    [{ projectKey: "STK", board: { issueTypes: ["nope"], hiddenStatusIds: [] } }],
+    [{ projectKey: "STK", board: { issueTypes: null, hiddenStatusIds: ["x"] } }],
+    [
+      {
+        projectKey: "STK",
+        list: {
+          issueTypes: null,
+          hiddenStatusIds: Array.from({ length: 21 }, () => crypto.randomUUID()),
+        },
+      },
+    ],
+  ])("refuses view defaults %j before the service", async (input) => {
+    authMock.mockResolvedValue(session);
+    await expect(settings.saveViewDefaultsAction(input)).resolves.toMatchObject({ ok: false });
+    expect(projectSettingsService.saveViewDefaults).not.toHaveBeenCalled();
   });
 
   it("passes the session user to the saved-view service, never one from the input", async () => {

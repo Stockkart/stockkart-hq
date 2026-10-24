@@ -39,6 +39,10 @@ export function createSettingsQueries(db: AppDatabase, { read = directRead }: Qu
               defaultAssigneeId: projects.defaultAssigneeId,
               sprintLengthDays: projects.sprintLengthDays,
               autoRetro: projects.autoRetro,
+              boardIssueTypes: projects.boardIssueTypes,
+              boardHiddenStatusIds: projects.boardHiddenStatusIds,
+              listIssueTypes: projects.listIssueTypes,
+              listHiddenStatusIds: projects.listHiddenStatusIds,
             })
             .from(projects)
             .where(and(eq(projects.id, projectId), isNull(projects.archivedAt)))
@@ -99,10 +103,22 @@ export function createSettingsQueries(db: AppDatabase, { read = directRead }: Qu
             .orderBy(asc(users.name)),
         ),
       ]);
-      const project: ProjectGeneral | undefined = projectRows[0];
-      if (!project) return null;
+      const row = projectRows[0];
+      if (!row) return null;
+      const {
+        boardIssueTypes,
+        boardHiddenStatusIds,
+        listIssueTypes,
+        listHiddenStatusIds,
+        ...rest
+      } = row;
+      const project: ProjectGeneral = rest;
       return {
         project,
+        viewDefaults: {
+          board: { issueTypes: boardIssueTypes, hiddenStatusIds: boardHiddenStatusIds },
+          list: { issueTypes: listIssueTypes, hiddenStatusIds: listHiddenStatusIds },
+        },
         statuses: statusRows,
         labels: labelRows,
         components: componentRows,

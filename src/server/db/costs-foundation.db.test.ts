@@ -38,13 +38,14 @@ describeDb("costs foundation schema (Postgres)", () => {
   });
 
   it("applies every migration, 0000 through 0007, on an empty database", async () => {
+    // Later migrations (0008 view defaults …) apply too; their own tests pin the total.
     const result = await db.execute(
-      sql`SELECT count(*)::int AS n, max(created_at)::text AS last
+      sql`SELECT count(*)::int AS n, bool_or(created_at = 1792776584110) AS has_0007
         FROM drizzle.__drizzle_migrations`,
     );
-    expect(rowsOf(result, z.object({ n: z.number(), last: z.string() }))).toEqual([
-      { n: 8, last: "1792776584110" },
-    ]);
+    const [row] = rowsOf(result, z.object({ n: z.number(), has_0007: z.boolean() }));
+    expect(row?.has_0007).toBe(true);
+    expect(row?.n).toBeGreaterThanOrEqual(8);
   });
 
   it("adds the enum values (usable by app queries once 0007 is committed)", async () => {

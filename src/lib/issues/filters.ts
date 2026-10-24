@@ -75,7 +75,8 @@ export type BacklogGroup = (typeof BACKLOG_GROUPS)[number];
 /** What Next.js passes as `searchParams`, or a URLSearchParams from the browser. */
 export type RawParams = Record<string, string | string[] | undefined> | URLSearchParams;
 
-function rawValues(params: RawParams, name: string): string[] {
+/** Every value of a parameter, comma lists split and trimmed (empty strings kept). */
+export function rawValues(params: RawParams, name: string): string[] {
   const raw = params instanceof URLSearchParams ? params.getAll(name) : params[name];
   const list = raw === undefined ? [] : Array.isArray(raw) ? raw : [raw];
   return list.flatMap((value) => value.split(",")).map((value) => value.trim());

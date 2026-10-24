@@ -22,6 +22,7 @@ import {
   setStatusWipLimitInput,
   updateProjectInput,
 } from "@/lib/settings/schemas";
+import { saveViewDefaultsInput } from "@/lib/views/view-defaults";
 import { requireSession } from "@/server/auth/require-session";
 import { projectSettingsService } from "@/server/services";
 
@@ -137,6 +138,28 @@ export async function setAutoRetroAction(input: unknown): Promise<ActionResult> 
     (data) => done(projectSettingsService.setAutoRetro(session.user.id, data)),
     [PROJECT_SETTINGS],
   );
+}
+
+/**
+ * BRD-6 / VW-4: the board's and/or the issue list's default types and hidden statuses
+ * (Views tab, the board toolbar, the list's filter bar). Refreshes only the pages that read
+ * the side that changed, plus the settings page.
+ */
+export async function saveViewDefaultsAction(input: unknown): Promise<ActionResult> {
+  const session = await requireSession();
+  return runAction(
+    saveViewDefaultsInput,
+    input,
+    (data) => done(projectSettingsService.saveViewDefaults(session.user.id, data)),
+    () => refreshPages(PROJECT_SETTINGS, ...viewDefaultPages(input)),
+  );
+}
+
+/** The pages a view-defaults save changes (the input was validated before this runs). */
+function viewDefaultPages(input: unknown): string[] {
+  const parsed = saveViewDefaultsInput.safeParse(input);
+  if (!parsed.success) return [];
+  return [...(parsed.data.board ? [BOARD] : []), ...(parsed.data.list ? [ISSUE_LIST] : [])];
 }
 
 export async function moveStatusAction(input: unknown): Promise<ActionResult> {
