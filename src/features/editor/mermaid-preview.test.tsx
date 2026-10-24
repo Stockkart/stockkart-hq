@@ -79,7 +79,7 @@ describe("MermaidPreview (DOC-7)", () => {
       });
       await waitFor(() => expect(mermaidMock.render).toHaveBeenCalledTimes(2));
       expect(mermaidMock.initialize).toHaveBeenLastCalledWith(
-        expect.objectContaining({ theme: "default", securityLevel: "strict" }),
+        expect.objectContaining({ theme: "neutral", securityLevel: "strict" }),
       );
     } finally {
       document.documentElement.className = "";

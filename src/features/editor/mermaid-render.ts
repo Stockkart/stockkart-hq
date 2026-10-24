@@ -35,7 +35,8 @@ function mermaidConfig(theme: ResolvedTheme): MermaidConfig {
     startOnLoad: false,
     securityLevel: "strict",
     htmlLabels: false,
-    theme: theme === "dark" ? "dark" : "default",
+    // Light keeps the "neutral" theme the app used before dark mode, so diagrams look the same.
+    theme: theme === "dark" ? "dark" : "neutral",
     secure: [
       "secure",
       "securityLevel",
