@@ -92,6 +92,9 @@ src/
                           (ISS-13), roadmap/ (RDM-1/2), releases/ (REL-1/2), import/ (IMP-4
                           CSV import tab), incidents/ (INC-1/2), service-registry/ (SVC-1),
                           costs/ (COST-1…8), docs/comments/ (DOC-11/13 comment panel))
+  features/theme/         dark mode (README "Dark mode"): useResolvedTheme, the System/Light/Dark
+                          switcher (top bar, Settings → Profile); lib/theme/ holds the cookie
+                          vocabulary, server/theme/ reads it for the root layout
   features/shell/shortcuts.ts  the one keyboard-shortcut registry (§9.5): handlers match
                           keys with `matchesShortcut`, the `?` dialog lists it; add new
                           shortcuts there
@@ -120,6 +123,15 @@ e2e/                      Playwright smoke tests
   everything is keyboard-usable (SPEC §9.5).
 - Prettier formats the code (100 columns, double quotes, trailing commas). Husky runs
   lint-staged on commit.
+- Theming (README "Dark mode"): use the tokens (`bg-background`, `bg-card`, `bg-muted`,
+  `text-foreground`, `text-muted-foreground`, `border`, `--chart-*` …) rather than palette
+  colours. For a custom colour, pair the light class with a `dark:` one on the same line
+  (`text-amber-700 dark:text-amber-400`) and check AA contrast in both themes; colours used
+  from JS or SVG go in `globals.css` as a token under `:root` and `:root { @variant dark }`.
+  `bg-white` / `text-black` without a `dark:` counterpart fail
+  `src/test/no-light-only-colours.test.ts`. Libraries that take a theme prop get
+  `useResolvedTheme()` (`features/theme/`); never read the cookie on the client or add an
+  inline theme script. Exports and thumbnails always render light.
 
 ## Database
 

@@ -337,6 +337,39 @@ every plan; see [Vercel regions](https://vercel.com/docs/regions) and
 [configuring function regions](https://vercel.com/docs/functions/configuring-functions/region),
 checked 2026-10-20). If Neon moves, change `regions` with it.
 
+## Dark mode
+
+HQ has a System / Light / Dark theme, picked from the theme button in the top bar or in
+**Settings → Profile → Appearance**. A choice applies at once (no reload) and is stored per
+browser in the `hq_theme` cookie (`light` | `dark` | `system`; `Path=/`, `SameSite=Lax`,
+one year, `Secure` on https, not HttpOnly because the client writes it; it is not
+sensitive). Nothing is stored on the user record.
+
+How it works, without any inline script (so the planned nonce CSP, S-9, stays possible):
+
+- The root layout (`src/app/layout.tsx`) reads the cookie with `cookies()` and renders
+  `<html class="dark">` for `dark`, `<html class="theme-system">` for `system` or no cookie,
+  and no class for `light`. The first paint is therefore already right.
+- `globals.css` defines the `dark` variant as `.dark` **or** `.theme-system` under
+  `@media (prefers-color-scheme: dark)`. Both the dark tokens (`:root { @variant dark {…} }`)
+  and every `dark:` utility use it, so they always switch together. It also sets
+  `color-scheme`, so native scrollbars and form controls match.
+- `<meta name="theme-color">` is rendered for both schemes (`generateViewport`); an
+  explicit choice gives both tags its colour, and the toggle retargets them in place.
+- JS consumers read `useResolvedTheme()` (`src/features/theme/`), which follows the
+  `<html>` class and `matchMedia` live: Excalidraw (`theme`), React Flow (`colorMode`),
+  Mermaid previews (re-rendered with mermaid's `dark` / `default` theme, still strict and
+  sanitised) and sonner toasts (`theme`).
+
+**Diagram exports and thumbnails stay light** whatever the UI theme (Excalidraw
+`exportWithDarkMode: false`, the flow SVG on white), so saved PNG/SVG files look the same for
+everyone. Flow nodes keep their light pastel fills in both themes for the same reason.
+
+Contrast (WCAG AA, 4.5:1 text, 3:1 marks) was checked for both themes; the theme-specific
+colours are tokens in `globals.css` (`--chart-*`, `--chart-cost-*`, `--comment-*`) or
+`dark:` variants next to the light class. Label colours are user-chosen hex values and are
+decorative (the label name is always shown).
+
 ## Board and issue-list views (BRD-6, VW-4)
 
 Each project has default views, set in **Project settings → Views** (one save for both):
