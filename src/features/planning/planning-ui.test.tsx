@@ -542,6 +542,8 @@ describe("Board view: types and hidden columns (BRD-6)", () => {
         value: done.id,
       }),
     );
+    // The card leaves the board; keyboard focus lands on the hidden-columns note's Show.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Show" })).toHaveFocus());
   });
 
   it("toggles columns in the Columns menu, keeping the last one visible", async () => {

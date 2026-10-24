@@ -349,11 +349,15 @@ Each project has default views, set in **Project settings → Views** (one save 
   param means the project default, unknown values are ignored. Cards in hidden columns are
   counted ("N issues in hidden columns · Show"); hidden columns take no drops, but every
   card's **Move to…** still lists all statuses. WIP counts are of the cards a column shows,
-  so the type filter narrows them (as the sprint scope does).
+  so the type filter narrows them (as the sprint scope does). The board filters the scope's
+  issues in the browser (instant toggles), after the page's 1,000-row limit; past it the
+  limit notice shows, as before.
 - **Issues list**: the default types and the statuses hidden by default. They apply only
   when the URL has no `type`/`status` and no saved view is open (a saved view keeps its
-  own filters), and show as active chips. **Clear filters** returns to them, **Show all**
-  drops them (`?type=all`), **Save as default** stores the current types and statuses.
+  own filters; any well-formed `view=` id counts, even one you cannot read), and show as
+  active chips. **Clear filters** returns to them (with a saved view open: to no filters),
+  **Show all** drops them (`?type=all`), **Save as default** stores the current types and
+  statuses.
 
 At least one status stays visible on each (the settings and the server refuse otherwise;
 a stored set that covers every status shows them all). Deleting a status removes it from

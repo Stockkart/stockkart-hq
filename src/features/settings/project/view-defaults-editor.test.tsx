@@ -31,7 +31,7 @@ describe("ViewDefaultsEditor (Views tab, BRD-6 / VW-4)", () => {
     settingsActions.saveViewDefaultsAction.mockResolvedValue({ ok: true, data: undefined });
   });
 
-  it("saves default types and hidden statuses for the board and the list", async () => {
+  it("saves default types and hidden statuses, sending only the edited side", async () => {
     const user = userEvent.setup();
     render(
       <ViewDefaultsEditor
@@ -56,10 +56,32 @@ describe("ViewDefaultsEditor (Views tab, BRD-6 / VW-4)", () => {
       expect(settingsActions.saveViewDefaultsAction).toHaveBeenCalledWith({
         projectKey: "STK",
         board: { issueTypes: ["task"], hiddenStatusIds: ["s-triage"] },
-        list: { issueTypes: ["bug"], hiddenStatusIds: [] },
       }),
     );
     expect(toast.success).toHaveBeenCalledWith("Saved the view defaults");
+  });
+
+  it("keeps unsaved edits of one side when the other side's defaults change elsewhere", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(
+      <ViewDefaultsEditor
+        projectKey="STK"
+        statuses={statuses}
+        defaults={{ board: none, list: none }}
+      />,
+    );
+    const board = () => screen.getByRole("region", { name: "Board" });
+    const list = () => screen.getByRole("region", { name: "Issues list" });
+    await user.click(within(board()).getByRole("checkbox", { name: "Triage" }));
+    rerender(
+      <ViewDefaultsEditor
+        projectKey="STK"
+        statuses={statuses}
+        defaults={{ board: none, list: { issueTypes: null, hiddenStatusIds: ["s-todo"] } }}
+      />,
+    );
+    expect(within(board()).getByRole("checkbox", { name: "Triage" })).not.toBeChecked();
+    expect(within(list()).getByRole("checkbox", { name: "Todo" })).not.toBeChecked();
   });
 
   it("keeps at least one status visible per side", async () => {

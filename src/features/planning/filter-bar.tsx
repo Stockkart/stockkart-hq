@@ -279,7 +279,12 @@ export function FilterBar({
           defaults={listDefaults}
           saving={saving}
           onClear={() =>
-            apply({ ...EMPTY_FILTERS, types: listDefaults.types, statuses: listDefaults.statuses })
+            apply(
+              listDefaults.canonical
+                ? { ...EMPTY_FILTERS, types: listDefaults.types, statuses: listDefaults.statuses }
+                : // A saved view is open: its filters, not the defaults, are the baseline.
+                  EMPTY_FILTERS,
+            )
           }
           onShowAll={() => apply({ ...latest.current.filters, types: [], statuses: [] })}
           onSave={projectKey ? () => saveListDefault(projectKey, listDefaults) : undefined}
@@ -331,7 +336,9 @@ function ListDefaultButtons({
   onShowAll: () => void;
   onSave?: () => void;
 }) {
-  const baseline = { ...EMPTY_FILTERS, types: defaults.types, statuses: defaults.statuses };
+  const baseline = defaults.canonical
+    ? { ...EMPTY_FILTERS, types: defaults.types, statuses: defaults.statuses }
+    : EMPTY_FILTERS;
   const hasDefaults = defaults.types.length > 0 || defaults.statuses.length > 0;
   const narrowed = shown.types.length > 0 || shown.statuses.length > 0;
   const differs = !sameView(

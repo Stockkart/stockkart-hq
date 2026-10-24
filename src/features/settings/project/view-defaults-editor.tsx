@@ -39,7 +39,8 @@ const SIDES: { side: Side; title: string; hint: string; statusesLabel: string }[
 
 /**
  * BRD-6 / VW-4 "Views" tab: the default issue types and visible statuses of the board and
- * the issue list. One form, one save (`saveViewDefaultsAction`, both sides); at least one
+ * the issue list. One form, one save (`saveViewDefaultsAction`, the edited sides only); at
+ * least one
  * status stays visible per side (the checkbox of the last one is disabled, and the server
  * refuses it too). Settings changes log no activity, as elsewhere.
  */
@@ -58,17 +59,24 @@ export function ViewDefaultsEditor({
     list: resolveDefaults(defaults.list, statusIds),
   };
   const [draft, setDraft] = useState(saved);
-  // New saved defaults from the server (after a save here or elsewhere) replace the draft.
-  const savedKey = JSON.stringify(saved);
-  const [seenKey, setSeenKey] = useState(savedKey);
-  if (seenKey !== savedKey) {
-    setSeenKey(savedKey);
-    setDraft(saved);
+  // New saved defaults from the server (after a save here or elsewhere) replace the draft of
+  // each side the user has not edited; an edited side keeps the user's changes.
+  const [seen, setSeen] = useState(saved);
+  if (!sameView(seen.board, saved.board) || !sameView(seen.list, saved.list)) {
+    setSeen(saved);
+    setDraft((current) => ({
+      board: sameView(current.board, seen.board) ? saved.board : current.board,
+      list: sameView(current.list, seen.list) ? saved.list : current.list,
+    }));
   }
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const errorId = useId();
-  const dirty = !sameView(draft.board, saved.board) || !sameView(draft.list, saved.list);
+  const changed = {
+    board: !sameView(draft.board, saved.board),
+    list: !sameView(draft.list, saved.list),
+  };
+  const dirty = changed.board || changed.list;
 
   function change(side: Side, next: Partial<ResolvedView>) {
     setError(null);
@@ -89,10 +97,11 @@ export function ViewDefaultsEditor({
     setError(null);
     startTransition(async () => {
       try {
+        // Only the edited sides, so a default saved elsewhere meanwhile is kept.
         const result = await saveViewDefaultsAction({
           projectKey,
-          board: viewDefaultsOf(board),
-          list: viewDefaultsOf(list),
+          ...(changed.board ? { board: viewDefaultsOf(board) } : {}),
+          ...(changed.list ? { list: viewDefaultsOf(list) } : {}),
         });
         if (!result.ok) {
           setError(result.error);
@@ -192,7 +201,7 @@ function ViewSection({
       <fieldset className="flex flex-col gap-1.5" aria-describedby={statusesId}>
         <legend className="text-sm font-medium">{statusesLabel}</legend>
         <p id={statusesId} className="text-xs text-muted-foreground">
-          In workflow order. At least one stays visible.
+          In workflow order. At least one stays visible; up to 20 can be hidden.
         </p>
         <ul className="flex flex-col gap-1">
           {statuses.map((status) => (

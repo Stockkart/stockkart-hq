@@ -88,16 +88,20 @@ export function Board({ issues, statuses, projectKey, scope, view, defaults }: B
   );
   const [, startTransition] = useTransition();
   const [shownView, setShownView] = useOptimistic(view);
-  const [, startViewTransition] = useTransition();
+  const [viewPending, startViewTransition] = useTransition();
   const [saving, startSaving] = useTransition();
   const router = useRouter();
   const pathname = usePathname();
   const statusIds = statuses.map((status) => status.id);
   // Quick successive toggles build on the latest view, not this render's (possibly stale).
+  // Synced from the server only once no view change is in flight, so an in-between URL's
+  // render cannot drop a toggle made after it.
   const latestView = useRef(view);
   useEffect(() => {
-    latestView.current = view;
-  }, [view]);
+    if (!viewPending) latestView.current = view;
+  }, [view, viewPending]);
+  // A card moved into a hidden column does not remount; focus goes to the note's "Show".
+  const showHidden = useRef<HTMLButtonElement>(null);
   const [announcement, setAnnouncement] = useState("");
   // A moved card remounts in its new column, which drops keyboard focus; the card with
   // this id takes focus (its "Move to…" button) whenever it mounts, so the keyboard user
@@ -124,7 +128,7 @@ export function Board({ issues, statuses, projectKey, scope, view, defaults }: B
   }
 
   function saveAsDefault() {
-    const saved = shownView;
+    const saved = latestView.current;
     startSaving(async () => {
       const ok =
         (await callAction(() =>
@@ -140,7 +144,11 @@ export function Board({ issues, statuses, projectKey, scope, view, defaults }: B
 
   function moveTo(issue: PlanningIssue, status: StatusOption, keepFocus = false) {
     if (issue.status.id === status.id) return;
-    if (keepFocus) setFocusId(issue.id);
+    const hiddenTarget = hiddenIds.has(status.id);
+    if (keepFocus && hiddenTarget) {
+      // After the "Move to…" menu has closed (it keeps focus while open).
+      requestAnimationFrame(() => showHidden.current?.focus());
+    } else if (keepFocus) setFocusId(issue.id);
     // BRD-5: a full column still takes the card, with a warning. Counts the cards the
     // column shows (the type filter applies), as its header does.
     const inTarget = typed.filter((row) => row.status.id === status.id).length;
@@ -149,7 +157,6 @@ export function Board({ issues, statuses, projectKey, scope, view, defaults }: B
         description: `${inTarget + 1} issues, limit ${status.wipLimit}.`,
       });
     }
-    const hiddenTarget = hiddenIds.has(status.id);
     startTransition(async () => {
       applyOptimistic({ id: issue.id, status });
       const result = await callAction(() =>
@@ -214,6 +221,7 @@ export function Board({ issues, statuses, projectKey, scope, view, defaults }: B
           <p className="flex items-center gap-1 text-sm text-muted-foreground">
             {hiddenCount} {hiddenCount === 1 ? "issue" : "issues"} in hidden columns ·
             <Button
+              ref={showHidden}
               variant="link"
               size="sm"
               className="h-auto px-0"
