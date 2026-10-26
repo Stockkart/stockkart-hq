@@ -392,6 +392,17 @@ Each project has default views, set in **Project settings → Views** (one save 
   **Show all** drops them (`?type=all`), **Save as default** stores the current types and
   statuses.
 
+**Sprint picker (BRD-3).** Next to the board's title, **Sprint** picks the active sprint
+(the plain URL), a planned sprint (`?sprint=<id>`) or **All open** (`?scope=all`). It is
+shown whenever the project has an open sprint; a closed or unknown sprint id redirects to
+the default board, keeping the type and column params.
+
+**Last view (VW-5).** The board and the backlog store their query string per project in
+`localStorage` (`hq.last-view:/<KEY>/board`, `…/backlog`), and the sidebar's Board and
+Backlog links and the command palette's "Go to …" open it again. It is a per-browser
+convenience, not shared and not in saved views. Landing on the plain URL (a typed or
+shared link, **Clear filters**, **Reset to default**) clears what is stored.
+
 At least one status stays visible on each (the settings and the server refuse otherwise;
 a stored set that covers every status shows them all). Deleting a status removes it from
 both hidden sets in the delete's own statement. The defaults come with the project query,
