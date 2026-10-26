@@ -1,50 +1,83 @@
-import Link from "next/link";
+"use client";
 
-import { type BoardScope } from "@/lib/sprints/constants";
-import { boardHref } from "@/lib/sprints/schemas";
-import { cn } from "@/lib/utils";
+import { useRouter } from "next/navigation";
+import { useId, useOptimistic, useTransition } from "react";
+
+import { Select, type SelectOption } from "@/components/ui/select";
+import { type BoardSelection, boardHref } from "@/lib/sprints/schemas";
+import { type SprintOption } from "@/lib/sprints/views";
+
+/** The picker's value for "All open" (never a sprint id, which is a uuid). */
+const ALL_OPEN = "all";
+
+/** The picker value a selection shows: the sprint on the board, or "All open". */
+export function pickerValue(selection: BoardSelection, activeSprintId: string | null): string {
+  if (selection.scope === "all") return ALL_OPEN;
+  return selection.sprintId ?? activeSprintId ?? ALL_OPEN;
+}
+
+/** The selection a picked value stands for; the active sprint is the default (plain URL). */
+export function selectionOf(value: string, activeSprintId: string | null): BoardSelection {
+  if (value === ALL_OPEN) {
+    // Without an active sprint the default already is every open issue.
+    return activeSprintId ? { scope: "all", sprintId: null } : { scope: "sprint", sprintId: null };
+  }
+  return { scope: "sprint", sprintId: value === activeSprintId ? null : value };
+}
 
 /**
- * BRD-3 scope switch: "Sprint 7" / "All open". Plain links, so the scope lives in the URL
- * (`?scope=all`), survives reloads and can be shared; the current one is `aria-current`.
+ * BRD-3 sprint picker: the active sprint, any planned one, or "All open". The choice lives
+ * in the URL (`?sprint=<id>`, `?scope=all`; the plain URL is the active sprint), so it
+ * survives reloads, can be shared, and the sidebar link reopens it (VW-5).
  */
-export function BoardScopeSwitch({
+export function BoardSprintPicker({
   projectKey,
-  scope,
-  sprintName,
+  selection,
+  sprints,
   viewQuery,
 }: {
   projectKey: string;
-  scope: BoardScope;
-  sprintName: string;
-  /** BRD-6: the type and column params, kept when the scope changes. */
+  selection: BoardSelection;
+  /** The open sprints, the active one first (`ProjectMeta.sprints`). */
+  sprints: SprintOption[];
+  /** BRD-6: the type and column params, kept when the sprint changes. */
   viewQuery?: URLSearchParams;
 }) {
-  const options: { scope: BoardScope; label: string }[] = [
-    { scope: "sprint", label: sprintName },
-    { scope: "all", label: "All open" },
+  const router = useRouter();
+  const id = useId();
+  const [pending, startTransition] = useTransition();
+  const activeSprintId = sprints.find((sprint) => sprint.state === "active")?.id ?? null;
+  // Shown at once while the new URL renders.
+  const [value, showValue] = useOptimistic(pickerValue(selection, activeSprintId));
+  const options: SelectOption<string>[] = [
+    ...sprints.map((sprint) => ({
+      value: sprint.id,
+      label: sprint.name,
+      detail: sprint.state === "active" ? "Active" : "Planned",
+    })),
+    { value: ALL_OPEN, label: "All open" },
   ];
+
   return (
-    <nav aria-label="Board scope">
-      <ul className="inline-flex rounded-md border p-0.5 text-sm">
-        {options.map((option) => {
-          const current = option.scope === scope;
-          return (
-            <li key={option.scope}>
-              <Link
-                href={boardHref(projectKey, option.scope, viewQuery)}
-                aria-current={current ? "page" : undefined}
-                className={cn(
-                  "block rounded-sm px-2.5 py-1 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
-                  current ? "bg-secondary font-medium" : "text-muted-foreground hover:bg-muted",
-                )}
-              >
-                {option.label}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
-    </nav>
+    <div className="flex items-center gap-2 text-sm" aria-busy={pending || undefined}>
+      <label htmlFor={id} className="text-muted-foreground">
+        Sprint
+      </label>
+      <Select
+        id={id}
+        variant="chip"
+        label="Sprint"
+        value={value}
+        options={options}
+        onChange={(picked) => {
+          if (picked === null || picked === value) return;
+          const href = boardHref(projectKey, selectionOf(picked, activeSprintId), viewQuery);
+          startTransition(() => {
+            showValue(picked);
+            router.push(href, { scroll: false });
+          });
+        }}
+      />
+    </div>
   );
 }

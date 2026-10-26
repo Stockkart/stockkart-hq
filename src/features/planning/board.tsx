@@ -38,7 +38,7 @@ import { ISSUE_TYPES } from "@/lib/issues/constants";
 import { type PlanningIssue, type StatusOption } from "@/lib/issues/views";
 import { boardLayout } from "@/lib/planning/board-view";
 import { isFull, wipState } from "@/lib/planning/wip";
-import { type BoardScope } from "@/lib/sprints/constants";
+import { type BoardSelection, boardSelectionParams } from "@/lib/sprints/schemas";
 import { cn } from "@/lib/utils";
 import {
   boardViewQuery,
@@ -54,8 +54,8 @@ interface BoardProps {
   issues: PlanningIssue[];
   statuses: StatusOption[];
   projectKey: string;
-  /** BRD-3 scope, kept in the URL next to the view params. */
-  scope: BoardScope;
+  /** BRD-3 sprint or "all open", kept in the URL next to the view params. */
+  selection: BoardSelection;
   /** BRD-6: the view the URL asks for (types, hidden columns), normalised. */
   view: ResolvedView;
   /** The project's board defaults, normalised (what the plain URL shows). */
@@ -80,7 +80,7 @@ const collision: CollisionDetection = (args) => {
  * "Move to…" still lists every status, so no card is ever stuck; a note counts the cards in
  * hidden columns and offers to show them.
  */
-export function Board({ issues, statuses, projectKey, scope, view, defaults }: BoardProps) {
+export function Board({ issues, statuses, projectKey, selection, view, defaults }: BoardProps) {
   const [optimistic, applyOptimistic] = useOptimistic(
     issues,
     (state, move: { id: string; status: StatusOption }) =>
@@ -114,7 +114,7 @@ export function Board({ issues, statuses, projectKey, scope, view, defaults }: B
   );
   const { columns, typed, hiddenCount } = boardLayout(optimistic, statuses, shownView);
   const hiddenIds = new Set(shownView.hidden);
-  const scopeParam = { scope: scope === "all" ? "all" : undefined };
+  const scopeParam = boardSelectionParams(selection);
 
   function changeView(change: (current: ResolvedView) => Partial<ResolvedView>) {
     const current = latestView.current;

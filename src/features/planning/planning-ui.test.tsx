@@ -39,6 +39,7 @@ vi.mock("next/link", () => ({
 
 const { Backlog } = await import("./backlog");
 const { Board } = await import("./board");
+const { BoardSprintPicker, pickerValue, selectionOf } = await import("./board-scope");
 
 const statuses: StatusOption[] = [
   { id: "s-todo", name: "Todo", category: "todo" },
@@ -48,7 +49,7 @@ const statuses: StatusOption[] = [
 const ada = { id: "u-ada", name: "Ada Lovelace" };
 /** BRD-6: every type, no hidden column (the defaults of a fresh project). */
 const viewProps = {
-  scope: "sprint" as const,
+  selection: { scope: "sprint" as const, sprintId: null },
   view: { types: [], hidden: [] },
   defaults: { types: [], hidden: [] },
 };
@@ -578,7 +579,7 @@ describe("Board view: types and hidden columns (BRD-6)", () => {
         issues={issues}
         statuses={statuses}
         {...viewProps}
-        scope="all"
+        selection={{ scope: "all", sprintId: null }}
         projectKey="STK"
         view={{ types: ["bug"], hidden: [done.id] }}
       />,
@@ -618,5 +619,91 @@ describe("Board view: types and hidden columns (BRD-6)", () => {
     );
     const column = screen.getByRole("region", { name: /In Progress/ });
     expect(within(column).getByText("1 / 1")).toBeInTheDocument();
+  });
+});
+
+describe("Board sprint picker (BRD-3)", () => {
+  const ACTIVE = "00000000-0000-4000-8000-000000000007";
+  const PLANNED = "00000000-0000-4000-8000-000000000008";
+  const sprints = [
+    { id: ACTIVE, name: "Sprint 7", state: "active" as const },
+    { id: PLANNED, name: "Sprint 8", state: "planned" as const },
+  ];
+
+  beforeEach(() => {
+    router.push.mockReset();
+    router.replace.mockReset();
+  });
+
+  it("maps selections to picker values and back (the active sprint is the plain URL)", () => {
+    expect(pickerValue({ scope: "sprint", sprintId: null }, ACTIVE)).toBe(ACTIVE);
+    expect(pickerValue({ scope: "sprint", sprintId: null }, null)).toBe("all");
+    expect(pickerValue({ scope: "sprint", sprintId: PLANNED }, ACTIVE)).toBe(PLANNED);
+    expect(pickerValue({ scope: "all", sprintId: null }, ACTIVE)).toBe("all");
+    expect(selectionOf(ACTIVE, ACTIVE)).toEqual({ scope: "sprint", sprintId: null });
+    expect(selectionOf(PLANNED, ACTIVE)).toEqual({ scope: "sprint", sprintId: PLANNED });
+    expect(selectionOf("all", ACTIVE)).toEqual({ scope: "all", sprintId: null });
+    // Without an active sprint the plain URL already is every open issue.
+    expect(selectionOf("all", null)).toEqual({ scope: "sprint", sprintId: null });
+  });
+
+  it("lists the open sprints and 'All open', and opens the picked one (view kept)", async () => {
+    const user = userEvent.setup();
+    render(
+      <BoardSprintPicker
+        projectKey="STK"
+        selection={{ scope: "sprint", sprintId: null }}
+        sprints={sprints}
+        viewQuery={new URLSearchParams("types=bug")}
+      />,
+    );
+    const trigger = screen.getByRole("combobox", { name: "Sprint" });
+    expect(trigger).toHaveTextContent("Sprint 7");
+    await user.click(trigger);
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      expect.stringContaining("Sprint 7"),
+      expect.stringContaining("Sprint 8"),
+      "All open",
+    ]);
+    await user.click(screen.getByRole("option", { name: /Sprint 8/ }));
+    await waitFor(() =>
+      expect(router.push).toHaveBeenCalledWith(`/STK/board?sprint=${PLANNED}&types=bug`, {
+        scroll: false,
+      }),
+    );
+  });
+
+  it("goes back to the plain URL for the active sprint", async () => {
+    const user = userEvent.setup();
+    render(
+      <BoardSprintPicker
+        projectKey="STK"
+        selection={{ scope: "sprint", sprintId: PLANNED }}
+        sprints={sprints}
+      />,
+    );
+    await user.click(screen.getByRole("combobox", { name: "Sprint" }));
+    await user.click(screen.getByRole("option", { name: /Sprint 7/ }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/STK/board", { scroll: false }));
+  });
+
+  it("keeps the picked sprint in the URL when the board view changes", async () => {
+    const user = userEvent.setup();
+    render(
+      <Board
+        issues={[issue(1, { type: "bug" })]}
+        statuses={statuses}
+        {...viewProps}
+        selection={{ scope: "sprint", sprintId: PLANNED }}
+        projectKey="STK"
+      />,
+    );
+    await user.click(screen.getByRole("combobox", { name: "Type: all types" }));
+    await user.click(screen.getByRole("option", { name: "Bug" }));
+    await waitFor(() =>
+      expect(router.replace).toHaveBeenCalledWith(`/STK/board?sprint=${PLANNED}&types=bug`, {
+        scroll: false,
+      }),
+    );
   });
 });

@@ -6,8 +6,9 @@ import {
   boardHref,
   completeSprintInput,
   createSprintInput,
+  DEFAULT_BOARD_SELECTION,
   moveIssueToSprintInput,
-  parseBoardScope,
+  parseBoardSelection,
 } from "./schemas";
 
 const ID = "7d1a2c4e-1f3b-4c5d-8e9f-0a1b2c3d4e5f";
@@ -82,23 +83,58 @@ describe("sprint schemas", () => {
   });
 });
 
-describe("board scope URL param (BRD-3)", () => {
-  it("defaults to the sprint and keeps 'all'", () => {
-    expect(parseBoardScope({})).toBe("sprint");
-    expect(parseBoardScope({ scope: "all" })).toBe("all");
-    expect(parseBoardScope({ scope: ["all", "sprint"] })).toBe("all");
-    expect(parseBoardScope(new URLSearchParams("scope=bogus"))).toBe("sprint");
+describe("board selection URL params (BRD-3)", () => {
+  const SPRINT = "00000000-0000-4000-8000-000000000007";
+
+  it("defaults to the active sprint, keeps 'all' and an open sprint id", () => {
+    expect(parseBoardSelection({})).toEqual(DEFAULT_BOARD_SELECTION);
+    expect(parseBoardSelection({ scope: "all" })).toEqual({ scope: "all", sprintId: null });
+    expect(parseBoardSelection({ scope: ["all", "sprint"] })).toEqual({
+      scope: "all",
+      sprintId: null,
+    });
+    expect(parseBoardSelection(new URLSearchParams("scope=bogus"))).toEqual(
+      DEFAULT_BOARD_SELECTION,
+    );
+    expect(parseBoardSelection({ sprint: SPRINT })).toEqual({ scope: "sprint", sprintId: SPRINT });
+    expect(parseBoardSelection(new URLSearchParams(`sprint=${SPRINT}`)).sprintId).toBe(SPRINT);
+  });
+
+  it("drops a sprint that is not a uuid, and lets 'all' win over a sprint", () => {
+    expect(parseBoardSelection({ sprint: "1 OR 1=1" })).toEqual(DEFAULT_BOARD_SELECTION);
+    expect(parseBoardSelection({ scope: "all", sprint: SPRINT })).toEqual({
+      scope: "all",
+      sprintId: null,
+    });
   });
 
   it("writes the default as the plain URL", () => {
-    expect(boardHref("STK", "sprint")).toBe("/STK/board");
-    expect(boardHref("STK", "all")).toBe("/STK/board?scope=all");
-    // BRD-6: the view params come along (the scope from `view` never overrides `scope`).
-    expect(boardHref("STK", "all", new URLSearchParams("types=bug&scope=sprint"))).toBe(
-      "/STK/board?scope=all&types=bug",
+    expect(boardHref("STK", DEFAULT_BOARD_SELECTION)).toBe("/STK/board");
+    expect(boardHref("STK", { scope: "all", sprintId: null })).toBe("/STK/board?scope=all");
+    expect(boardHref("STK", { scope: "sprint", sprintId: SPRINT })).toBe(
+      `/STK/board?sprint=${SPRINT}`,
     );
-    expect(boardHref("STK", "sprint", new URLSearchParams("hide=none"))).toBe(
+    // BRD-6: the view params come along (the view's scope/sprint never override the selection).
+    expect(
+      boardHref(
+        "STK",
+        { scope: "all", sprintId: null },
+        new URLSearchParams(`types=bug&scope=sprint&sprint=${SPRINT}`),
+      ),
+    ).toBe("/STK/board?scope=all&types=bug");
+    expect(boardHref("STK", DEFAULT_BOARD_SELECTION, new URLSearchParams("hide=none"))).toBe(
       "/STK/board?hide=none",
     );
+  });
+
+  it("round-trips a selection through its URL params", () => {
+    for (const selection of [
+      DEFAULT_BOARD_SELECTION,
+      { scope: "all" as const, sprintId: null },
+      { scope: "sprint" as const, sprintId: SPRINT },
+    ]) {
+      const query = boardHref("STK", selection).split("?")[1] ?? "";
+      expect(parseBoardSelection(new URLSearchParams(query))).toEqual(selection);
+    }
   });
 });
