@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 import { requireProject, resolveProjectKey } from "@/features/issue/project-route";
 import { Backlog } from "@/features/planning/backlog";
 import { FilterBar } from "@/features/planning/filter-bar";
 import { GroupPicker } from "@/features/planning/group-picker";
 import { LimitNotice } from "@/features/planning/limit-notice";
+import { RememberView } from "@/features/views/last-view";
 import {
   filtersToSearchParams,
   hasActiveFilters,
@@ -28,7 +30,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   return { title: `Backlog · ${projectKey.toUpperCase()}` };
 }
 
-/** SPEC §5.2 / BLG-1…5, with the BLG-3 sprint sections above the backlog. */
+/**
+ * SPEC §5.2 / BLG-1…5, with the BLG-3 sprint sections above the backlog. VW-5: the page
+ * remembers its filters and grouping, so the sidebar's Backlog link reopens them.
+ */
 export default async function BacklogPage({ params, searchParams }: Props) {
   // Layouts and pages render in parallel, so each page checks the session itself too.
   const session = await requirePageSession();
@@ -61,6 +66,9 @@ export default async function BacklogPage({ params, searchParams }: Props) {
 
   return (
     <div className="mx-auto flex max-w-6xl flex-col gap-4">
+      <Suspense fallback={null}>
+        <RememberView />
+      </Suspense>
       <div className="flex items-baseline justify-between gap-4">
         <h1 className="text-2xl font-semibold">Backlog</h1>
         <p className="text-sm text-muted-foreground" aria-live="polite">
