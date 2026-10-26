@@ -32,6 +32,8 @@ export const SPRINT_GOAL_MAX = 500;
 /** Board scope URL param (BRD-3): `?scope=all` shows every open issue. */
 export const BOARD_SCOPES = ["sprint", "all"] as const;
 export type BoardScope = (typeof BOARD_SCOPES)[number];
+/** BRD-3: `?sprint=<id>` puts one open (active or planned) sprint on the board. */
+export const BOARD_SPRINT_PARAM = "sprint";
 
 /** Activity actions on `entity_type = 'sprint'` rows. */
 export const SPRINT_ACTIONS = {

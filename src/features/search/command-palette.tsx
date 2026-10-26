@@ -21,6 +21,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { NewAdrDialog, NewDocDialog } from "@/features/docs/doc-dialogs";
 import { openQuickCreate } from "@/features/issue/quick-create-events";
 import { matchesShortcut } from "@/features/shell/shortcuts";
+import { rememberedHref } from "@/features/views/last-view";
 import { type IssueType } from "@/lib/issues/constants";
 import { issuePathForKey, parseIssueKey, PROJECT_KEY_PATTERN } from "@/lib/issues/keys";
 import {
@@ -268,7 +269,8 @@ export function CommandPalette({ defaultProjectKey }: { defaultProjectKey: strin
       setTimeout(() => setDocDialog(dialog), 0);
       return;
     }
-    router.push(option.kind === "hit" ? option.hit.href : option.href);
+    // VW-5: "Go to Board/Backlog" opens the remembered view, like the sidebar.
+    router.push(option.kind === "hit" ? option.hit.href : rememberedHref(option.href));
   }
 
   function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {

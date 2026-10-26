@@ -169,7 +169,7 @@ Default statuses (one set per project):
 |---|---|---|
 | BRD-1 | Kanban columns = statuses; drag cards between columns (optimistic update) | P0 |
 | BRD-2 | Card shows key, title, type icon, priority, assignee avatar, points, labels | P0 |
-| BRD-3 | Board scope: active sprint (if any) or all open issues | P0 |
+| BRD-3 | Board scope: a sprint picker with the active sprint (the default, plain URL), any planned sprint (`?sprint=<id>`) or all open issues (`?scope=all`; the default when no sprint is active). A sprint that is not open in the project redirects to the default board | P0 |
 | BRD-4 | Swimlanes: none / assignee / epic / priority | P1 |
 | BRD-5 | WIP limit per column (column turns amber when over) | P2 |
 | BRD-6 | Board view: filter by issue type (none picked = every type) and show/hide status columns, in the URL (`types=`, `hide=`); without them the project's board defaults apply (Settings → Views; "Save as default" / "Reset to default" on the board). At least one column stays visible; cards in hidden columns are counted with a "Show" link; hidden columns are no drop targets, but "Move to…" lists every status. WIP counts are of the cards shown | P2 |
@@ -209,6 +209,7 @@ Default statuses (one set per project):
 | VW-2 | Filters reflected in the URL (shareable between teammates) | P0 |
 | VW-3 | Saved views (personal or shared), e.g. "Open P0/P1 bugs — inventory-api" | P1 |
 | VW-4 | Issue list defaults per project (Settings → Views): default issue types and hidden statuses, applied only when the URL has no `type`/`status` and no saved view is open (a saved view's own filters win); shown as active filter chips; "Clear filters" returns to them, "Show all" drops them (`type=all`), "Save as default" stores the current types and statuses | P2 |
+| VW-5 | The board and the backlog remember their last view (sprint, types, hidden columns, filters, group) per project in the browser; the sidebar and the command palette reopen it. The plain URL (typed, shared, or after "Clear filters"/"Reset to default") shows the defaults and clears what is remembered | P2 |
 | SRCH-1 | Global search (`Cmd/Ctrl+K`) over issues, docs, diagrams, comments; `STK-123` jumps directly | P0 |
 | SRCH-2 | Postgres full-text search with ranking; result type icons and snippets | P0 |
 | SRCH-3 | Command palette actions in the same box: "Create bug", "Go to board", "New ADR" | P1 |

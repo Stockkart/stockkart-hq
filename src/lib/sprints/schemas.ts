@@ -4,6 +4,7 @@ import { PROJECT_KEY_PATTERN } from "@/lib/issues/keys";
 
 import {
   BOARD_SCOPES,
+  BOARD_SPRINT_PARAM,
   type BoardScope,
   SPRINT_GOAL_MAX,
   SPRINT_MAX_DAYS,
@@ -74,25 +75,60 @@ export const moveIssueToSprintInput = z
   .refine((value) => value.issueId !== value.afterIssueId, "An issue cannot follow itself");
 
 /**
- * BRD-3 board scope from the URL: `sprint` (the default; the active sprint, if any) or
- * `all` (every open issue). Anything else falls back to the default.
+ * BRD-3: what the board shows. `scope: "all"` is every open issue; `scope: "sprint"` is one
+ * sprint, `sprintId` (a planned or the active one) or, when null, the active sprint.
  */
-export function parseBoardScope(
-  params: Record<string, string | string[] | undefined> | URLSearchParams,
-): BoardScope {
-  const raw = params instanceof URLSearchParams ? params.get("scope") : params.scope;
-  const value = Array.isArray(raw) ? raw[0] : raw;
-  const parsed = z.enum(BOARD_SCOPES).safeParse(value);
-  return parsed.success ? parsed.data : "sprint";
+export interface BoardSelection {
+  scope: BoardScope;
+  sprintId: string | null;
+}
+
+/** The default: the active sprint (or every open issue when no sprint is active). */
+export const DEFAULT_BOARD_SELECTION: BoardSelection = { scope: "sprint", sprintId: null };
+
+type RawParams = Record<string, string | string[] | undefined> | URLSearchParams;
+
+function firstParam(params: RawParams, name: string): string | undefined {
+  const raw = params instanceof URLSearchParams ? params.get(name) : params[name];
+  return (Array.isArray(raw) ? raw[0] : raw) ?? undefined;
 }
 
 /**
- * The board URL for a scope; the default is written as the plain URL. `view` (BRD-6) adds
- * the type and column params, as `boardViewQuery` writes them.
+ * BRD-3 board selection from the URL: `?scope=all`, `?sprint=<id>`, or neither (the
+ * default). `scope=all` wins over a sprint; anything unparsable falls back to the default.
+ * Whether the sprint exists (and is open, in this project) is the page's check.
  */
-export function boardHref(projectKey: string, scope: BoardScope, view?: URLSearchParams): string {
-  const params = new URLSearchParams(scope === "all" ? [["scope", "all"]] : []);
-  for (const [name, value] of view ?? []) if (name !== "scope") params.set(name, value);
+export function parseBoardSelection(params: RawParams): BoardSelection {
+  const scope = z.enum(BOARD_SCOPES).safeParse(firstParam(params, "scope"));
+  if (scope.success && scope.data === "all") return { scope: "all", sprintId: null };
+  const sprint = id.safeParse(firstParam(params, BOARD_SPRINT_PARAM));
+  return { scope: "sprint", sprintId: sprint.success ? sprint.data : null };
+}
+
+/** The URL params of a selection (undefined = not written), for `boardViewQuery`. */
+export function boardSelectionParams(
+  selection: BoardSelection,
+): Record<string, string | undefined> {
+  return {
+    scope: selection.scope === "all" ? "all" : undefined,
+    [BOARD_SPRINT_PARAM]:
+      selection.scope === "sprint" ? (selection.sprintId ?? undefined) : undefined,
+  };
+}
+
+/**
+ * The board URL for a selection; the default is written as the plain URL. `view` (BRD-6)
+ * adds the type and column params, as `boardViewQuery` writes them (its own scope and
+ * sprint params never override `selection`).
+ */
+export function boardHref(projectKey: string, selection: BoardSelection, view?: URLSearchParams) {
+  const params = new URLSearchParams();
+  for (const [name, value] of Object.entries(boardSelectionParams(selection))) {
+    if (value) params.set(name, value);
+  }
+  for (const [name, value] of view ?? []) {
+    if (name !== "scope" && name !== BOARD_SPRINT_PARAM) params.set(name, value);
+  }
   const query = params.toString();
   return query ? `/${projectKey}/board?${query}` : `/${projectKey}/board`;
 }

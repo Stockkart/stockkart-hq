@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Suspense } from "react";
 
+import { useRememberedHref } from "@/features/views/last-view";
 import { SidebarViews } from "@/features/views/sidebar-views";
 import { cn } from "@/lib/utils";
 import { type SavedViewItem } from "@/lib/views/saved-views";
@@ -57,21 +58,15 @@ export function Sidebar({ savedViews = [] }: { savedViews?: SavedViewItem[] }) {
                       </li>
                     );
                   }
-                  const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
                   return (
                     <li key={item.label}>
-                      <Link
+                      <SidebarLink
                         href={item.href}
-                        aria-current={active ? "page" : undefined}
-                        className={cn(
-                          itemClass,
-                          "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-                          active && "bg-sidebar-accent font-medium text-sidebar-accent-foreground",
-                        )}
-                      >
-                        <Icon aria-hidden="true" className="size-4" />
-                        <span>{item.label}</span>
-                      </Link>
+                        pathname={pathname}
+                        className={itemClass}
+                        icon={<Icon aria-hidden="true" className="size-4" />}
+                        label={item.label}
+                      />
                     </li>
                   );
                 })}
@@ -86,5 +81,37 @@ export function Sidebar({ savedViews = [] }: { savedViews?: SavedViewItem[] }) {
         })}
       </nav>
     </aside>
+  );
+}
+
+/** A nav link; Board and Backlog open their remembered view (VW-5). */
+function SidebarLink({
+  href,
+  pathname,
+  className,
+  icon,
+  label,
+}: {
+  href: string;
+  pathname: string;
+  className: string;
+  icon: React.ReactNode;
+  label: string;
+}) {
+  const target = useRememberedHref(href);
+  const active = pathname === href || pathname.startsWith(`${href}/`);
+  return (
+    <Link
+      href={target}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        className,
+        "hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+        active && "bg-sidebar-accent font-medium text-sidebar-accent-foreground",
+      )}
+    >
+      {icon}
+      <span>{label}</span>
+    </Link>
   );
 }
